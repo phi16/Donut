@@ -1,4 +1,5 @@
 use nonempty::NonEmpty;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 type Level = u8;
@@ -21,7 +22,7 @@ pub type Shape = ShapeF<Rc<Cell>>;
 
 // Layouts
 
-pub type Coord = Vec<f32>;
+pub type Coord = Vec<u32>;
 pub struct Bounds {
     pub min: Coord,
     pub max: Coord,
@@ -42,3 +43,5 @@ pub struct Prim {
     pub base_size: Coord,
     pub base_shape: LayoutShape,
 }
+
+pub type PrimTable = HashMap<PrimId, Prim>;

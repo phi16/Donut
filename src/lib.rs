@@ -15,6 +15,26 @@ pub fn main_js() -> Result<(), JsValue> {
     Ok(())
 }
 
+fn set_resize_callback(canvas: web_sys::HtmlCanvasElement) -> Option<()> {
+    let window = web_sys::window()?;
+    let on_resize = {
+        let window = window.clone();
+        move || {
+            let width = window.inner_width().unwrap().as_f64().unwrap() as u32;
+            let height = window.inner_height().unwrap().as_f64().unwrap() as u32;
+            canvas.set_width(width);
+            canvas.set_height(height);
+        }
+    };
+    on_resize();
+    let resize_callback = Closure::new(Box::new(on_resize) as Box<dyn FnMut()>);
+    window
+        .add_event_listener_with_callback("resize", resize_callback.as_ref().unchecked_ref())
+        .ok()?;
+    resize_callback.forget();
+    Some(())
+}
+
 fn request_animation_frame(f: &Closure<dyn FnMut()>) {
     web_sys::window()
         .unwrap()
@@ -29,12 +49,13 @@ pub fn start() -> Option<()> {
         .get_element_by_id("canvas")?
         .dyn_into::<web_sys::HtmlCanvasElement>()
         .ok()?;
+    set_resize_callback(canvas.clone())?;
     let context = canvas
         .get_context("2d")
         .ok()??
         .dyn_into::<web_sys::CanvasRenderingContext2d>()
         .ok()?;
-    let app = App::new(context);
+    let app = App::new(canvas, context);
 
     let step: Rc<RefCell<Option<Closure<dyn FnMut()>>>> = Rc::new(RefCell::new(None));
     let step_c = Rc::clone(&step);
