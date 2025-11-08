@@ -2,14 +2,9 @@ mod app;
 mod util;
 
 use crate::app::App;
-use crate::util::println;
 use std::cell::RefCell;
 use std::rc::Rc;
 use wasm_bindgen::prelude::*;
-
-#[cfg(feature = "wee_alloc")]
-#[global_allocator]
-static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 
 #[wasm_bindgen(start)]
 pub fn main_js() -> Result<(), JsValue> {

@@ -9,9 +9,6 @@ crate-type = ["cdylib"]
 [profile.release]
 lto = true
 
-[features]
-# default = ["wee_alloc"]
-
 [dependencies]
 console_error_panic_hook = "0.1.7"
 wasm-bindgen = "0.2.105"
