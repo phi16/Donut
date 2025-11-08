@@ -29,8 +29,25 @@ name = "donut"
 version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
+ "donut-core",
+ "donut-renderer",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
+name = "donut-core"
+version = "0.1.0"
+dependencies = [
+ "nonempty",
+]
+
+[[package]]
+name = "donut-renderer"
+version = "0.1.0"
+dependencies = [
+ "donut-core",
  "web-sys",
 ]
 
@@ -43,6 +60,12 @@ dependencies = [
  "once_cell",
  "wasm-bindgen",
 ]
+
+[[package]]
+name = "nonempty"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9737e026353e5cd0736f98eddae28665118eb6f6600902a7f50db585621fecb6"
 
 [[package]]
 name = "once_cell"

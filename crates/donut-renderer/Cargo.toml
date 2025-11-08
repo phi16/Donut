@@ -4,3 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+donut-core = { path = "../donut-core" }
+
+[dependencies.web-sys]
+version = "0.3.82"
+features = [ "CanvasRenderingContext2d" ]
