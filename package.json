@@ -1,0 +1,18 @@
+{
+  "name": "donut",
+  "version": "1.0.0",
+  "license": "MIT",
+  "author": "phi16 <phi16.256@gmail.com>",
+  "scripts": {
+    "build": "rimraf dist pkg && webpack",
+    "start": "rimraf dist pkg && webpack-dev-server --open --hot"
+  },
+  "devDependencies": {
+    "@wasm-tool/wasm-pack-plugin": "^1.7.0",
+    "copy-webpack-plugin": "^13.0.1",
+    "webpack": "^5.102.1",
+    "webpack-cli": "^6.0.1",
+    "webpack-dev-server": "^5.2.2",
+    "rimraf": "^6.1.0"
+  }
+}
