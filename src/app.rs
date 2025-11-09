@@ -1,7 +1,6 @@
 use donut_core::cell::*;
 use donut_core::table::*;
 use donut_renderer::Renderer;
-use std::collections::HashMap;
 use std::rc::Rc;
 
 pub struct App {
@@ -18,8 +17,7 @@ impl App {
         context: web_sys::CanvasRenderingContext2d,
     ) -> Self {
         let prim_table = Rc::new(PrimTable::default());
-        let cell = prim_table.prim("f");
-        let cell = prim_table.id(&cell, 100);
+        let cell = prim_table.prim("k");
         Self {
             renderer: Renderer::new(context.clone(), Rc::clone(&prim_table)),
             canvas,

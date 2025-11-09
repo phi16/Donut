@@ -38,6 +38,25 @@ impl Renderer {
         self.context.translate(x as f64, y as f64).unwrap();
     }
 
+    pub fn rect(&self, x: u32, y: u32, width: u32, height: u32) {
+        self.context
+            .fill_rect(x as f64, y as f64, width as f64, height as f64);
+    }
+
+    pub fn circle(&self, x: u32, y: u32, radius: u32) {
+        self.context.begin_path();
+        self.context
+            .arc(
+                x as f64,
+                y as f64,
+                radius as f64,
+                0.0,
+                std::f64::consts::PI * 2.0,
+            )
+            .unwrap();
+        self.context.fill();
+    }
+
     pub fn render(&self, cell: &Rc<LayoutCell>, x_axis: usize, y_axis: usize) {
         let slicer = Slicer::new(self, x_axis, y_axis);
         slicer.render_2d(cell);
@@ -68,13 +87,11 @@ impl Slicer<'_> {
         };
 
         self.renderer.set_color(prim.color);
-        self.renderer
-            .context
-            .fill_rect(0.0, 0.0, x_len as f64, y_len as f64);
+        self.renderer.rect(0, 0, x_len, y_len);
     }
 
     pub fn render_1d(&self, cell: &Rc<LayoutCell>, y_len: u32) {
-        let dim = cell.1.size.len();
+        let dim = cell.dim();
         assert!(self.x_axis < dim);
         let layout = &cell.1;
 
@@ -100,34 +117,39 @@ impl Slicer<'_> {
             }
         };
 
-        let width = layout.size[self.x_axis];
-        self.render_0d(source, width * 2 / 5, y_len);
+        let size_x = layout.size[self.x_axis];
+        let offset_x = layout.offset[self.x_axis];
+        let bounds_x = layout.bounds[self.x_axis];
+        let center_x = offset_x + size_x / 2;
+
+        self.render_0d(source, center_x, y_len);
         self.renderer.push();
-        self.renderer.offset(width * 3 / 5, 0);
-        self.render_0d(target, width * 2 / 5, y_len);
+        self.renderer.offset(center_x, 0);
+        self.render_0d(target, bounds_x - center_x, y_len);
         self.renderer.pop();
 
         self.renderer.set_color(prim.color);
-        self.renderer.context.fill_rect(
-            (width * 2 / 5) as f64,
-            0.0,
-            (width / 5) as f64,
-            y_len as f64,
-        );
+        self.renderer.rect(offset_x, 0, size_x, y_len);
     }
 
     pub fn render_2d(&self, cell: &Rc<LayoutCell>) {
-        let dim = cell.1.size.len();
+        let dim = cell.dim();
         assert!(self.x_axis < dim && self.y_axis < dim);
         let layout = &cell.1;
 
-        match &cell.0 {
+        let (prim, source, target) = match &cell.0 {
             CellF::Prim(id, shape) => {
-                unimplemented!()
+                let (source, target) = match shape {
+                    ShapeF::Zero => unreachable!(),
+                    ShapeF::Succ(s, t) => (s, t),
+                };
+                let prim = self.renderer.prim_table.get(*id).unwrap();
+                (prim, source, target)
             }
             CellF::Id(inner) => {
                 if self.y_axis == dim - 1 {
                     self.render_1d(inner, layout.size[self.y_axis]);
+                    return;
                 } else {
                     unimplemented!()
                 }
@@ -135,6 +157,25 @@ impl Slicer<'_> {
             CellF::Comp(children, level) => {
                 unimplemented!()
             }
-        }
+        };
+
+        let size_y = layout.size[self.y_axis];
+        let offset_y = layout.offset[self.y_axis];
+        let bounds_y = layout.bounds[self.y_axis];
+        let center_y = offset_y + size_y / 2;
+
+        self.render_1d(source, center_y);
+        self.renderer.push();
+        self.renderer.offset(0, center_y);
+        self.render_1d(target, bounds_y - center_y);
+        self.renderer.pop();
+
+        let size_x = layout.size[self.x_axis];
+        let offset_x = layout.offset[self.x_axis];
+        let center_x = offset_x + size_x / 2;
+
+        self.renderer.set_color(prim.color);
+        self.renderer
+            .circle(center_x, center_y, size_x.min(size_y) / 2);
     }
 }
