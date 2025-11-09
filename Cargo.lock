@@ -48,6 +48,15 @@ name = "donut-renderer"
 version = "0.1.0"
 dependencies = [
  "donut-core",
+ "donut-util",
+ "web-sys",
+]
+
+[[package]]
+name = "donut-util"
+version = "0.1.0"
+dependencies = [
+ "wasm-bindgen",
  "web-sys",
 ]
 

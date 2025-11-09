@@ -1,5 +1,4 @@
 mod app;
-mod util;
 
 use crate::app::App;
 use std::cell::RefCell;

@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 donut-core = { path = "../donut-core" }
+donut-util = { path = "../donut-util" }
 
 [dependencies.web-sys]
 version = "0.3.82"
