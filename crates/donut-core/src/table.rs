@@ -1,3 +1,4 @@
+use nonempty::nonempty;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -45,8 +46,8 @@ impl PrimTable {
         size: Coord,
         bounds: Coord,
         color: Color,
-        source: Rc<LayoutCell>,
-        target: Rc<LayoutCell>,
+        source: &Rc<LayoutCell>,
+        target: &Rc<LayoutCell>,
     ) -> Rc<LayoutCell> {
         assert_eq!(size.len(), level as usize);
         let id = self.table.len() as PrimId;
@@ -55,8 +56,12 @@ impl PrimTable {
         for i in 0..level as usize {
             offset[i] = (bounds[i] - size[i]) / 2;
         }
+
+        let source = source.as_ref().clone();
+        let target = target.as_ref().clone();
+
         let cell = Rc::new(LayoutCell(
-            CellF::Prim(id, ShapeF::Succ(source, target)),
+            CellF::Prim(id, ShapeF::Succ(Rc::new(source), Rc::new(target))),
             Layout {
                 size,
                 offset,
@@ -78,59 +83,45 @@ impl PrimTable {
         let mut ps = Self::new();
         let a = ps.add_zero("A", 0, (255, 192, 128, 255));
         let b = ps.add_zero("B", 0, (128, 192, 255, 255));
-        let f = ps.add(
-            "f",
-            1,
-            vec![10],
-            vec![100],
-            (192, 64, 64, 255),
-            Rc::clone(&a),
-            Rc::clone(&b),
-        );
-        let g = ps.add(
-            "g",
-            1,
-            vec![10],
-            vec![100],
-            (96, 96, 192, 255),
-            Rc::clone(&a),
-            Rc::clone(&b),
-        );
+        let f = ps.add("f", 1, vec![10], vec![100], (192, 64, 64, 255), &a, &b);
+        let g = ps.add("g", 1, vec![10], vec![100], (96, 96, 192, 255), &a, &b);
         ps.add(
             "a",
             2,
             vec![20, 20],
             vec![100, 100],
             (255, 255, 255, 255),
-            Rc::clone(&f),
-            Rc::clone(&g),
+            &f,
+            &g,
         );
-        let i = ps.add(
-            "i",
-            1,
-            vec![10],
-            vec![100],
-            (128, 128, 128, 255),
-            Rc::clone(&a),
-            Rc::clone(&a),
-        );
+        let i = ps.add("i", 1, vec![10], vec![100], (128, 128, 128, 255), &a, &a);
         ps.add(
             "b",
             2,
             vec![20, 20],
             vec![100, 100],
             (255, 255, 255, 255),
-            Rc::clone(&i),
-            Rc::clone(&i),
+            &i,
+            &i,
         );
+        let ii = ps.comp(nonempty![Rc::clone(&i), Rc::clone(&f)], 0, 20);
         ps.add(
             "k",
             2,
             vec![20, 20],
             vec![100, 100],
             (64, 64, 64, 255),
-            i,
-            ps.id(&a, 100),
+            &i,
+            &ps.id(&a, 100),
+        );
+        ps.add(
+            "m",
+            2,
+            vec![20, 20],
+            vec![100, 100],
+            (64, 64, 64, 255),
+            &i,
+            &ii,
         );
         ps
     }
@@ -151,33 +142,45 @@ impl PrimTable {
         Rc::new(LayoutCell(cell, layout))
     }
 
-    pub fn comp(&self, cells: Vec1<Rc<LayoutCell>>, level: Level) -> Rc<LayoutCell> {
-        /* let dim = cells.first().dim();
-        let mut size = vec![0; dim];
-        let mut children = vec![];
+    pub fn comp(&self, cells: Vec1<Rc<LayoutCell>>, level: Level, len: u32) -> Rc<LayoutCell> {
+        let dim = cells.first().dim();
+        let mut bounds = vec![0; dim];
         for cell in &cells {
             let layout = &cell.1;
             for i in 0..dim {
                 if i == level as usize {
-                    size[i] += layout.size[i];
+                    bounds[i] += layout.size[i];
                 } else {
-                    size[i] = size[i].max(layout.size[i]);
+                    bounds[i] = bounds[i].max(layout.size[i]);
                 }
             }
-            unimplemented!();
-            children.push(Bounds {
-                min: vec![0; level as usize],
-                max: layout.size.clone(),
-            });
+        }
+        bounds[level as usize] += len * (cells.len() as u32 - 1);
+        let mut offset = 0;
+        let mut children = vec![];
+        for cell in &cells {
+            let layout = &cell.1;
+            let mut min = vec![0; dim];
+            let mut max = vec![0; dim];
+            for i in 0..dim {
+                if i == level as usize {
+                    min[i] = offset;
+                    max[i] = min[i] + layout.bounds[i];
+                    offset += layout.bounds[i] + len;
+                } else {
+                    min[i] = (bounds[i] - layout.bounds[i]) / 2;
+                    max[i] = min[i] + layout.bounds[i];
+                }
+            }
+            children.push(Bounds { min, max });
         }
         let layout = Layout {
-            size,
-            offset,
+            size: bounds.clone(),
+            offset: vec![0; dim],
             bounds,
             children,
         };
-        Rc::new(LayoutCell(CellF::Comp(cells, level), layout)) */
-        unimplemented!()
+        Rc::new(LayoutCell(CellF::Comp(cells, level), layout))
     }
 
     pub fn get(&self, id: PrimId) -> Option<&Prim> {

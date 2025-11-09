@@ -113,7 +113,29 @@ impl Slicer<'_> {
                 }
             }
             CellF::Comp(children, level) => {
-                unimplemented!()
+                if *level == 0 {
+                    for (i, (child, bounds)) in
+                        children.iter().zip(layout.children.iter()).enumerate()
+                    {
+                        self.renderer.push();
+                        self.renderer.offset(bounds.min[self.x_axis], 0);
+                        self.render_1d(child, y_len);
+                        self.renderer.pop();
+
+                        if i < children.len() - 1 {
+                            let target = child.t();
+                            self.renderer.push();
+                            self.renderer.offset(bounds.max[self.x_axis], 0);
+                            let width =
+                                layout.children[i + 1].min[self.x_axis] - bounds.max[self.x_axis];
+                            self.render_0d(&target, width, y_len);
+                            self.renderer.pop();
+                        }
+                    }
+                    return;
+                } else {
+                    unimplemented!()
+                }
             }
         };
 

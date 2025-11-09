@@ -97,6 +97,8 @@ impl LayoutCell {
     // cell.s().s() == cell.t().s()
     // cell.s().t() == cell.t().t()
 
+    // TODO: don't forget the original layout
+
     pub fn s(&self) -> Rc<LayoutCell> {
         let dim = self.dim();
         match &self.0 {

@@ -17,7 +17,7 @@ impl App {
         context: web_sys::CanvasRenderingContext2d,
     ) -> Self {
         let prim_table = Rc::new(PrimTable::default());
-        let cell = prim_table.prim("k");
+        let cell = prim_table.prim("m");
         Self {
             renderer: Renderer::new(context.clone(), Rc::clone(&prim_table)),
             canvas,
