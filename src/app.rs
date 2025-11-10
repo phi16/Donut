@@ -24,8 +24,8 @@ impl App {
         let m = prim_table.prim("m");
         let w = prim_table.prim("w");
         let g1 = prim_table.comp(nonempty![Rc::clone(&ii), Rc::clone(&m)], 0, 20);
-        let g2 = prim_table.comp(nonempty![Rc::clone(&w), Rc::clone(&ii)], 0, 20);
-        let cell = prim_table.comp(nonempty![g1, g2], 1, 20);
+        let g2 = prim_table.comp(nonempty![Rc::clone(&w), Rc::clone(&ii)], 0, 80);
+        let cell = prim_table.comp(nonempty![g1, g2], 1, 50);
 
         Self {
             renderer: Renderer::new(context.clone(), Rc::clone(&prim_table)),
@@ -44,6 +44,11 @@ impl App {
         self.renderer.push();
         self.renderer.offset(50, 50);
         self.renderer.render(&self.cell, 0, 1);
+        self.renderer.pop();
+
+        self.renderer.push();
+        self.renderer.offset(0, 300);
+        self.renderer.test();
         self.renderer.pop();
     }
 }

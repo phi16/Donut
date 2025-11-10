@@ -70,6 +70,39 @@ impl Renderer {
         self.context.fill();
     }
 
+    pub fn test(&self) {
+        self.set_color((255, 0, 0, 128));
+        self.context.begin_path();
+        let p0 = (100.0, 150.0);
+        let p1 = (200.0, 50.0);
+        self.context.move_to(p0.0, p0.1);
+        self.context.bezier_curve_to(
+            p0.0,
+            (p0.1 * 2.0 + p1.1) / 3.0,
+            p1.0,
+            (p0.1 + p1.1 * 2.0) / 3.0,
+            p1.0,
+            p1.1,
+        );
+        self.context.set_stroke_style_str("white");
+        self.context.set_line_width(5.0);
+        self.context.stroke();
+
+        self.context.begin_path();
+        self.context.translate(100.0, 0.0).unwrap();
+        self.context.move_to(p0.0, p0.1);
+        for i in 1..=10 {
+            let t = i as f64 / 10.0;
+            let x = (1.0 - t).powi(3) * p0.0
+                + 3.0 * (1.0 - t).powi(2) * t * p0.0
+                + 3.0 * (1.0 - t) * t.powi(2) * p1.0
+                + t.powi(3) * p1.0;
+            let y = p0.1 * (1.0 - t) + p1.1 * t;
+            self.context.line_to(x, y);
+        }
+        self.context.stroke();
+    }
+
     pub fn render(&self, cell: &Rc<LayoutCell>, x_axis: usize, y_axis: usize) {
         let slicer = Slicer::new(self, x_axis, y_axis);
         slicer.render_2d(cell, (0, 0), (0, 0));
