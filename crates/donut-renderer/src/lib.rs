@@ -105,7 +105,7 @@ impl Renderer {
 
     pub fn render(&self, cell: &Rc<LayoutCell>, x_axis: usize, y_axis: usize) {
         let slicer = Slicer::new(self, x_axis, y_axis);
-        slicer.cell_2d(cell);
+        slicer.render_2d(cell);
     }
 }
 
@@ -125,20 +125,18 @@ impl Slicer<'_> {
         }
     }
 
-    // `inside_nd` ignores min_pad/max_pad
-
-    pub fn inside_0d(&self, cell: &Rc<LayoutCell>, x_len: u32, y_len: u32) {
+    pub fn render_0d(&self, cell: &Rc<LayoutCell>, x_len: u32, y_len: u32) {
         let prim = match &cell.0 {
             CellF::Prim(id, _) => self.renderer.prim_table.get(*id).unwrap(),
-            CellF::Id(_) => unreachable!(),      // TODO: extract prim
-            CellF::Comp(_, _) => unreachable!(), // TODO: extract prim
+            CellF::Id(_) => unreachable!(), // TODO: extract prim
+            CellF::Comp(_, _, _) => unreachable!(), // TODO: extract prim
         };
 
         self.renderer.set_color(prim.color);
         self.renderer.rect(0, 0, x_len, y_len);
     }
 
-    pub fn inside_1d(&self, cell: &Rc<LayoutCell>, y_len: u32) {
+    pub fn render_1d(&self, cell: &Rc<LayoutCell>, y_len: u32) {
         let dim = cell.dim();
         assert!(self.x_axis < dim);
         let layout = &cell.1;
@@ -152,36 +150,36 @@ impl Slicer<'_> {
                 let prim = self.renderer.prim_table.get(*id).unwrap();
 
                 let size_x = layout.size[self.x_axis];
-                let offset_x = 0;
-                let center_x = offset_x + size_x / 2;
 
-                self.renderer.push();
-                self.renderer.offset(offset_x, 0);
-                self.cell_0d(source, size_x / 2, y_len);
+                self.padded_0d(source, size_x / 2, y_len);
                 self.renderer.push();
                 self.renderer.offset(size_x / 2, 0);
-                self.cell_0d(target, size_x / 2, y_len);
-                self.renderer.pop();
+                self.padded_0d(target, size_x / 2, y_len);
                 self.renderer.pop();
 
+                let center_x = size_x / 2;
                 self.renderer.set_color(prim.color);
                 self.renderer.rect(center_x - 5, 0, 10, y_len);
             }
             CellF::Id(inner) => {
                 if self.x_axis == dim - 1 {
-                    self.cell_0d(inner, layout.size[self.x_axis], y_len);
+                    self.render_0d(inner, layout.size[self.x_axis], y_len);
                 } else {
                     unimplemented!()
                 }
             }
-            CellF::Comp(children, level) => {
+            CellF::Comp(children, level, inner_pads) => {
+                let n = children.len();
                 if *level == 0 && self.x_axis == 0 {
                     let mut offset = 0;
-                    for child in children {
+                    for (index, child) in children.iter().enumerate() {
                         self.renderer.push();
                         self.renderer.offset(offset, 0);
-                        self.cell_1d(child, y_len);
-                        offset += child.1.bounds[self.x_axis];
+                        self.padded_1d(child, y_len);
+                        offset += child.cell.1.size[self.x_axis];
+                        if index < n - 1 {
+                            offset += inner_pads[index];
+                        }
                         self.renderer.pop();
                     }
                     /* let mut offset = 0;
@@ -192,7 +190,7 @@ impl Slicer<'_> {
                         let left_side = c0.1.min_pad[self.x_axis] + c0.1.size[self.x_axis];
                         let width = c0.1.max_pad[self.x_axis] + c1.1.min_pad[self.x_axis];
                         self.renderer.offset(offset + left_side, 0);
-                        self.cell_0d(&c0.t(), width, y_len); // 0d bridge
+                        self.padded_0d(&c0.t(), width, y_len); // 0d bridge
                         offset += c0.1.bounds[self.x_axis];
                         self.renderer.pop();
                     } */
@@ -203,7 +201,7 @@ impl Slicer<'_> {
         }
     }
 
-    pub fn inside_2d(&self, cell: &Rc<LayoutCell>) {
+    pub fn render_2d(&self, cell: &Rc<LayoutCell>) {
         let dim = cell.dim();
         assert!(self.x_axis < dim && self.y_axis < dim);
         let layout = &cell.1;
@@ -219,10 +217,10 @@ impl Slicer<'_> {
                 let size_x = layout.size[self.x_axis];
                 let size_y = layout.size[self.y_axis];
 
-                self.cell_1d(source, size_y / 2);
+                self.padded_1d(source, size_y / 2);
                 self.renderer.push();
                 self.renderer.offset(0, size_y / 2);
-                self.cell_1d(target, size_y / 2);
+                self.padded_1d(target, size_y / 2);
                 self.renderer.pop();
 
                 let center_x = size_x / 2;
@@ -234,19 +232,23 @@ impl Slicer<'_> {
             }
             CellF::Id(inner) => {
                 if self.y_axis == dim - 1 {
-                    self.cell_1d(inner, layout.size[self.y_axis]);
+                    self.render_1d(inner, layout.size[self.y_axis]);
                 } else {
                     unimplemented!()
                 }
             }
-            CellF::Comp(children, level) => {
+            CellF::Comp(children, level, inner_pads) => {
+                let n = children.len();
                 if *level == 0 && self.x_axis == 0 {
                     let mut offset = 0;
-                    for child in children {
+                    for (index, child) in children.iter().enumerate() {
                         self.renderer.push();
                         self.renderer.offset(offset, 0);
-                        self.cell_2d(child);
-                        offset += child.1.bounds[self.x_axis];
+                        self.padded_2d(child);
+                        offset += child.cell.1.size[self.x_axis];
+                        if index < n - 1 {
+                            offset += inner_pads[index];
+                        }
                         self.renderer.pop();
                     }
                     /* let mut offset = 0;
@@ -257,17 +259,20 @@ impl Slicer<'_> {
                         let left_side = c0.1.min_pad[self.x_axis] + c0.1.size[self.x_axis];
                         let width = c0.1.max_pad[self.x_axis] + c1.1.min_pad[self.x_axis];
                         self.renderer.offset(offset + left_side, 0);
-                        self.cell_0d(&c0.s().t(), width, c0.1.bounds[self.y_axis]); // 0d bridge
+                        self.padded_0d(&c0.s().t(), width, c0.1.bounds[self.y_axis]); // 0d bridge
                         offset += c0.1.bounds[self.x_axis];
                         self.renderer.pop();
                     } */
                 } else if *level == 1 && self.y_axis == 1 {
                     let mut offset = 0;
-                    for child in children {
+                    for (index, child) in children.iter().enumerate() {
                         self.renderer.push();
                         self.renderer.offset(0, offset);
-                        self.cell_2d(child);
-                        offset += child.1.bounds[self.y_axis];
+                        self.padded_2d(child);
+                        offset += child.cell.1.size[self.y_axis];
+                        if index < n - 1 {
+                            offset += inner_pads[index];
+                        }
                         self.renderer.pop();
                     }
                 } else {
@@ -277,57 +282,57 @@ impl Slicer<'_> {
         }
     }
 
-    pub fn cell_0d(&self, cell: &Rc<LayoutCell>, x_len: u32, y_len: u32) {
-        self.inside_0d(cell, x_len, y_len);
+    pub fn padded_0d(&self, pc: &PaddedCell, x_len: u32, y_len: u32) {
+        let cell = &pc.cell;
+        self.render_0d(cell, x_len, y_len);
     }
 
-    pub fn cell_1d(&self, cell: &Rc<LayoutCell>, y_len: u32) {
-        let min_x = cell.1.min_pad[self.x_axis];
-        let max_x = cell.1.max_pad[self.x_axis];
+    pub fn padded_1d(&self, pc: &PaddedCell, y_len: u32) {
+        let cell = &pc.cell;
+        let min_x = pc.pad.min[self.x_axis];
+        let max_x = pc.pad.max[self.x_axis];
         let size_x = cell.1.size[self.x_axis];
 
         self.renderer.push();
-        self.cell_0d(&cell.s(), min_x, y_len);
+        self.padded_0d(&pc.s(), min_x, y_len);
         self.renderer.offset(min_x + size_x, 0);
-        self.cell_0d(&cell.t(), max_x, y_len);
+        self.padded_0d(&pc.t(), max_x, y_len);
         self.renderer.pop();
 
         self.renderer.push();
         self.renderer.offset(min_x, 0);
-        self.inside_1d(cell, y_len);
+        self.render_1d(cell, y_len);
         self.renderer.pop();
     }
 
-    pub fn cell_2d(&self, cell: &Rc<LayoutCell>) {
-        let min_x = cell.1.min_pad[self.x_axis];
-        let min_y = cell.1.min_pad[self.y_axis];
-        let max_x = cell.1.max_pad[self.x_axis];
-        let max_y = cell.1.max_pad[self.y_axis];
+    pub fn padded_2d(&self, pc: &PaddedCell) {
+        let cell = &pc.cell;
+        let min_x = pc.pad.min[self.x_axis];
+        let min_y = pc.pad.min[self.y_axis];
+        let max_x = pc.pad.max[self.x_axis];
+        let max_y = pc.pad.max[self.y_axis];
         let size_x = cell.1.size[self.x_axis];
         let size_y = cell.1.size[self.y_axis];
-        let bounds_x = cell.1.bounds[self.x_axis];
-        let bounds_y = cell.1.bounds[self.y_axis];
-
-        // self.renderer.push();
-        // self.cell_0d(&cell.s().s(), min_x, bounds_y);
-        // self.renderer.offset(min_x + size_x, 0);
-        // self.cell_0d(&cell.t().s(), max_x, bounds_y);
-        // self.renderer.pop();
+        let bounds_x = min_x + size_x + max_x;
+        let bounds_y = min_y + size_y + max_y;
 
         self.renderer.push();
-        self.renderer.offset(min_x, 0);
-        // self.cell_1d(&cell.s(), min_y);
+        self.padded_0d(&pc.s().s(), min_x, bounds_y);
+        self.renderer.offset(min_x + size_x, 0);
+        self.padded_0d(&pc.t().s(), max_x, bounds_y);
+        self.renderer.pop();
+
+        self.renderer.push();
+        self.padded_1d(&pc.s(), min_y);
         self.renderer.offset(0, min_y + size_y);
-        self.cell_1d(&cell.t(), max_y);
+        self.padded_1d(&pc.t(), max_y);
         self.renderer.pop();
 
         self.renderer.push();
         self.renderer.offset(min_x, min_y);
-        self.inside_2d(cell);
+        self.render_2d(cell);
         self.renderer.pop();
 
-        let bounds_x = cell.1.bounds[self.x_axis];
-        let bounds_y = cell.1.bounds[self.y_axis];
         self.renderer.frame(0, 0, bounds_x, bounds_y);
     }
 }

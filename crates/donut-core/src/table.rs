@@ -1,4 +1,4 @@
-use nonempty::nonempty;
+use nonempty::{nonempty, NonEmpty};
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::vec;
@@ -56,50 +56,32 @@ impl PrimTable {
 
         let mut bounds = vec![0; level as usize - 1];
         for i in 0..(level as usize - 1) {
-            bounds[i] = source.1.bounds[i].max(target.1.bounds[i]);
+            bounds[i] = source.1.size[i].max(target.1.size[i]);
         }
 
-        let modify_bounds = |cell: &Rc<LayoutCell>, bounds: &Coord| {
-            let need_modify = bounds
-                .iter()
-                .enumerate()
-                .any(|(i, &b)| cell.1.bounds[i] < b);
-            if !need_modify {
-                return Rc::clone(cell);
-            }
-            let mut new_cell = cell.as_ref().clone();
+        let pad_to_bounds = |cell: &Rc<LayoutCell>, bounds: &Coord| -> PaddedCell {
+            let mut pad = vec![0; level as usize - 1];
             for i in 0..(level as usize - 1) {
                 let b = bounds[i];
-                let cell_b = new_cell.1.bounds[i];
-                assert!(b >= cell_b);
-                if cell_b < b {
-                    assert!((b - cell_b) % 2 == 0);
-                    let offset = (b - cell_b) / 2;
-                    new_cell.1.min_pad[i] += offset;
-                    new_cell.1.max_pad[i] += offset;
-                    new_cell.1.bounds[i] = b;
-                }
+                let s = cell.1.size[i];
+                assert!((b - s) % 2 == 0);
+                pad[i] = (b - s) / 2;
             }
-            Rc::new(new_cell)
+            PaddedCell {
+                cell: Rc::clone(cell),
+                pad: Padding::centered(pad),
+            }
         };
 
-        let source = modify_bounds(source, &bounds);
-        let target = modify_bounds(target, &bounds);
+        let source = pad_to_bounds(source, &bounds);
+        let target = pad_to_bounds(target, &bounds);
 
         bounds.push(bound);
-        let mut offset = vec![0; level as usize];
-        /* for i in 0..level as usize {
-            assert!((bounds[i] - size[i]) % 2 == 0);
-            offset[i] = (bounds[i] - size[i]) / 2;
-        } */
 
         let cell = Rc::new(LayoutCell(
             CellF::Prim(id, ShapeF::Succ(source, target)),
             Layout {
-                size: bounds.clone(), // ???
-                min_pad: offset.clone(),
-                max_pad: offset,
-                bounds,
+                size: bounds.clone(),
             },
         ));
         let p = Prim {
@@ -149,12 +131,11 @@ impl PrimTable {
     pub fn id(&self, cell: &Rc<LayoutCell>, len: u32) -> Rc<LayoutCell> {
         let mut layout = cell.1.clone();
         let cell = CellF::Id(Rc::clone(cell));
-        layout.push(len);
+        layout.size.push(len);
         Rc::new(LayoutCell(cell, layout))
     }
 
     pub fn comp(&self, cells: Vec1<Rc<LayoutCell>>, level: Level, len: u32) -> Rc<LayoutCell> {
-        assert!(len % 2 == 0);
         let n = cells.len();
         let dim = cells.first().dim();
         let mut bounds = vec![0; dim];
@@ -162,50 +143,35 @@ impl PrimTable {
             let layout = &cell.1;
             for i in 0..dim {
                 if i == level as usize {
-                    bounds[i] += layout.bounds[i];
+                    bounds[i] += layout.size[i];
                 } else {
-                    bounds[i] = bounds[i].max(layout.bounds[i]);
+                    bounds[i] = bounds[i].max(layout.size[i]);
                 }
             }
         }
-        bounds[level as usize] += len * (n as u32 - 1);
-        let mut cells = cells;
-        for (index, cell) in cells.iter_mut().enumerate() {
-            let mut new_cell = cell.as_ref().clone();
-            let layout = &mut new_cell.1;
+        let mut pcs = vec![];
+        for cell in cells {
+            let mut pad = vec![0; dim];
             for i in 0..dim {
-                if i == level as usize {
-                    // [0]-|-[1]-|-[2]
-                    if index != 0 {
-                        layout.min_pad[i] += len / 2;
-                        layout.bounds[i] += len / 2;
-                    }
-                    if index != n - 1 {
-                        layout.max_pad[i] += len / 2;
-                        layout.bounds[i] += len / 2;
-                    }
-                } else {
+                if i != level as usize {
                     let b = bounds[i];
-                    let cell_b = layout.bounds[i];
-                    assert!(b >= cell_b);
-                    if cell_b < b {
-                        assert!((b - cell_b) % 2 == 0);
-                        let offset = (b - cell_b) / 2;
-                        layout.min_pad[i] += offset;
-                        layout.max_pad[i] += offset;
-                        layout.bounds[i] = b;
-                    }
+                    let s = cell.1.size[i];
+                    assert!((b - s) % 2 == 0);
+                    pad[i] = (b - s) / 2;
                 }
             }
-            *cell = Rc::new(new_cell);
+            pcs.push(PaddedCell {
+                cell: Rc::clone(&cell),
+                pad: Padding::centered(pad),
+            });
         }
-        let layout = Layout {
-            size: bounds.clone(),
-            min_pad: vec![0; dim],
-            max_pad: vec![0; dim],
-            bounds,
-        };
-        Rc::new(LayoutCell(CellF::Comp(cells, level), layout))
+        let inner_pads = vec![len; n - 1];
+        bounds[level as usize] += len * (n as u32 - 1);
+        let layout = Layout { size: bounds };
+        Rc::new(LayoutCell(
+            CellF::Comp(NonEmpty::from_vec(pcs).unwrap(), level, inner_pads),
+            layout,
+        ))
     }
 
     pub fn get(&self, id: PrimId) -> Option<&Prim> {
