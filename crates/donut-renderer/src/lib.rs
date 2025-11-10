@@ -353,8 +353,98 @@ impl Slicer<'_> {
         self.render_0d(&pc0.cell, x_len, y_len);
     }
 
+    pub fn extract_1d(&self, pc: &PaddedCell, cs: &mut Vec<(Rc<LayoutCell>, u32)>) {
+        let cell = &pc.cell;
+        let mut add = |c: &Rc<LayoutCell>, l: u32| {
+            if let Some((last_c, last_l)) = cs.last_mut() {
+                if Rc::ptr_eq(last_c, c) {
+                    // note: is this too strict?
+                    *last_l += l;
+                    return;
+                }
+            }
+            cs.push((Rc::clone(c), l));
+        };
+        match &cell.0 {
+            CellF::Prim(_, shape) => {
+                let (source, target) = match shape {
+                    ShapeF::Zero => unreachable!(),
+                    ShapeF::Succ(s, t) => (s, t),
+                };
+                add(&source.cell, cell.1.size[self.x_axis] / 2 - 5);
+                add(cell, 10);
+                add(&target.cell, cell.1.size[self.x_axis] / 2 - 5);
+            }
+            CellF::Id(inner) => {
+                if self.x_axis == cell.dim() - 1 {
+                    add(inner, cell.1.size[self.x_axis]);
+                } else {
+                    unimplemented!()
+                }
+            }
+            CellF::Comp(children, _, inner_pads) => {
+                for (index, child) in children.iter().enumerate() {
+                    self.extract_1d(child, cs);
+                    if index < children.len() - 1 {
+                        cs.last_mut().unwrap().1 += inner_pads[index];
+                    }
+                }
+            }
+        }
+    }
+
     pub fn bridge_1d(&self, pc0: &PaddedCell, pc1: &PaddedCell, y_len: u32) {
+        let mut cs0 = vec![];
+        let mut cs1 = vec![];
+        self.extract_1d(pc0, &mut cs0);
+        self.extract_1d(pc1, &mut cs1);
+
         self.padded_1d(pc0, y_len);
         self.padded_1d(pc1, y_len);
+
+        /* self.renderer.push();
+        let mut j = 0;
+        for (c, l) in &cs0 {
+            self.renderer.set_color((j, j, j, 255));
+            self.renderer.rect(0, 0, *l, 5);
+            self.renderer.offset(*l, 0);
+            j = 255 - j;
+        }
+        self.renderer.pop();
+
+        self.renderer.push();
+        self.renderer.offset(0, y_len - 5);
+        let mut j = 0;
+        for (c, l) in &cs1 {
+            self.renderer.set_color((j, j, j, 255));
+            self.renderer.rect(0, 0, *l, 5);
+            self.renderer.offset(*l, 0);
+            j = 255 - j;
+        }
+        self.renderer.pop(); */
+
+        let mut offset0 = pc0.pad.min[self.x_axis];
+        let mut offset1 = pc1.pad.min[self.x_axis];
+        self.renderer.push();
+        for (index, ((c0, l0), (c1, l1))) in cs0.iter().zip(cs1.iter()).enumerate() {
+            if index % 2 == 1 {
+                let x0 = offset0 + l0 / 2;
+                let x1 = offset1 + l1 / 2;
+                let y0 = 0;
+                let y1 = y_len;
+                let yc = (y0 + y1) / 2;
+                self.renderer.context.begin_path();
+                self.renderer.context.move_to(x0 as f64, y0 as f64);
+                self.renderer.context.bezier_curve_to(
+                    x0 as f64, yc as f64, x1 as f64, yc as f64, x1 as f64, y1 as f64,
+                );
+                self.renderer.context.set_stroke_style_str("white");
+                self.renderer.context.set_line_width(10.0);
+                self.renderer.context.stroke();
+            }
+            offset0 += l0;
+            offset1 += l1;
+        }
+        self.renderer.pop();
     }
 }

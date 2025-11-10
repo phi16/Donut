@@ -26,7 +26,7 @@ impl App {
         let w = prim_table.prim("w");
         let g1 = prim_table.comp(nonempty![Rc::clone(&ii), Rc::clone(&m)], 0, 80);
         let g2 = prim_table.comp(nonempty![Rc::clone(&w), Rc::clone(&ij)], 0, 20);
-        let cell = prim_table.comp(nonempty![g1, g2], 1, 20);
+        let cell = prim_table.comp(nonempty![g1, g2], 1, 40);
 
         Self {
             renderer: Renderer::new(context.clone(), Rc::clone(&prim_table)),
