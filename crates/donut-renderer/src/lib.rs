@@ -156,16 +156,17 @@ impl Slicer<'_> {
                 let bounds_x = min_x + size_x + max_x;
                 let center_x = offset_x + size_x / 2;
 
-                self.render_0d(source, center_x, y_len);
                 self.renderer.push();
-                self.renderer.offset(center_x, 0);
-                self.render_0d(target, bounds_x - center_x, y_len);
+                self.renderer.offset(offset_x, 0);
+                self.render_0d(source, size_x / 2, y_len);
+                self.renderer.push();
+                self.renderer.offset(size_x / 2, 0);
+                self.render_0d(target, size_x / 2, y_len);
+                self.renderer.pop();
                 self.renderer.pop();
 
                 self.renderer.set_color(prim.color);
                 self.renderer.rect(center_x - 5, 0, 10, y_len);
-
-                // self.renderer.frame(offset_x, 0, size_x, y_len);
             }
             CellF::Id(inner) => {
                 if self.x_axis == dim - 1 {
@@ -175,14 +176,20 @@ impl Slicer<'_> {
                 }
             }
             CellF::Comp(children, level) => {
-                if *level == 0 {
+                let n = children.len();
+                if *level == 0 && self.x_axis == 0 {
                     let mut offset = 0;
-                    for child in children {
+                    for (index, child) in children.iter().enumerate() {
+                        let min_x = if index == 0 { min_x } else { 0 };
+                        let max_x = if index == n - 1 { max_x } else { 0 };
                         self.renderer.push();
                         self.renderer.offset(offset, 0);
                         self.render_1d(child, y_len, min_x, max_x);
                         offset += child.1.bounds[self.x_axis];
                         self.renderer.pop();
+                        if index == 0 {
+                            offset += min_x;
+                        }
                     }
                 } else {
                     unimplemented!()
@@ -223,47 +230,59 @@ impl Slicer<'_> {
                 let bounds_y = min_y + size_y + max_y;
                 let center_y = offset_y + size_y / 2;
 
-                self.render_1d(source, center_y, min_x, max_x);
                 self.renderer.push();
-                self.renderer.offset(0, center_y);
-                self.render_1d(target, bounds_y - center_y, min_x, max_x);
+                self.renderer.offset(min_x, offset_y);
+                self.render_1d(source, size_y / 2, 0, 0);
+                self.renderer.push();
+                self.renderer.offset(0, size_y / 2);
+                self.render_1d(target, size_y / 2, 0, 0);
+                self.renderer.pop();
                 self.renderer.pop();
 
                 self.renderer.set_color(prim.color);
                 self.renderer.circle(center_x, center_y, 10);
 
-                // self.renderer.frame(0, 0, bounds_x, bounds_y);
+                self.renderer.frame(0, 0, bounds_x, bounds_y);
                 self.renderer.frame(offset_x, offset_y, size_x, size_y);
             }
             CellF::Id(inner) => {
                 if self.y_axis == dim - 1 {
-                    self.render_1d(
-                        inner,
-                        layout.size[self.y_axis] + min_y + max_y,
-                        min_x,
-                        max_x,
-                    );
+                    self.renderer.push();
+                    self.renderer.offset(min_x, min_y);
+                    self.render_1d(inner, layout.size[self.y_axis], 0, 0);
+                    self.renderer.pop();
                 } else {
                     unimplemented!()
                 }
             }
             CellF::Comp(children, level) => {
-                if *level == 0 {
+                let n = children.len();
+                if *level == 0 && self.x_axis == 0 {
                     let mut offset = 0;
-                    for child in children {
+                    for (index, child) in children.iter().enumerate() {
+                        let min_x = if index == 0 { min_x } else { 0 };
+                        let max_x = if index == n - 1 { max_x } else { 0 };
                         self.renderer.push();
                         self.renderer.offset(offset, 0);
                         self.render_2d(child, (min_x, min_y), (max_x, max_y));
                         offset += child.1.bounds[self.x_axis];
+                        if index == 0 {
+                            offset += min_x;
+                        }
                         self.renderer.pop();
                     }
-                } else if *level == 1 {
+                } else if *level == 1 && self.y_axis == 1 {
                     let mut offset = 0;
-                    for child in children {
+                    for (index, child) in children.iter().enumerate() {
+                        let min_y = if index == 0 { min_y } else { 0 };
+                        let max_y = if index == n - 1 { max_y } else { 0 };
                         self.renderer.push();
                         self.renderer.offset(0, offset);
                         self.render_2d(child, (min_x, min_y), (max_x, max_y));
                         offset += child.1.bounds[self.y_axis];
+                        if index == 0 {
+                            offset += min_y;
+                        }
                         self.renderer.pop();
                     }
                 } else {
