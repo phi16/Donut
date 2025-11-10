@@ -1,6 +1,7 @@
 use donut_core::cell::*;
 use donut_core::table::*;
 use donut_renderer::Renderer;
+use nonempty::nonempty;
 use std::rc::Rc;
 
 pub struct App {
@@ -17,7 +18,12 @@ impl App {
         context: web_sys::CanvasRenderingContext2d,
     ) -> Self {
         let prim_table = Rc::new(PrimTable::default());
-        let cell = prim_table.prim("m");
+        let i = prim_table.prim("i");
+        let ii = prim_table.id(&i, 50);
+        let m = prim_table.prim("m");
+        let g1 = prim_table.comp(nonempty![Rc::clone(&ii), Rc::clone(&m)], 0, 80);
+        let g2 = prim_table.comp(nonempty![Rc::clone(&m), Rc::clone(&ii)], 0, 80);
+        let cell = prim_table.comp(nonempty![g1, g2], 1, 50);
         Self {
             renderer: Renderer::new(context.clone(), Rc::clone(&prim_table)),
             canvas,

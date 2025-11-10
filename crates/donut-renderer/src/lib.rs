@@ -43,6 +43,19 @@ impl Renderer {
             .fill_rect(x as f64, y as f64, width as f64, height as f64);
     }
 
+    pub fn frame(&self, x: u32, y: u32, width: u32, height: u32) {
+        self.context.set_stroke_style_str("cyan");
+        self.context.set_line_width(1.0);
+        self.context.begin_path();
+        self.context.rect(
+            x as f64 + 0.5,
+            y as f64 + 0.5,
+            width as f64 - 1.0,
+            height as f64 - 1.0,
+        );
+        self.context.stroke();
+    }
+
     pub fn circle(&self, x: u32, y: u32, radius: u32) {
         self.context.begin_path();
         self.context
@@ -105,47 +118,33 @@ impl Slicer<'_> {
                 (prim, source, target)
             }
             CellF::Id(inner) => {
+                self.renderer.push();
+                self.renderer.offset(layout.min_pad[self.x_axis], 0);
                 if self.x_axis == dim - 1 {
-                    self.render_0d(inner, layout.size[self.x_axis], y_len);
-                    return;
+                    self.render_0d(inner, layout.bounds[self.x_axis], y_len);
                 } else {
                     unimplemented!()
                 }
+                self.renderer.pop();
+                return;
             }
             CellF::Comp(children, level) => {
                 if *level == 0 {
+                    self.renderer.push();
+                    self.renderer.offset(layout.min_pad[self.x_axis], 0);
                     let mut offset = 0;
                     for child in children {
                         self.renderer.push();
                         self.renderer.offset(offset, 0);
-
                         self.render_1d(child, y_len);
-
                         offset += child.1.bounds[self.x_axis];
                         self.renderer.pop();
                     }
-                    /* for (i, (child, bounds)) in
-                        children.iter().zip(layout.children.iter()).enumerate()
-                    {
-                        self.renderer.push();
-                        self.renderer.offset(bounds.min[self.x_axis], 0);
-                        self.render_1d(child, y_len);
-                        self.renderer.pop();
-
-                        if i < children.len() - 1 {
-                            let target = child.t();
-                            self.renderer.push();
-                            self.renderer.offset(bounds.max[self.x_axis], 0);
-                            let width =
-                                layout.children[i + 1].min[self.x_axis] - bounds.max[self.x_axis];
-                            self.render_0d(&target, width, y_len);
-                            self.renderer.pop();
-                        }
-                    } */
-                    return;
+                    self.renderer.pop();
                 } else {
                     unimplemented!()
                 }
+                return;
             }
         };
 
@@ -179,15 +178,42 @@ impl Slicer<'_> {
                 (prim, source, target)
             }
             CellF::Id(inner) => {
+                self.renderer.push();
+                self.renderer.offset(0, layout.min_pad[self.y_axis]);
                 if self.y_axis == dim - 1 {
-                    self.render_1d(inner, layout.size[self.y_axis]);
-                    return;
+                    self.render_1d(inner, layout.bounds[self.y_axis]);
                 } else {
                     unimplemented!()
                 }
+                self.renderer.pop();
+                return;
             }
             CellF::Comp(children, level) => {
-                unimplemented!()
+                self.renderer.push();
+                self.renderer.offset(0, layout.min_pad[self.y_axis]);
+                if *level == 0 {
+                    let mut offset = 0;
+                    for child in children {
+                        self.renderer.push();
+                        self.renderer.offset(offset, 0);
+                        self.render_2d(child);
+                        offset += child.1.bounds[self.x_axis];
+                        self.renderer.pop();
+                    }
+                } else if *level == 1 {
+                    let mut offset = 0;
+                    for child in children {
+                        self.renderer.push();
+                        self.renderer.offset(0, offset);
+                        self.render_2d(child);
+                        offset += child.1.bounds[self.y_axis];
+                        self.renderer.pop();
+                    }
+                } else {
+                    unimplemented!()
+                }
+                self.renderer.pop();
+                return;
             }
         };
 
@@ -204,10 +230,13 @@ impl Slicer<'_> {
 
         let size_x = layout.size[self.x_axis];
         let offset_x = layout.min_pad[self.x_axis];
+        let bounds_x = layout.bounds[self.x_axis];
         let center_x = offset_x + size_x / 2;
 
         self.renderer.set_color(prim.color);
         self.renderer
             .circle(center_x, center_y, size_x.min(size_y) / 2);
+
+        self.renderer.frame(0, 0, bounds_x, bounds_y);
     }
 }

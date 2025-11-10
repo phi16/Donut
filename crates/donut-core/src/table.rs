@@ -121,7 +121,7 @@ impl PrimTable {
         ps.add("a", 2, vec![20, 20], 100, (255, 255, 255, 255), &f, &g);
         let i = ps.add("i", 1, vec![10], 100, (128, 128, 128, 255), &a, &a);
         ps.add("b", 2, vec![20, 20], 100, (255, 255, 255, 255), &i, &i);
-        let ii = ps.comp(nonempty![Rc::clone(&i), Rc::clone(&f)], 0, 20);
+        let ii = ps.comp(nonempty![Rc::clone(&i), Rc::clone(&i)], 0, 20);
         ps.add(
             "k",
             2,
