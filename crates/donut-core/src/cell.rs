@@ -5,13 +5,13 @@ pub type Level = u8;
 pub type Vec1<T> = NonEmpty<T>;
 pub type PrimId = u64;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum ShapeF<C> {
     Zero,
     Succ(C, C),
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum CellF<C> {
     Prim(PrimId, ShapeF<C>),
     Id(C),
@@ -24,7 +24,7 @@ pub struct Cell(pub CellF<Rc<Cell>>);
 
 pub type Coord = Vec<u32>;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Layout {
     pub size: Coord,
     pub min_pad: Coord,
@@ -55,7 +55,7 @@ impl Layout {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct LayoutCell(pub CellF<Rc<LayoutCell>>, pub Layout);
 
 impl LayoutCell {

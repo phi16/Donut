@@ -88,15 +88,15 @@ impl PrimTable {
 
         bounds.push(bound);
         let mut offset = vec![0; level as usize];
-        for i in 0..level as usize {
+        /* for i in 0..level as usize {
             assert!((bounds[i] - size[i]) % 2 == 0);
             offset[i] = (bounds[i] - size[i]) / 2;
-        }
+        } */
 
         let cell = Rc::new(LayoutCell(
             CellF::Prim(id, ShapeF::Succ(source, target)),
             Layout {
-                size,
+                size: bounds.clone(), // ???
                 min_pad: offset.clone(),
                 max_pad: offset,
                 bounds,
@@ -132,6 +132,7 @@ impl PrimTable {
             &ps.id(&a, 100),
         );
         ps.add("m", 2, vec![20, 20], 100, (64, 64, 64, 255), &i, &ii);
+        ps.add("w", 2, vec![20, 20], 100, (192, 64, 192, 255), &ii, &i);
         ps
     }
 
