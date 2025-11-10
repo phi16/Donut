@@ -182,18 +182,18 @@ impl Slicer<'_> {
                         }
                         self.renderer.pop();
                     }
-                    /* let mut offset = 0;
+                    let mut offset = 0;
                     for index in 0..children.len() - 1 {
                         self.renderer.push();
                         let c0 = &children[index + 0];
                         let c1 = &children[index + 1];
-                        let left_side = c0.1.min_pad[self.x_axis] + c0.1.size[self.x_axis];
-                        let width = c0.1.max_pad[self.x_axis] + c1.1.min_pad[self.x_axis];
-                        self.renderer.offset(offset + left_side, 0);
-                        self.padded_0d(&c0.t(), width, y_len); // 0d bridge
-                        offset += c0.1.bounds[self.x_axis];
+                        offset += c0.cell.1.size[self.x_axis];
+                        self.renderer.offset(offset, 0);
+                        let x_len = inner_pads[index];
+                        self.bridge_0d(&c0.t(), &c1.s(), x_len, y_len);
+                        offset += inner_pads[index];
                         self.renderer.pop();
-                    } */
+                    }
                 } else {
                     unimplemented!()
                 }
@@ -251,18 +251,19 @@ impl Slicer<'_> {
                         }
                         self.renderer.pop();
                     }
-                    /* let mut offset = 0;
+                    let y_len = layout.size[self.y_axis];
+                    let mut offset = 0;
                     for index in 0..children.len() - 1 {
                         self.renderer.push();
                         let c0 = &children[index + 0];
                         let c1 = &children[index + 1];
-                        let left_side = c0.1.min_pad[self.x_axis] + c0.1.size[self.x_axis];
-                        let width = c0.1.max_pad[self.x_axis] + c1.1.min_pad[self.x_axis];
-                        self.renderer.offset(offset + left_side, 0);
-                        self.padded_0d(&c0.s().t(), width, c0.1.bounds[self.y_axis]); // 0d bridge
-                        offset += c0.1.bounds[self.x_axis];
+                        offset += c0.cell.1.size[self.x_axis];
+                        self.renderer.offset(offset, 0);
+                        let x_len = inner_pads[index];
+                        self.bridge_0d(&c0.s().t(), &c1.s().s(), x_len, y_len);
+                        offset += inner_pads[index];
                         self.renderer.pop();
-                    } */
+                    }
                 } else if *level == 1 && self.y_axis == 1 {
                     let mut offset = 0;
                     for (index, child) in children.iter().enumerate() {
@@ -273,6 +274,18 @@ impl Slicer<'_> {
                         if index < n - 1 {
                             offset += inner_pads[index];
                         }
+                        self.renderer.pop();
+                    }
+                    let mut offset = 0;
+                    for index in 0..children.len() - 1 {
+                        self.renderer.push();
+                        let c0 = &children[index + 0];
+                        let c1 = &children[index + 1];
+                        offset += c0.cell.1.size[self.y_axis];
+                        self.renderer.offset(0, offset);
+                        let y_len = inner_pads[index];
+                        self.bridge_1d(&c0.t(), &c1.s(), y_len);
+                        offset += inner_pads[index];
                         self.renderer.pop();
                     }
                 } else {
@@ -334,5 +347,14 @@ impl Slicer<'_> {
         self.renderer.pop();
 
         self.renderer.frame(0, 0, bounds_x, bounds_y);
+    }
+
+    pub fn bridge_0d(&self, pc0: &PaddedCell, _pc1: &PaddedCell, x_len: u32, y_len: u32) {
+        self.render_0d(&pc0.cell, x_len, y_len);
+    }
+
+    pub fn bridge_1d(&self, pc0: &PaddedCell, pc1: &PaddedCell, y_len: u32) {
+        self.padded_1d(pc0, y_len);
+        self.padded_1d(pc1, y_len);
     }
 }
