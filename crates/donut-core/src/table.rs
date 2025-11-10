@@ -114,7 +114,7 @@ impl PrimTable {
 
     pub fn default() -> Self {
         let mut ps = Self::new();
-        let a = ps.add_zero("A", 0, (255, 192, 128, 255));
+        let a = ps.add_zero("A", 0, (255, 192, 128, 192));
         let b = ps.add_zero("B", 0, (128, 192, 255, 255));
         let f = ps.add("f", 1, vec![10], 100, (192, 64, 64, 255), &a, &b);
         let g = ps.add("g", 1, vec![10], 100, (96, 96, 192, 255), &a, &b);
