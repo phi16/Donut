@@ -40,7 +40,7 @@ impl App {
     pub fn step(&self) {
         let width = self.canvas.width() as f64;
         let height = self.canvas.height() as f64;
-        self.context.set_fill_style_str("rgb(20 20 20)");
+        self.context.set_fill_style_str("rgb(40 40 40)");
         self.context.fill_rect(0.0, 0.0, width, height);
         self.renderer.push();
         self.renderer.offset(50, 50);
