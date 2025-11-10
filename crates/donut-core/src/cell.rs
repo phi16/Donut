@@ -19,75 +19,44 @@ pub enum CellF<C> {
 }
 
 pub struct Cell(pub CellF<Rc<Cell>>);
-pub type Shape = ShapeF<Rc<Cell>>;
 
 // Layouts
 
 pub type Coord = Vec<u32>;
-#[derive(Clone)]
-pub struct Bounds {
-    pub min: Coord,
-    pub max: Coord,
-}
-
-impl Bounds {
-    pub fn empty() -> Self {
-        Self {
-            min: vec![],
-            max: vec![],
-        }
-    }
-    pub fn new(min: Coord, max: Coord) -> Self {
-        Self { min, max }
-    }
-    pub fn push(&mut self, len: u32) {
-        self.min.push(0);
-        self.max.push(len);
-    }
-    pub fn pop(&mut self) {
-        self.min.pop();
-        self.max.pop();
-    }
-}
 
 #[derive(Clone)]
 pub struct Layout {
     pub size: Coord,
-    pub offset: Coord,
-    pub bounds: Coord,
-    pub children: Vec<Bounds>,
+    pub min_pad: Coord,
+    pub max_pad: Coord,
+    pub bounds: Coord, // min_pad + size + max_pad
 }
 
 impl Layout {
     pub fn zero() -> Self {
         Self {
             size: vec![],
-            offset: vec![],
+            min_pad: vec![],
+            max_pad: vec![],
             bounds: vec![],
-            children: vec![],
         }
     }
     pub fn push(&mut self, len: u32) {
         self.size.push(len);
-        self.offset.push(0);
+        self.min_pad.push(0);
+        self.max_pad.push(0);
         self.bounds.push(len);
-        for b in &mut self.children {
-            b.push(len);
-        }
     }
     pub fn pop(&mut self) {
         self.size.pop();
-        self.offset.pop();
+        self.min_pad.pop();
+        self.max_pad.pop();
         self.bounds.pop();
-        for b in &mut self.children {
-            b.pop();
-        }
     }
 }
 
 #[derive(Clone)]
 pub struct LayoutCell(pub CellF<Rc<LayoutCell>>, pub Layout);
-pub type LayoutShape = ShapeF<Rc<LayoutCell>>;
 
 impl LayoutCell {
     pub fn dim(&self) -> usize {
@@ -97,7 +66,7 @@ impl LayoutCell {
     // cell.s().s() == cell.t().s()
     // cell.s().t() == cell.t().t()
 
-    // TODO: don't forget the original layout
+    // Note: s(), t() forgets the original layout
 
     pub fn s(&self) -> Rc<LayoutCell> {
         let dim = self.dim();
@@ -109,9 +78,7 @@ impl LayoutCell {
             CellF::Id(inner) => Rc::clone(inner),
             CellF::Comp(children, level) => {
                 if *level as usize + 1 == dim {
-                    let mut cell = children.first().as_ref().clone();
-                    cell.1.pop();
-                    Rc::new(cell)
+                    children.first().s()
                 } else {
                     let cs = children
                         .iter()
@@ -137,9 +104,7 @@ impl LayoutCell {
             CellF::Id(inner) => Rc::clone(inner),
             CellF::Comp(children, level) => {
                 if *level as usize + 1 == dim {
-                    let mut cell = children.last().as_ref().clone();
-                    cell.1.pop();
-                    Rc::new(cell)
+                    children.last().t()
                 } else {
                     let cs = children
                         .iter()

@@ -1,6 +1,7 @@
 use nonempty::nonempty;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::vec;
 
 use crate::cell::*;
 
@@ -44,7 +45,7 @@ impl PrimTable {
         name: &str,
         level: Level,
         size: Coord,
-        bounds: Coord,
+        bound: u32,
         color: Color,
         source: &Rc<LayoutCell>,
         target: &Rc<LayoutCell>,
@@ -52,21 +53,53 @@ impl PrimTable {
         assert_eq!(size.len(), level as usize);
         let id = self.table.len() as PrimId;
         self.id_map.insert(name.to_string(), id);
+
+        let mut bounds = vec![0; level as usize - 1];
+        for i in 0..(level as usize - 1) {
+            bounds[i] = source.1.bounds[i].max(target.1.bounds[i]);
+        }
+
+        let modify_bounds = |cell: &Rc<LayoutCell>, bounds: &Coord| {
+            let need_modify = bounds
+                .iter()
+                .enumerate()
+                .any(|(i, &b)| cell.1.bounds[i] < b);
+            if !need_modify {
+                return Rc::clone(cell);
+            }
+            let mut new_cell = cell.as_ref().clone();
+            for i in 0..(level as usize - 1) {
+                let b = bounds[i];
+                let cell_b = new_cell.1.bounds[i];
+                assert!(b >= cell_b);
+                if cell_b < b {
+                    assert!((b - cell_b) % 2 == 0);
+                    let offset = (b - cell_b) / 2;
+                    new_cell.1.min_pad[i] += offset;
+                    new_cell.1.max_pad[i] += offset;
+                    new_cell.1.bounds[i] = b;
+                }
+            }
+            Rc::new(new_cell)
+        };
+
+        let source = modify_bounds(source, &bounds);
+        let target = modify_bounds(target, &bounds);
+
+        bounds.push(bound);
         let mut offset = vec![0; level as usize];
         for i in 0..level as usize {
+            assert!((bounds[i] - size[i]) % 2 == 0);
             offset[i] = (bounds[i] - size[i]) / 2;
         }
 
-        let source = source.as_ref().clone();
-        let target = target.as_ref().clone();
-
         let cell = Rc::new(LayoutCell(
-            CellF::Prim(id, ShapeF::Succ(Rc::new(source), Rc::new(target))),
+            CellF::Prim(id, ShapeF::Succ(source, target)),
             Layout {
                 size,
-                offset,
+                min_pad: offset.clone(),
+                max_pad: offset,
                 bounds,
-                children: vec![],
             },
         ));
         let p = Prim {
@@ -83,46 +116,22 @@ impl PrimTable {
         let mut ps = Self::new();
         let a = ps.add_zero("A", 0, (255, 192, 128, 255));
         let b = ps.add_zero("B", 0, (128, 192, 255, 255));
-        let f = ps.add("f", 1, vec![10], vec![100], (192, 64, 64, 255), &a, &b);
-        let g = ps.add("g", 1, vec![10], vec![100], (96, 96, 192, 255), &a, &b);
-        ps.add(
-            "a",
-            2,
-            vec![20, 20],
-            vec![100, 100],
-            (255, 255, 255, 255),
-            &f,
-            &g,
-        );
-        let i = ps.add("i", 1, vec![10], vec![100], (128, 128, 128, 255), &a, &a);
-        ps.add(
-            "b",
-            2,
-            vec![20, 20],
-            vec![100, 100],
-            (255, 255, 255, 255),
-            &i,
-            &i,
-        );
+        let f = ps.add("f", 1, vec![10], 100, (192, 64, 64, 255), &a, &b);
+        let g = ps.add("g", 1, vec![10], 100, (96, 96, 192, 255), &a, &b);
+        ps.add("a", 2, vec![20, 20], 100, (255, 255, 255, 255), &f, &g);
+        let i = ps.add("i", 1, vec![10], 100, (128, 128, 128, 255), &a, &a);
+        ps.add("b", 2, vec![20, 20], 100, (255, 255, 255, 255), &i, &i);
         let ii = ps.comp(nonempty![Rc::clone(&i), Rc::clone(&f)], 0, 20);
         ps.add(
             "k",
             2,
             vec![20, 20],
-            vec![100, 100],
+            100,
             (64, 64, 64, 255),
             &i,
             &ps.id(&a, 100),
         );
-        ps.add(
-            "m",
-            2,
-            vec![20, 20],
-            vec![100, 100],
-            (64, 64, 64, 255),
-            &i,
-            &ii,
-        );
+        ps.add("m", 2, vec![20, 20], 100, (64, 64, 64, 255), &i, &ii);
         ps
     }
 
@@ -143,42 +152,56 @@ impl PrimTable {
     }
 
     pub fn comp(&self, cells: Vec1<Rc<LayoutCell>>, level: Level, len: u32) -> Rc<LayoutCell> {
+        assert!(len % 2 == 0);
+        let n = cells.len();
         let dim = cells.first().dim();
         let mut bounds = vec![0; dim];
         for cell in &cells {
             let layout = &cell.1;
             for i in 0..dim {
                 if i == level as usize {
-                    bounds[i] += layout.size[i];
+                    bounds[i] += layout.bounds[i];
                 } else {
-                    bounds[i] = bounds[i].max(layout.size[i]);
+                    bounds[i] = bounds[i].max(layout.bounds[i]);
                 }
             }
         }
-        bounds[level as usize] += len * (cells.len() as u32 - 1);
-        let mut offset = 0;
-        let mut children = vec![];
-        for cell in &cells {
-            let layout = &cell.1;
-            let mut min = vec![0; dim];
-            let mut max = vec![0; dim];
+        bounds[level as usize] += len * (n as u32 - 1);
+        let mut cells = cells;
+        for (index, cell) in cells.iter_mut().enumerate() {
+            let mut new_cell = cell.as_ref().clone();
+            let layout = &mut new_cell.1;
             for i in 0..dim {
                 if i == level as usize {
-                    min[i] = offset;
-                    max[i] = min[i] + layout.bounds[i];
-                    offset += layout.bounds[i] + len;
+                    // [0]-|-[1]-|-[2]
+                    if index != 0 {
+                        layout.min_pad[i] += len / 2;
+                        layout.bounds[i] += len / 2;
+                    }
+                    if index != n - 1 {
+                        layout.max_pad[i] += len / 2;
+                        layout.bounds[i] += len / 2;
+                    }
                 } else {
-                    min[i] = (bounds[i] - layout.bounds[i]) / 2;
-                    max[i] = min[i] + layout.bounds[i];
+                    let b = bounds[i];
+                    let cell_b = layout.bounds[i];
+                    assert!(b >= cell_b);
+                    if cell_b < b {
+                        assert!((b - cell_b) % 2 == 0);
+                        let offset = (b - cell_b) / 2;
+                        layout.min_pad[i] += offset;
+                        layout.max_pad[i] += offset;
+                        layout.bounds[i] = b;
+                    }
                 }
             }
-            children.push(Bounds { min, max });
+            *cell = Rc::new(new_cell);
         }
         let layout = Layout {
             size: bounds.clone(),
-            offset: vec![0; dim],
+            min_pad: vec![0; dim],
+            max_pad: vec![0; dim],
             bounds,
-            children,
         };
         Rc::new(LayoutCell(CellF::Comp(cells, level), layout))
     }

@@ -114,7 +114,17 @@ impl Slicer<'_> {
             }
             CellF::Comp(children, level) => {
                 if *level == 0 {
-                    for (i, (child, bounds)) in
+                    let mut offset = 0;
+                    for child in children {
+                        self.renderer.push();
+                        self.renderer.offset(offset, 0);
+
+                        self.render_1d(child, y_len);
+
+                        offset += child.1.bounds[self.x_axis];
+                        self.renderer.pop();
+                    }
+                    /* for (i, (child, bounds)) in
                         children.iter().zip(layout.children.iter()).enumerate()
                     {
                         self.renderer.push();
@@ -131,7 +141,7 @@ impl Slicer<'_> {
                             self.render_0d(&target, width, y_len);
                             self.renderer.pop();
                         }
-                    }
+                    } */
                     return;
                 } else {
                     unimplemented!()
@@ -140,7 +150,7 @@ impl Slicer<'_> {
         };
 
         let size_x = layout.size[self.x_axis];
-        let offset_x = layout.offset[self.x_axis];
+        let offset_x = layout.min_pad[self.x_axis];
         let bounds_x = layout.bounds[self.x_axis];
         let center_x = offset_x + size_x / 2;
 
@@ -182,7 +192,7 @@ impl Slicer<'_> {
         };
 
         let size_y = layout.size[self.y_axis];
-        let offset_y = layout.offset[self.y_axis];
+        let offset_y = layout.min_pad[self.y_axis];
         let bounds_y = layout.bounds[self.y_axis];
         let center_y = offset_y + size_y / 2;
 
@@ -193,7 +203,7 @@ impl Slicer<'_> {
         self.renderer.pop();
 
         let size_x = layout.size[self.x_axis];
-        let offset_x = layout.offset[self.x_axis];
+        let offset_x = layout.min_pad[self.x_axis];
         let center_x = offset_x + size_x / 2;
 
         self.renderer.set_color(prim.color);
