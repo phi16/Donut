@@ -46,10 +46,5 @@ impl App {
         self.renderer.offset(50, 50);
         self.renderer.render(&self.cell, 0, 1);
         self.renderer.pop();
-
-        self.renderer.push();
-        self.renderer.offset(0, 300);
-        self.renderer.test();
-        self.renderer.pop();
     }
 }

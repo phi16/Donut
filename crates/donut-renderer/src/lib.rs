@@ -24,7 +24,7 @@ impl Renderer {
         self.context.restore();
     }
 
-    pub fn set_color(&self, color: (u8, u8, u8, u8)) {
+    pub fn set_fill_color(&self, color: (u8, u8, u8, u8)) {
         let (r, g, b, a) = color;
         let str = if a == 255 {
             format!("rgb({} {} {})", r, g, b)
@@ -32,6 +32,17 @@ impl Renderer {
             format!("rgb({} {} {} / {})", r, g, b, a as f64 / 255.0)
         };
         self.context.set_fill_style_str(&str);
+    }
+
+    pub fn set_stroke_color(&self, color: (u8, u8, u8, u8), width: u32) {
+        let (r, g, b, a) = color;
+        let str = if a == 255 {
+            format!("rgb({} {} {})", r, g, b)
+        } else {
+            format!("rgb({} {} {} / {})", r, g, b, a as f64 / 255.0)
+        };
+        self.context.set_stroke_style_str(&str);
+        self.context.set_line_width(width as f64);
     }
 
     pub fn offset(&self, x: u32, y: u32) {
@@ -70,39 +81,6 @@ impl Renderer {
         self.context.fill();
     }
 
-    pub fn test(&self) {
-        self.set_color((255, 0, 0, 128));
-        self.context.begin_path();
-        let p0 = (100.0, 150.0);
-        let p1 = (200.0, 50.0);
-        self.context.move_to(p0.0, p0.1);
-        self.context.bezier_curve_to(
-            p0.0,
-            (p0.1 * 2.0 + p1.1) / 3.0,
-            p1.0,
-            (p0.1 + p1.1 * 2.0) / 3.0,
-            p1.0,
-            p1.1,
-        );
-        self.context.set_stroke_style_str("white");
-        self.context.set_line_width(5.0);
-        self.context.stroke();
-
-        self.context.begin_path();
-        self.context.translate(100.0, 0.0).unwrap();
-        self.context.move_to(p0.0, p0.1);
-        for i in 1..=10 {
-            let t = i as f64 / 10.0;
-            let x = (1.0 - t).powi(3) * p0.0
-                + 3.0 * (1.0 - t).powi(2) * t * p0.0
-                + 3.0 * (1.0 - t) * t.powi(2) * p1.0
-                + t.powi(3) * p1.0;
-            let y = p0.1 * (1.0 - t) + p1.1 * t;
-            self.context.line_to(x, y);
-        }
-        self.context.stroke();
-    }
-
     pub fn render(&self, cell: &Rc<LayoutCell>, x_axis: usize, y_axis: usize) {
         let slicer = Slicer::new(self, x_axis, y_axis);
         slicer.render_2d(cell);
@@ -132,7 +110,7 @@ impl Slicer<'_> {
             CellF::Comp(_, _, _) => unreachable!(), // TODO: extract prim
         };
 
-        self.renderer.set_color(prim.color);
+        self.renderer.set_fill_color(prim.color);
         self.renderer.rect(0, 0, x_len, y_len);
     }
 
@@ -158,7 +136,7 @@ impl Slicer<'_> {
                 self.renderer.pop();
 
                 let center_x = size_x / 2;
-                self.renderer.set_color(prim.color);
+                self.renderer.set_fill_color(prim.color);
                 self.renderer.rect(center_x - 5, 0, 10, y_len);
             }
             CellF::Id(inner) => {
@@ -225,7 +203,7 @@ impl Slicer<'_> {
 
                 let center_x = size_x / 2;
                 let center_y = size_y / 2;
-                self.renderer.set_color(prim.color);
+                self.renderer.set_fill_color(prim.color);
                 self.renderer.circle(center_x, center_y, 10);
 
                 self.renderer.frame(0, 0, size_x, size_y);
@@ -353,31 +331,39 @@ impl Slicer<'_> {
         self.render_0d(&pc0.cell, x_len, y_len);
     }
 
-    pub fn extract_1d(&self, pc: &PaddedCell, cs: &mut Vec<(Rc<LayoutCell>, u32)>) {
+    pub fn extract_0d(&self, cell: &Rc<LayoutCell>) -> PrimId {
+        assert!(cell.dim() == 0);
+        match &cell.0 {
+            CellF::Prim(id, _) => *id,
+            CellF::Id(_) => unreachable!(),
+            CellF::Comp(_, _, _) => unreachable!(),
+        }
+    }
+
+    pub fn extract_1d(&self, pc: &PaddedCell, cs: &mut Vec<(PrimId, u32)>) {
         let cell = &pc.cell;
-        let mut add = |c: &Rc<LayoutCell>, l: u32| {
-            if let Some((last_c, last_l)) = cs.last_mut() {
-                if Rc::ptr_eq(last_c, c) {
-                    // note: is this too strict?
+        let mut add = |p: PrimId, l: u32| {
+            if let Some((last_p, last_l)) = cs.last_mut() {
+                if *last_p == p {
                     *last_l += l;
                     return;
                 }
             }
-            cs.push((Rc::clone(c), l));
+            cs.push((p, l));
         };
         match &cell.0 {
-            CellF::Prim(_, shape) => {
+            CellF::Prim(prim_id, shape) => {
                 let (source, target) = match shape {
                     ShapeF::Zero => unreachable!(),
-                    ShapeF::Succ(s, t) => (s, t),
+                    ShapeF::Succ(s, t) => (&s.cell, &t.cell),
                 };
-                add(&source.cell, cell.1.size[self.x_axis] / 2 - 5);
-                add(cell, 10);
-                add(&target.cell, cell.1.size[self.x_axis] / 2 - 5);
+                add(self.extract_0d(source), cell.1.size[self.x_axis] / 2);
+                add(*prim_id, 0);
+                add(self.extract_0d(target), cell.1.size[self.x_axis] / 2);
             }
             CellF::Id(inner) => {
                 if self.x_axis == cell.dim() - 1 {
-                    add(inner, cell.1.size[self.x_axis]);
+                    add(self.extract_0d(inner), cell.1.size[self.x_axis]);
                 } else {
                     unimplemented!()
                 }
@@ -399,37 +385,13 @@ impl Slicer<'_> {
         self.extract_1d(pc0, &mut cs0);
         self.extract_1d(pc1, &mut cs1);
 
-        self.padded_1d(pc0, y_len);
-        self.padded_1d(pc1, y_len);
-
-        /* self.renderer.push();
-        let mut j = 0;
-        for (c, l) in &cs0 {
-            self.renderer.set_color((j, j, j, 255));
-            self.renderer.rect(0, 0, *l, 5);
-            self.renderer.offset(*l, 0);
-            j = 255 - j;
-        }
-        self.renderer.pop();
-
         self.renderer.push();
-        self.renderer.offset(0, y_len - 5);
-        let mut j = 0;
-        for (c, l) in &cs1 {
-            self.renderer.set_color((j, j, j, 255));
-            self.renderer.rect(0, 0, *l, 5);
-            self.renderer.offset(*l, 0);
-            j = 255 - j;
-        }
-        self.renderer.pop(); */
-
         let mut offset0 = pc0.pad.min[self.x_axis];
         let mut offset1 = pc1.pad.min[self.x_axis];
-        self.renderer.push();
-        for (index, ((c0, l0), (c1, l1))) in cs0.iter().zip(cs1.iter()).enumerate() {
-            if index % 2 == 1 {
-                let x0 = offset0 + l0 / 2;
-                let x1 = offset1 + l1 / 2;
+        for (index, ((c0, l0), (_c1, l1))) in cs0.iter().zip(cs1.iter()).enumerate() {
+            if index % 2 == 0 {
+                let x0 = offset0;
+                let x1 = offset1;
                 let y0 = 0;
                 let y1 = y_len;
                 let yc = (y0 + y1) / 2;
@@ -438,8 +400,35 @@ impl Slicer<'_> {
                 self.renderer.context.bezier_curve_to(
                     x0 as f64, yc as f64, x1 as f64, yc as f64, x1 as f64, y1 as f64,
                 );
-                self.renderer.context.set_stroke_style_str("white");
-                self.renderer.context.set_line_width(10.0);
+                let x0 = offset0 + l0;
+                let x1 = offset1 + l1;
+                self.renderer.context.line_to(x1 as f64, y1 as f64);
+                self.renderer.context.bezier_curve_to(
+                    x1 as f64, yc as f64, x0 as f64, yc as f64, x0 as f64, y0 as f64,
+                );
+                let color = self.renderer.prim_table.get(*c0).unwrap().color;
+                self.renderer.set_fill_color(color);
+                self.renderer.context.fill();
+            }
+            offset0 += l0;
+            offset1 += l1;
+        }
+        let mut offset0 = pc0.pad.min[self.x_axis];
+        let mut offset1 = pc1.pad.min[self.x_axis];
+        for (index, ((c0, l0), (_c1, l1))) in cs0.iter().zip(cs1.iter()).enumerate() {
+            if index % 2 == 1 {
+                let x0 = offset0;
+                let x1 = offset1;
+                let y0 = 0;
+                let y1 = y_len;
+                let yc = (y0 + y1) / 2;
+                self.renderer.context.begin_path();
+                self.renderer.context.move_to(x0 as f64, y0 as f64);
+                self.renderer.context.bezier_curve_to(
+                    x0 as f64, yc as f64, x1 as f64, yc as f64, x1 as f64, y1 as f64,
+                );
+                let color = self.renderer.prim_table.get(*c0).unwrap().color;
+                self.renderer.set_stroke_color(color, 10);
                 self.renderer.context.stroke();
             }
             offset0 += l0;
