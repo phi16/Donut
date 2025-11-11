@@ -96,12 +96,12 @@ impl PrimTable {
 
     pub fn default() -> Self {
         let mut ps = Self::new();
-        let a = ps.add_zero("A", 0, (255, 192, 128, 192));
+        let a = ps.add_zero("A", 0, (32, 32, 128, 192));
         let b = ps.add_zero("B", 0, (128, 192, 255, 255));
         let f = ps.add("f", 1, vec![10], 100, (192, 64, 64, 255), &a, &b);
         let g = ps.add("g", 1, vec![10], 100, (96, 96, 192, 255), &a, &b);
         ps.add("a", 2, vec![20, 20], 100, (255, 255, 255, 255), &f, &g);
-        let i = ps.add("i", 1, vec![10], 100, (128, 128, 128, 255), &a, &a);
+        let i = ps.add("i", 1, vec![10], 100, (64, 128, 255, 255), &a, &a);
         ps.add("b", 2, vec![20, 20], 100, (255, 255, 255, 255), &i, &i);
         let ii = ps.comp(nonempty![Rc::clone(&i), Rc::clone(&i)], 0, 20);
         let ij = ps.comp(nonempty![Rc::clone(&i), Rc::clone(&i)], 0, 40);
@@ -114,8 +114,8 @@ impl PrimTable {
             &i,
             &ps.id(&a, 100),
         );
-        ps.add("m", 2, vec![20, 20], 100, (64, 64, 64, 255), &i, &ii);
-        ps.add("w", 2, vec![20, 20], 100, (192, 64, 192, 255), &ij, &i);
+        ps.add("m", 2, vec![20, 20], 100, (255, 128, 128, 255), &i, &ii);
+        ps.add("w", 2, vec![20, 20], 100, (128, 255, 128, 255), &ij, &i);
         ps
     }
 
