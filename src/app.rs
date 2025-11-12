@@ -1,6 +1,6 @@
 use donut_core::cell::*;
 use donut_core::table::*;
-use donut_renderer::Renderer;
+use donut_renderer::render::Renderer;
 use donut_util::println;
 use nonempty::nonempty;
 use std::rc::Rc;
