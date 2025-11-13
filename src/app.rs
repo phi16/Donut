@@ -1,6 +1,7 @@
 use donut_core::cell::*;
 use donut_core::table::*;
 use donut_renderer::geometry::extract_geometry;
+use donut_renderer::geometry::Geometry;
 use donut_renderer::render::Renderer;
 use donut_util::println;
 use nonempty::nonempty;
@@ -12,6 +13,7 @@ pub struct App {
     context: web_sys::CanvasRenderingContext2d,
     prim_table: Rc<PrimTable>,
     cell: Rc<LayoutCell>,
+    geometry: Geometry,
 }
 
 impl App {
@@ -42,6 +44,7 @@ impl App {
             context,
             prim_table,
             cell,
+            geometry: g,
         }
     }
 
@@ -53,6 +56,8 @@ impl App {
         self.renderer.push();
         self.renderer.offset(50, 50);
         self.renderer.render(&self.cell, 0, 1);
+        self.renderer.offset(150, 0);
+        self.renderer.render_geometry(&self.geometry);
         self.renderer.pop();
     }
 }

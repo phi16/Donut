@@ -3,6 +3,9 @@ use donut_core::table::*;
 use donut_util::println;
 use std::rc::Rc;
 
+use crate::geometry::Cube;
+use crate::geometry::Geometry;
+
 pub struct Renderer {
     context: web_sys::CanvasRenderingContext2d,
     prim_table: Rc<PrimTable>,
@@ -84,6 +87,79 @@ impl Renderer {
     pub fn render(&self, cell: &Rc<LayoutCell>, x_axis: usize, y_axis: usize) {
         let slicer = Slicer::new(self, x_axis, y_axis);
         slicer.render_2d(cell);
+    }
+
+    pub fn render_geometry(&self, g: &Geometry) {
+        for (dim, elements) in g.elements.iter().enumerate().rev() {
+            if dim >= 3 {
+                continue;
+            }
+            for element in elements {
+                let color = self.prim_table.get(element.prim_id).unwrap().color;
+                if dim == 0 {
+                    self.set_fill_color(color);
+                    let (x, y) = match &element.cube {
+                        Cube::Point(p) => (p[0], p[1]),
+                        _ => panic!(),
+                    };
+                    self.circle(x, y, 10);
+                } else if dim == 1 {
+                    self.set_stroke_color(color, 10);
+                    let (x0, y0, x1, y1) = match &element.cube {
+                        Cube::Wire { g0, x0, g1, x1, .. } => {
+                            let p0 = match &**g0 {
+                                Cube::Point(p) => p[0],
+                                _ => panic!(),
+                            };
+                            let p1 = match &**g1 {
+                                Cube::Point(p) => p[0],
+                                _ => panic!(),
+                            };
+                            (p0, *x0, p1, *x1)
+                        }
+                        _ => panic!(),
+                    };
+                    let yc = (y0 + y1) / 2;
+                    self.context.begin_path();
+                    self.context.move_to(x0 as f64, y0 as f64);
+                    self.context.bezier_curve_to(
+                        x0 as f64, yc as f64, x1 as f64, yc as f64, x1 as f64, y1 as f64,
+                    );
+                    self.context.stroke();
+                } else if dim == 2 {
+                    self.set_fill_color(color);
+                    let (x0l, x0r, y0, x1l, x1r, y1) = match &element.cube {
+                        Cube::Wire { g0, x0, g1, x1, .. } => {
+                            let (p0l, p0r) = match &**g0 {
+                                Cube::Wire { g0, x0, g1, x1, .. } => (*x0, *x1),
+                                _ => panic!(),
+                            };
+                            let (p1l, p1r) = match &**g1 {
+                                Cube::Wire { g0, x0, g1, x1, .. } => (*x0, *x1),
+                                _ => panic!(),
+                            };
+                            (p0l, p0r, *x0, p1l, p1r, *x1)
+                        }
+                        _ => panic!(),
+                    };
+                    let yc = (y0 + y1) / 2;
+
+                    self.context.begin_path();
+                    self.context.move_to(x0l as f64, y0 as f64);
+                    self.context.bezier_curve_to(
+                        x0l as f64, yc as f64, x1l as f64, yc as f64, x1l as f64, y1 as f64,
+                    );
+                    self.context.line_to(x1r as f64, y1 as f64);
+                    self.context.bezier_curve_to(
+                        x1r as f64, yc as f64, x0r as f64, yc as f64, x0r as f64, y0 as f64,
+                    );
+                    self.context.fill();
+                }
+            }
+        }
+        let x_axis = 0;
+        let y_axis = 1;
+        self.frame(0, 0, g.size[x_axis], g.size[y_axis]);
     }
 }
 
