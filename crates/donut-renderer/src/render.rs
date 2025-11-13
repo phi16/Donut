@@ -5,6 +5,7 @@ use std::rc::Rc;
 
 use crate::geometry::Cube;
 use crate::geometry::Geometry;
+use crate::geometry::WireStyle;
 
 pub struct Renderer {
     context: web_sys::CanvasRenderingContext2d,
@@ -105,8 +106,14 @@ impl Renderer {
                     self.circle(x, y, 10);
                 } else if dim == 1 {
                     self.set_stroke_color(color, 10);
-                    let (x0, y0, x1, y1) = match &element.cube {
-                        Cube::Wire { g0, x0, g1, x1, .. } => {
+                    let (x0, y0, x1, y1, style) = match &element.cube {
+                        Cube::Wire {
+                            g0,
+                            x0,
+                            g1,
+                            x1,
+                            style,
+                        } => {
                             let p0 = match &**g0 {
                                 Cube::Point(p) => p[0],
                                 _ => panic!(),
@@ -115,7 +122,7 @@ impl Renderer {
                                 Cube::Point(p) => p[0],
                                 _ => panic!(),
                             };
-                            (p0, *x0, p1, *x1)
+                            (p0, *x0, p1, *x1, style)
                         }
                         _ => panic!(),
                     };
@@ -128,17 +135,35 @@ impl Renderer {
                     self.context.stroke();
                 } else if dim == 2 {
                     self.set_fill_color(color);
-                    let (x0l, x0r, y0, x1l, x1r, y1) = match &element.cube {
-                        Cube::Wire { g0, x0, g1, x1, .. } => {
-                            let (p0l, p0r) = match &**g0 {
-                                Cube::Wire { g0, x0, g1, x1, .. } => (*x0, *x1),
+                    let (x0l, x0r, y0, x1l, x1r, y1, style, style0, style1) = match &element.cube {
+                        Cube::Wire {
+                            g0,
+                            x0,
+                            g1,
+                            x1,
+                            style,
+                        } => {
+                            let (p0l, p0r, style0) = match &**g0 {
+                                Cube::Wire {
+                                    g0,
+                                    x0,
+                                    g1,
+                                    x1,
+                                    style,
+                                } => (*x0, *x1, style.clone()),
                                 _ => panic!(),
                             };
-                            let (p1l, p1r) = match &**g1 {
-                                Cube::Wire { g0, x0, g1, x1, .. } => (*x0, *x1),
+                            let (p1l, p1r, style1) = match &**g1 {
+                                Cube::Wire {
+                                    g0,
+                                    x0,
+                                    g1,
+                                    x1,
+                                    style,
+                                } => (*x0, *x1, style.clone()),
                                 _ => panic!(),
                             };
-                            (p0l, p0r, *x0, p1l, p1r, *x1)
+                            (p0l, p0r, *x0, p1l, p1r, *x1, style, style0, style1)
                         }
                         _ => panic!(),
                     };

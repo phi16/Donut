@@ -31,7 +31,7 @@ impl App {
         let g2 = prim_table.comp(nonempty![Rc::clone(&w), Rc::clone(&ij)], 0, 20);
         let cell = prim_table.comp(nonempty![g1, g2], 1, 40);
 
-        let test_cell = prim_table.prim("U");
+        let test_cell = cell; // prim_table.prim("w");
         println(&format!("Cell: {:#?}", test_cell));
         let g = extract_geometry(&test_cell);
         println(&format!("Geometry: {:#?}", g));
@@ -56,7 +56,7 @@ impl App {
         self.renderer.push();
         self.renderer.offset(50, 50);
         self.renderer.render(&self.cell, 0, 1);
-        self.renderer.offset(150, 0);
+        self.renderer.offset(450, 0);
         self.renderer.render_geometry(&self.geometry);
         self.renderer.pop();
     }

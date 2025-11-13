@@ -17,7 +17,7 @@ pub enum Cube {
         x0: u32,
         g1: Rc<Cube>,
         x1: u32,
-        shape: WireStyle,
+        style: WireStyle,
     },
 }
 
@@ -48,7 +48,7 @@ impl Cube {
                 x0,
                 g1,
                 x1,
-                shape,
+                style,
             } => {
                 assert!(dim > 0);
                 let xc = center[dim - 1];
@@ -67,8 +67,36 @@ impl Cube {
                     x0,
                     g1: Rc::new(g1.shrink(&center[..dim - 1], &size[..dim - 1])),
                     x1,
-                    shape: shape.clone(),
+                    style: style.clone(),
                 }
+            }
+        }
+    }
+
+    fn offset(&mut self, offset: &[u32]) {
+        let dim = offset.len();
+        match self {
+            Cube::Point(p) => {
+                assert_eq!(p.len(), dim);
+                for (i, o) in offset.iter().enumerate() {
+                    p[i] += *o;
+                }
+            }
+            Cube::Wire {
+                g0,
+                x0,
+                g1,
+                x1,
+                style: _,
+            } => {
+                *x0 += offset[dim - 1];
+                *x1 += offset[dim - 1];
+                let mut c0 = g0.as_ref().clone();
+                c0.offset(&offset[..dim - 1]);
+                *g0 = Rc::new(c0);
+                let mut c1 = g1.as_ref().clone();
+                c1.offset(&offset[..dim - 1]);
+                *g1 = Rc::new(c1);
             }
         }
     }
@@ -76,7 +104,6 @@ impl Cube {
 
 #[derive(Debug, Clone)]
 pub struct Element {
-    // pub offset: Coord,
     pub cube: Cube,
     pub prim_id: PrimId,
 }
@@ -105,6 +132,19 @@ impl Geometry {
             self.elements[dim].extend(elements);
         }
     }
+    pub fn insert_with_offset(&mut self, offset: &Coord, other: Vec<Vec<Element>>) {
+        let dim = offset.len();
+        assert_eq!(dim, self.size.len());
+        assert_eq!(dim + 1, self.elements.len());
+        assert_eq!(dim + 1, other.len());
+        for (dim, elements) in other.into_iter().enumerate() {
+            for element in elements {
+                let mut element = element;
+                element.cube.offset(offset);
+                self.elements[dim].push(element);
+            }
+        }
+    }
 
     pub fn id(&self, x0: u32, x1: u32) -> Vec<Vec<Element>> {
         let mut ess = vec![vec![]; self.elements.len() + 1];
@@ -116,7 +156,7 @@ impl Geometry {
                     x0,
                     g1: face,
                     x1,
-                    shape: WireStyle::Smooth,
+                    style: WireStyle::Smooth,
                 };
                 let prim_id = element.prim_id;
                 let e = Element { cube, prim_id };
@@ -180,7 +220,7 @@ impl Builder {
                                     x0: offset,
                                     g1: Rc::new(shrinked),
                                     x1: offset + size / 2,
-                                    shape: WireStyle::Smooth,
+                                    style: WireStyle::Shrink1,
                                 };
                                 let prim_id = element.prim_id;
                                 let e = Element { cube, prim_id };
@@ -196,7 +236,7 @@ impl Builder {
                                     x0: offset + size / 2,
                                     g1: Rc::new(element.cube),
                                     x1: offset + size,
-                                    shape: WireStyle::Smooth,
+                                    style: WireStyle::Shrink0,
                                 };
                                 let prim_id = element.prim_id;
                                 let e = Element { cube, prim_id };
@@ -231,7 +271,15 @@ impl Builder {
                 geometry.elements = inner.id(0, bound);
             }
             CellF::Comp(children, level, inner_pads) => {
-                unimplemented!()
+                let mut offset = pc.pad.min.clone(); // vec![0; layout.size.len()];
+                for (index, child) in children.iter().enumerate() {
+                    let child_geometry = self.cell(child);
+                    geometry.insert_with_offset(&offset, child_geometry.elements);
+                    if index < children.len() - 1 {
+                        offset[*level as usize] +=
+                            inner_pads[index] + child.size()[*level as usize];
+                    }
+                }
             }
         }
         geometry
