@@ -88,6 +88,15 @@ impl PaddedCell {
         self.cell.dim()
     }
 
+    pub fn size(&self) -> Coord {
+        let base_size = &self.cell.1.size;
+        base_size
+            .iter()
+            .enumerate()
+            .map(|(i, s)| s + self.pad.min[i] + self.pad.max[i])
+            .collect()
+    }
+
     pub fn extend(&self, pad: &Padding) -> Self {
         // accepts higher padding
         assert!(self.pad.min.len() <= pad.min.len());
