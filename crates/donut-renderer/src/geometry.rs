@@ -13,10 +13,10 @@ pub enum WireStyle {
 pub enum Cube {
     Point(Coord),
     Wire {
-        x0: u32,
         g0: Rc<Cube>,
-        x1: u32,
+        x0: u32,
         g1: Rc<Cube>,
+        x1: u32,
         shape: WireStyle,
     },
 }
@@ -44,10 +44,10 @@ impl Cube {
                 Cube::Point(p)
             }
             Cube::Wire {
-                x0,
                 g0,
-                x1,
+                x0,
                 g1,
+                x1,
                 shape,
             } => {
                 assert!(dim > 0);
@@ -63,10 +63,10 @@ impl Cube {
                 }
 
                 Cube::Wire {
-                    x0,
                     g0: Rc::new(g0.shrink(&center[..dim - 1], &size[..dim - 1])),
-                    x1,
+                    x0,
                     g1: Rc::new(g1.shrink(&center[..dim - 1], &size[..dim - 1])),
+                    x1,
                     shape: shape.clone(),
                 }
             }
@@ -112,10 +112,10 @@ impl Geometry {
             for element in elements {
                 let face = Rc::new(element.cube.clone());
                 let cube = Cube::Wire {
-                    x0,
                     g0: Rc::clone(&face),
-                    x1,
+                    x0,
                     g1: face,
+                    x1,
                     shape: WireStyle::Smooth,
                 };
                 let prim_id = element.prim_id;
@@ -176,10 +176,10 @@ impl Builder {
                             for element in elements {
                                 let shrinked = element.cube.shrink(center_slice, &source.size[..]);
                                 let cube = Cube::Wire {
-                                    x0: offset,
                                     g0: Rc::new(element.cube),
-                                    x1: offset + size / 2,
+                                    x0: offset,
                                     g1: Rc::new(shrinked),
+                                    x1: offset + size / 2,
                                     shape: WireStyle::Smooth,
                                 };
                                 let prim_id = element.prim_id;
@@ -192,10 +192,10 @@ impl Builder {
                             for element in elements {
                                 let shrinked = element.cube.shrink(center_slice, &target.size[..]);
                                 let cube = Cube::Wire {
-                                    x0: offset + size / 2,
                                     g0: Rc::new(shrinked),
-                                    x1: offset + size,
+                                    x0: offset + size / 2,
                                     g1: Rc::new(element.cube),
+                                    x1: offset + size,
                                     shape: WireStyle::Smooth,
                                 };
                                 let prim_id = element.prim_id;
