@@ -1,5 +1,6 @@
 use donut_core::cell::*;
 use donut_core::table::*;
+use donut_renderer::geometry::extract_geometry;
 use donut_renderer::render::Renderer;
 use donut_util::println;
 use nonempty::nonempty;
@@ -27,6 +28,13 @@ impl App {
         let g1 = prim_table.comp(nonempty![Rc::clone(&ii), Rc::clone(&m)], 0, 80);
         let g2 = prim_table.comp(nonempty![Rc::clone(&w), Rc::clone(&ij)], 0, 20);
         let cell = prim_table.comp(nonempty![g1, g2], 1, 40);
+
+        let test_cell = prim_table.prim("U");
+        println(&format!("Cell: {:#?}", test_cell));
+        let g = extract_geometry(&test_cell);
+        println(&format!("Geometry: {:#?}", g));
+
+        let cell = test_cell;
 
         Self {
             renderer: Renderer::new(context.clone(), Rc::clone(&prim_table)),

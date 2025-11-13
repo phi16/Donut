@@ -88,13 +88,17 @@ impl PaddedCell {
         self.cell.dim()
     }
 
-    fn extend(&self, pad: &Padding) -> Self {
+    pub fn extend(&self, pad: &Padding) -> Self {
         // accepts higher padding
         assert!(self.pad.min.len() <= pad.min.len());
         assert!(self.pad.max.len() <= pad.max.len());
 
         let mut new_pad = self.pad.clone();
         for i in 0..new_pad.min.len() {
+            // TODO: is there a complex situation where the following fails?
+            assert_eq!(pad.min[i], 0);
+            assert_eq!(pad.max[i], 0);
+
             new_pad.min[i] += pad.min[i];
             new_pad.max[i] += pad.max[i];
         }
