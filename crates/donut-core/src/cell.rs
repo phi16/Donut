@@ -104,10 +104,6 @@ impl PaddedCell {
 
         let mut new_pad = self.pad.clone();
         for i in 0..new_pad.min.len() {
-            // TODO: is there a complex situation where the following fails?
-            assert_eq!(pad.min[i], 0);
-            assert_eq!(pad.max[i], 0);
-
             new_pad.min[i] += pad.min[i];
             new_pad.max[i] += pad.max[i];
         }

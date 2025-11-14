@@ -32,9 +32,9 @@ impl App {
         let cell = prim_table.comp(nonempty![g1, g2], 1, 40);
 
         let test_cell = cell; // prim_table.prim("w");
-        println(&format!("Cell: {:#?}", test_cell));
+                              // println(&format!("Cell: {:#?}", test_cell));
         let g = extract_geometry(&test_cell);
-        println(&format!("Geometry: {:#?}", g));
+        // println(&format!("Geometry: {:#?}", g));
 
         let cell = test_cell;
 

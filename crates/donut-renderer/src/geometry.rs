@@ -200,16 +200,17 @@ impl Builder {
                         let offset = pc.pad.min[dim - 1];
                         let size = layout.size[dim - 1];
                         let bound = geometry.size[dim - 1];
-                        let center = layout.size.iter().map(|s| *s / 2).collect::<Vec<_>>();
+                        let center = layout
+                            .size
+                            .iter()
+                            .zip(pc.pad.min.iter())
+                            .map(|(s, p)| *s / 2 + *p)
+                            .collect::<Vec<_>>();
                         let center_slice = &center[..dim - 1];
 
-                        // padding
-                        if offset > 0 {
-                            geometry.insert(source.id(0, offset));
-                        }
-                        if offset + size < bound {
-                            geometry.insert(target.id(offset + size, bound));
-                        }
+                        // always insert paddings to keep geometry structure always the same
+                        geometry.insert(source.id(0, offset));
+                        geometry.insert(target.id(offset + size, bound));
 
                         // source --- self
                         for (dim, elements) in source.elements.into_iter().enumerate() {
@@ -245,8 +246,6 @@ impl Builder {
                         }
 
                         // self
-                        let mut center = layout.size.iter().map(|s| *s / 2).collect::<Vec<_>>();
-                        center[dim - 1] += offset;
                         let point = Cube::Point(center);
                         geometry.add_element(
                             0,
@@ -271,18 +270,68 @@ impl Builder {
                 geometry.elements = inner.id(0, bound);
             }
             CellF::Comp(children, level, inner_pads) => {
-                let mut offset = pc.pad.min.clone(); // vec![0; layout.size.len()];
-                for (index, child) in children.iter().enumerate() {
-                    let child_geometry = self.cell(child);
+                let n = children.len();
+                let mut pad = pc.pad.clone();
+                let children = children
+                    .iter()
+                    .enumerate()
+                    .map(|(index, c)| {
+                        pad.min[*level as usize] = if index == 0 {
+                            pc.pad.min[*level as usize]
+                        } else {
+                            0
+                        };
+                        pad.max[*level as usize] = if index == n - 1 {
+                            pc.pad.max[*level as usize]
+                        } else {
+                            0
+                        };
+                        c.extend(&pad)
+                    })
+                    .collect::<Vec<_>>();
+                let mut offset = vec![0; layout.size.len()];
+                for index in 0..n {
+                    let child = &children[index];
+                    let child_geometry = self.cell(&child);
                     geometry.insert_with_offset(&offset, child_geometry.elements);
+                    offset[*level as usize] += child.size()[*level as usize];
                     if index < children.len() - 1 {
-                        offset[*level as usize] +=
-                            inner_pads[index] + child.size()[*level as usize];
+                        let width = inner_pads[index];
+                        let mut bridge_size = child.size();
+                        bridge_size[*level as usize] = width;
+                        let g = self.bridge(
+                            &child.target(*level),
+                            &children[index + 1].source(*level),
+                            *level,
+                            bridge_size,
+                        );
+                        geometry.insert_with_offset(&offset, g.elements);
+                        offset[*level as usize] += width;
                     }
                 }
             }
         }
         geometry
+    }
+
+    fn bridge(&mut self, s: &PaddedCell, t: &PaddedCell, level: Level, size: Coord) -> Geometry {
+        // level:         2
+        // s.size: [A, B, X]
+        // t.size: [A, B, Y]
+        // size:   [A, B, Z, D, E]
+        assert_eq!(s.cell.dim(), t.cell.dim());
+        assert_eq!(s.cell.dim(), level as usize);
+        assert_eq!(size[..level as usize], s.size()[..level as usize]);
+        assert_eq!(size[..level as usize], t.size()[..level as usize]);
+        if (level as usize) + 1 < s.size().len() {
+            assert_eq!(
+                s.size()[level as usize + 1..],
+                t.size()[level as usize + 1..]
+            );
+        }
+
+        println(&format!("Bridge: level={}, size={:?}", level, size));
+        Geometry::new(size)
     }
 }
 
