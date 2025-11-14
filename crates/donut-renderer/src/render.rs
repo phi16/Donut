@@ -126,16 +126,31 @@ impl Renderer {
                         }
                         _ => panic!(),
                     };
+                    let xc = (x0 + x1) / 2;
                     let yc = (y0 + y1) / 2;
                     self.context.begin_path();
                     self.context.move_to(x0 as f64, y0 as f64);
-                    self.context.bezier_curve_to(
-                        x0 as f64, yc as f64, x1 as f64, yc as f64, x1 as f64, y1 as f64,
-                    );
+                    match style {
+                        WireStyle::Smooth => {
+                            self.context.bezier_curve_to(
+                                x0 as f64, yc as f64, x1 as f64, yc as f64, x1 as f64, y1 as f64,
+                            );
+                        }
+                        WireStyle::Shrink0 => {
+                            self.context.bezier_curve_to(
+                                xc as f64, y0 as f64, x1 as f64, yc as f64, x1 as f64, y1 as f64,
+                            );
+                        }
+                        WireStyle::Shrink1 => {
+                            self.context.bezier_curve_to(
+                                x0 as f64, yc as f64, xc as f64, y1 as f64, x1 as f64, y1 as f64,
+                            );
+                        }
+                    }
                     self.context.stroke();
                 } else if dim == 2 {
                     self.set_fill_color(color);
-                    let (x0l, x0r, y0, x1l, x1r, y1, style, style0, style1) = match &element.cube {
+                    let (x0l, x0r, y0, x1l, x1r, y1, style) = match &element.cube {
                         Cube::Wire {
                             g0,
                             x0,
@@ -143,41 +158,71 @@ impl Renderer {
                             x1,
                             style,
                         } => {
-                            let (p0l, p0r, style0) = match &**g0 {
+                            let (p0l, p0r) = match &**g0 {
                                 Cube::Wire {
-                                    g0,
+                                    g0: _,
                                     x0,
-                                    g1,
+                                    g1: _,
                                     x1,
-                                    style,
-                                } => (*x0, *x1, style.clone()),
+                                    style: _,
+                                } => (*x0, *x1),
                                 _ => panic!(),
                             };
-                            let (p1l, p1r, style1) = match &**g1 {
+                            let (p1l, p1r) = match &**g1 {
                                 Cube::Wire {
-                                    g0,
+                                    g0: _,
                                     x0,
-                                    g1,
+                                    g1: _,
                                     x1,
-                                    style,
-                                } => (*x0, *x1, style.clone()),
+                                    style: _,
+                                } => (*x0, *x1),
                                 _ => panic!(),
                             };
-                            (p0l, p0r, *x0, p1l, p1r, *x1, style, style0, style1)
+                            (p0l, p0r, *x0, p1l, p1r, *x1, style)
                         }
                         _ => panic!(),
                     };
+                    let xcl = (x0l + x1l) / 2;
+                    let xcr = (x0r + x1r) / 2;
                     let yc = (y0 + y1) / 2;
 
                     self.context.begin_path();
                     self.context.move_to(x0l as f64, y0 as f64);
-                    self.context.bezier_curve_to(
-                        x0l as f64, yc as f64, x1l as f64, yc as f64, x1l as f64, y1 as f64,
-                    );
+                    match style {
+                        WireStyle::Smooth => {
+                            self.context.bezier_curve_to(
+                                x0l as f64, yc as f64, x1l as f64, yc as f64, x1l as f64, y1 as f64,
+                            );
+                        }
+                        WireStyle::Shrink0 => {
+                            self.context.bezier_curve_to(
+                                xcl as f64, y0 as f64, x1l as f64, yc as f64, x1l as f64, y1 as f64,
+                            );
+                        }
+                        WireStyle::Shrink1 => {
+                            self.context.bezier_curve_to(
+                                x0l as f64, yc as f64, xcl as f64, y1 as f64, x1l as f64, y1 as f64,
+                            );
+                        }
+                    }
                     self.context.line_to(x1r as f64, y1 as f64);
-                    self.context.bezier_curve_to(
-                        x1r as f64, yc as f64, x0r as f64, yc as f64, x0r as f64, y0 as f64,
-                    );
+                    match style {
+                        WireStyle::Smooth => {
+                            self.context.bezier_curve_to(
+                                x1r as f64, yc as f64, x0r as f64, yc as f64, x0r as f64, y0 as f64,
+                            );
+                        }
+                        WireStyle::Shrink0 => {
+                            self.context.bezier_curve_to(
+                                x1r as f64, yc as f64, xcr as f64, y0 as f64, x0r as f64, y0 as f64,
+                            );
+                        }
+                        WireStyle::Shrink1 => {
+                            self.context.bezier_curve_to(
+                                xcr as f64, y1 as f64, x0r as f64, yc as f64, x0r as f64, y0 as f64,
+                            );
+                        }
+                    }
                     self.context.fill();
                 }
             }
