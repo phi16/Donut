@@ -54,18 +54,22 @@ impl Cube {
                 let xc = center[dim - 1];
                 let bound = size[dim - 1];
                 let mut x0 = *x0;
+                let mut g0 = Rc::clone(g0);
                 let mut x1 = *x1;
+                let mut g1 = Rc::clone(g1);
                 if 0 < x0 && x0 < bound {
                     x0 = xc;
+                    g0 = Rc::new(g0.shrink(&center[..dim - 1], &size[..dim - 1]));
                 }
                 if 0 < x1 && x1 < bound {
                     x1 = xc;
+                    g1 = Rc::new(g1.shrink(&center[..dim - 1], &size[..dim - 1]));
                 }
 
                 Cube::Wire {
-                    g0: Rc::new(g0.shrink(&center[..dim - 1], &size[..dim - 1])),
+                    g0,
                     x0,
-                    g1: Rc::new(g1.shrink(&center[..dim - 1], &size[..dim - 1])),
+                    g1,
                     x1,
                     style: style.clone(),
                 }
@@ -329,6 +333,32 @@ impl Builder {
                 t.size()[level as usize + 1..]
             );
         }
+
+        // contains only Prims and Comps (different level)
+        // Note: Id-only case? (id-id-id ?)
+        /* fn extract(pc: &PaddedCell, level: Level) -> Vec<PaddedCell> {
+            match &pc.cell.0 {
+                CellF::Prim(_, _) => unimplemented!(),
+                CellF::Id(inner) => {
+                    unimplemented!()
+                }
+                CellF::Comp(ref children, l, _) if l != level => children
+                    .iter()
+                    .map(|c| {
+                        let child_pc = PaddedCell {
+                            cell: Rc::clone(c),
+                            pad: pc.pad.clone(),
+                        };
+                        extract(&child_pc, level)
+                    })
+                    .flatten()
+                    .collect(),
+                _ => panic!(
+                    "Bridge source/target must contain only Prims and Comps (different level)"
+                ),
+            }
+            unimplemented!()
+        } */
 
         println(&format!("Bridge: level={}, size={:?}", level, size));
         Geometry::new(size)

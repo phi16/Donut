@@ -4,8 +4,164 @@ use donut_util::println;
 use std::rc::Rc;
 
 use crate::geometry::Cube;
+use crate::geometry::Element;
 use crate::geometry::Geometry;
 use crate::geometry::WireStyle;
+
+type R = f32;
+type RCoord = Vec<R>;
+
+#[derive(Debug, Clone)]
+pub enum RCube {
+    Point(RCoord),
+    Wire {
+        g0: Rc<RCube>,
+        x0: R,
+        g1: Rc<RCube>,
+        x1: R,
+        style: WireStyle,
+    },
+}
+
+impl RCube {
+    pub fn from(cube: &Cube) -> Self {
+        match cube {
+            Cube::Point(p) => RCube::Point(p.iter().map(|&x| x as R).collect()),
+            Cube::Wire {
+                g0,
+                x0,
+                g1,
+                x1,
+                style,
+            } => RCube::Wire {
+                g0: Rc::new(RCube::from(g0)),
+                x0: *x0 as R,
+                g1: Rc::new(RCube::from(g1)),
+                x1: *x1 as R,
+                style: style.clone(),
+            },
+        }
+    }
+
+    pub fn lerp(a: &RCube, b: &RCube, r: R) -> Self {
+        match (a, b) {
+            (RCube::Point(p0), RCube::Point(p1)) => {
+                let p: RCoord = p0
+                    .iter()
+                    .zip(p1.iter())
+                    .map(|(&x0, &x1)| x0 * (1.0 - r) + x1 * r)
+                    .collect();
+                RCube::Point(p)
+            }
+            (
+                RCube::Wire {
+                    g0: g0a,
+                    x0: x0a,
+                    g1: g1a,
+                    x1: x1a,
+                    style: style1a,
+                },
+                RCube::Wire {
+                    g0: g0b,
+                    x0: x0b,
+                    g1: g1b,
+                    x1: x1b,
+                    style: style1b, // TODO!
+                },
+            ) => {
+                let g0 = Rc::new(RCube::lerp(g0a.as_ref(), g0b.as_ref(), r));
+                let x0 = x0a * (1.0 - r) + x0b * r;
+                let g1 = Rc::new(RCube::lerp(g1a.as_ref(), g1b.as_ref(), r));
+                let x1 = x1a * (1.0 - r) + x1b * r;
+                RCube::Wire {
+                    g0,
+                    x0,
+                    g1,
+                    x1,
+                    style: style1a.clone(),
+                }
+            }
+            _ => panic!(),
+        }
+    }
+
+    pub fn slice(&self, slice: R) -> Option<Self> {
+        match self {
+            RCube::Point(_) => None, // TODO!
+            RCube::Wire {
+                g0,
+                x0,
+                g1,
+                x1,
+                style: _,
+            } => {
+                if slice < *x0 || slice > *x1 {
+                    return None;
+                }
+                let r = (slice - *x0) / (*x1 - *x0);
+                // TODO: compute `r` using `style`
+                Some(RCube::lerp(g0.as_ref(), g1.as_ref(), r))
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct RElement {
+    pub cube: RCube,
+    pub prim_id: PrimId,
+}
+
+impl RElement {
+    pub fn from(element: &Element) -> Self {
+        RElement {
+            cube: RCube::from(&element.cube),
+            prim_id: element.prim_id,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct RGeometry {
+    pub size: Coord,
+    pub elements: Vec<Vec<RElement>>, // [dim][element index]
+}
+
+impl RGeometry {
+    pub fn from(geometry: &Geometry) -> Self {
+        RGeometry {
+            size: geometry.size.clone(),
+            elements: geometry
+                .elements
+                .iter()
+                .map(|elements| elements.iter().map(RElement::from).collect())
+                .collect(),
+        }
+    }
+
+    pub fn slice(&self, slice: R) -> Self {
+        let mut size = self.size.clone();
+        size.pop();
+        let elements = self
+            .elements
+            .iter()
+            .skip(1)
+            .map(|elements| {
+                elements
+                    .iter()
+                    .flat_map(|element| {
+                        element.cube.slice(slice).map(|cube| RElement {
+                            cube,
+                            prim_id: element.prim_id,
+                        })
+                    })
+                    .collect()
+            })
+            .collect();
+
+        RGeometry { size, elements }
+    }
+}
 
 pub struct Renderer {
     context: web_sys::CanvasRenderingContext2d,
@@ -85,12 +241,26 @@ impl Renderer {
         self.context.fill();
     }
 
+    pub fn circle_r(&self, x: R, y: R, radius: R) {
+        self.context.begin_path();
+        self.context
+            .arc(
+                x as f64,
+                y as f64,
+                radius as f64,
+                0.0,
+                std::f64::consts::PI * 2.0,
+            )
+            .unwrap();
+        self.context.fill();
+    }
+
     pub fn render(&self, cell: &Rc<LayoutCell>, x_axis: usize, y_axis: usize) {
         let slicer = Slicer::new(self, x_axis, y_axis);
         slicer.render_2d(cell);
     }
 
-    pub fn render_geometry(&self, g: &Geometry) {
+    pub fn render_geometry(&self, g: &RGeometry) {
         for (dim, elements) in g.elements.iter().enumerate().rev() {
             if dim >= 3 {
                 continue;
@@ -100,14 +270,15 @@ impl Renderer {
                 if dim == 0 {
                     self.set_fill_color(color);
                     let (x, y) = match &element.cube {
-                        Cube::Point(p) => (p[0], p[1]),
+                        RCube::Point(p) => (p[0], p[1]),
                         _ => panic!(),
                     };
-                    self.circle(x, y, 10);
+                    // self.circle(x, y, 10);
+                    self.circle_r(x, y, 10.0);
                 } else if dim == 1 {
                     self.set_stroke_color(color, 10);
                     let (x0, y0, x1, y1, style) = match &element.cube {
-                        Cube::Wire {
+                        RCube::Wire {
                             g0,
                             x0,
                             g1,
@@ -115,19 +286,19 @@ impl Renderer {
                             style,
                         } => {
                             let p0 = match &**g0 {
-                                Cube::Point(p) => p[0],
+                                RCube::Point(p) => p[0],
                                 _ => panic!(),
                             };
                             let p1 = match &**g1 {
-                                Cube::Point(p) => p[0],
+                                RCube::Point(p) => p[0],
                                 _ => panic!(),
                             };
                             (p0, *x0, p1, *x1, style)
                         }
                         _ => panic!(),
                     };
-                    let xc = (x0 + x1) / 2;
-                    let yc = (y0 + y1) / 2;
+                    let xc = (x0 + x1) / 2.0;
+                    let yc = (y0 + y1) / 2.0;
                     self.context.begin_path();
                     self.context.move_to(x0 as f64, y0 as f64);
                     match style {
@@ -151,7 +322,7 @@ impl Renderer {
                 } else if dim == 2 {
                     self.set_fill_color(color);
                     let (x0l, x0r, y0, x1l, x1r, y1, style) = match &element.cube {
-                        Cube::Wire {
+                        RCube::Wire {
                             g0,
                             x0,
                             g1,
@@ -159,7 +330,7 @@ impl Renderer {
                             style,
                         } => {
                             let (p0l, p0r) = match &**g0 {
-                                Cube::Wire {
+                                RCube::Wire {
                                     g0: _,
                                     x0,
                                     g1: _,
@@ -169,7 +340,7 @@ impl Renderer {
                                 _ => panic!(),
                             };
                             let (p1l, p1r) = match &**g1 {
-                                Cube::Wire {
+                                RCube::Wire {
                                     g0: _,
                                     x0,
                                     g1: _,
@@ -182,9 +353,9 @@ impl Renderer {
                         }
                         _ => panic!(),
                     };
-                    let xcl = (x0l + x1l) / 2;
-                    let xcr = (x0r + x1r) / 2;
-                    let yc = (y0 + y1) / 2;
+                    let xcl = (x0l + x1l) / 2.0;
+                    let xcr = (x0r + x1r) / 2.0;
+                    let yc = (y0 + y1) / 2.0;
 
                     self.context.begin_path();
                     self.context.move_to(x0l as f64, y0 as f64);

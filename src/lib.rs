@@ -54,7 +54,7 @@ pub fn start() -> Option<()> {
         .ok()??
         .dyn_into::<web_sys::CanvasRenderingContext2d>()
         .ok()?;
-    let app = App::new(canvas, context);
+    let mut app = App::new(canvas, context);
 
     let step: Rc<RefCell<Option<Closure<dyn FnMut()>>>> = Rc::new(RefCell::new(None));
     let step_c = Rc::clone(&step);

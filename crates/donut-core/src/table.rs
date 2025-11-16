@@ -114,12 +114,27 @@ impl PrimTable {
             &i,
             &ps.id(&a, 100),
         );
-        ps.add("m", 2, vec![20, 20], 100, (255, 128, 128, 255), &i, &ii);
-        ps.add("w", 2, vec![20, 20], 100, (128, 255, 128, 255), &ij, &i);
+        let m = ps.add("m", 2, vec![20, 20], 100, (255, 128, 128, 255), &ii, &i);
+        ps.add("w", 2, vec![20, 20], 100, (128, 255, 128, 255), &i, &ij);
 
         let f = ps.add("F", 1, vec![10], 50, (192, 64, 64, 255), &a, &b);
         let g = ps.add("G", 1, vec![10], 100, (64, 128, 255, 255), &a, &b);
         let u = ps.add("U", 2, vec![20, 20], 100, (255, 255, 255, 255), &f, &g);
+
+        let mi = ps.comp(nonempty![Rc::clone(&m), ps.id(&i, 10)], 0, 20);
+        let im = ps.comp(nonempty![ps.id(&i, 10), Rc::clone(&m)], 0, 20);
+        let lmm = ps.comp(nonempty![mi, Rc::clone(&m)], 1, 20);
+        let rmm = ps.comp(nonempty![im, Rc::clone(&m)], 1, 20);
+        let assoc = ps.add(
+            "assoc",
+            3,
+            vec![10, 10, 10],
+            50,
+            (192, 64, 64, 255),
+            &lmm,
+            &rmm,
+        );
+
         ps
     }
 
