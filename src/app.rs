@@ -1,7 +1,7 @@
 use donut_core::cell::*;
 use donut_core::table::*;
-use donut_renderer::geometry::extract_geometry;
-use donut_renderer::geometry::Geometry;
+use donut_renderer::geometry_old::extract_geometry;
+use donut_renderer::geometry_old::Geometry;
 use donut_renderer::render::RGeometry;
 use donut_renderer::render::Renderer;
 use donut_util::println;

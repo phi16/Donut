@@ -3,13 +3,45 @@ use donut_core::table::*;
 use donut_util::println;
 use std::rc::Rc;
 
-use crate::geometry::Cube;
-use crate::geometry::Element;
-use crate::geometry::Geometry;
-use crate::geometry::WireStyle;
+use crate::geometry_old::Cube;
+use crate::geometry_old::Element;
+use crate::geometry_old::Geometry;
+use crate::geometry_old::{EndStyle, WireStyle};
 
 type R = f32;
 type RCoord = Vec<R>;
+
+fn lerp(a: R, b: R, r: R) -> R {
+    a * (1.0 - r) + b * r
+}
+
+#[derive(Debug, Clone)]
+pub struct RWireStyle {
+    // 0: smooth, 1: shrink
+    pub s0: R,
+    pub s1: R,
+}
+
+impl RWireStyle {
+    pub fn from(style: &WireStyle) -> Self {
+        let s0 = match style.s0 {
+            EndStyle::Smooth => 0.0,
+            EndStyle::Shrink => 1.0,
+        };
+        let s1 = match style.s1 {
+            EndStyle::Smooth => 0.0,
+            EndStyle::Shrink => 1.0,
+        };
+        RWireStyle { s0, s1 }
+    }
+
+    pub fn lerp(a: &RWireStyle, b: &RWireStyle, r: R) -> Self {
+        RWireStyle {
+            s0: lerp(a.s0, b.s0, r),
+            s1: lerp(a.s1, b.s1, r),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum RCube {
@@ -19,7 +51,7 @@ pub enum RCube {
         x0: R,
         g1: Rc<RCube>,
         x1: R,
-        style: WireStyle,
+        style: RWireStyle,
     },
 }
 
@@ -38,7 +70,7 @@ impl RCube {
                 x0: *x0 as R,
                 g1: Rc::new(RCube::from(g1)),
                 x1: *x1 as R,
-                style: style.clone(),
+                style: RWireStyle::from(style),
             },
         }
     }
@@ -49,7 +81,7 @@ impl RCube {
                 let p: RCoord = p0
                     .iter()
                     .zip(p1.iter())
-                    .map(|(&x0, &x1)| x0 * (1.0 - r) + x1 * r)
+                    .map(|(&x0, &x1)| lerp(x0, x1, r))
                     .collect();
                 RCube::Point(p)
             }
@@ -66,19 +98,19 @@ impl RCube {
                     x0: x0b,
                     g1: g1b,
                     x1: x1b,
-                    style: style1b, // TODO!
+                    style: style1b,
                 },
             ) => {
                 let g0 = Rc::new(RCube::lerp(g0a.as_ref(), g0b.as_ref(), r));
-                let x0 = x0a * (1.0 - r) + x0b * r;
+                let x0 = lerp(*x0a, *x0b, r);
                 let g1 = Rc::new(RCube::lerp(g1a.as_ref(), g1b.as_ref(), r));
-                let x1 = x1a * (1.0 - r) + x1b * r;
+                let x1 = lerp(*x1a, *x1b, r);
                 RCube::Wire {
                     g0,
                     x0,
                     g1,
                     x1,
-                    style: style1a.clone(),
+                    style: RWireStyle::lerp(style1a, style1b, r),
                 }
             }
             _ => panic!(),
@@ -299,25 +331,18 @@ impl Renderer {
                     };
                     let xc = (x0 + x1) / 2.0;
                     let yc = (y0 + y1) / 2.0;
+
+                    let RWireStyle { s0, s1 } = style;
+                    let x0k = lerp(x0, xc, *s0);
+                    let y0k = lerp(yc, y0, *s0);
+                    let x1k = lerp(x1, xc, *s1);
+                    let y1k = lerp(yc, y1, *s1);
+
                     self.context.begin_path();
                     self.context.move_to(x0 as f64, y0 as f64);
-                    match style {
-                        WireStyle::Smooth => {
-                            self.context.bezier_curve_to(
-                                x0 as f64, yc as f64, x1 as f64, yc as f64, x1 as f64, y1 as f64,
-                            );
-                        }
-                        WireStyle::Shrink0 => {
-                            self.context.bezier_curve_to(
-                                xc as f64, y0 as f64, x1 as f64, yc as f64, x1 as f64, y1 as f64,
-                            );
-                        }
-                        WireStyle::Shrink1 => {
-                            self.context.bezier_curve_to(
-                                x0 as f64, yc as f64, xc as f64, y1 as f64, x1 as f64, y1 as f64,
-                            );
-                        }
-                    }
+                    self.context.bezier_curve_to(
+                        x0k as f64, y0k as f64, x1k as f64, y1k as f64, x1 as f64, y1 as f64,
+                    );
                     self.context.stroke();
                 } else if dim == 2 {
                     self.set_fill_color(color);
@@ -357,43 +382,36 @@ impl Renderer {
                     let xcr = (x0r + x1r) / 2.0;
                     let yc = (y0 + y1) / 2.0;
 
+                    let RWireStyle { s0, s1 } = style;
+                    let x0lk = lerp(x0l, xcl, *s0);
+                    let y0lk = lerp(yc, y0, *s0);
+                    let x1lk = lerp(x1l, xcl, *s1);
+                    let y1lk = lerp(yc, y1, *s1);
+                    let x0rk = lerp(x0r, xcr, *s0);
+                    let y0rk = lerp(yc, y0, *s0);
+                    let x1rk = lerp(x1r, xcr, *s1);
+                    let y1rk = lerp(yc, y1, *s1);
+
                     self.context.begin_path();
                     self.context.move_to(x0l as f64, y0 as f64);
-                    match style {
-                        WireStyle::Smooth => {
-                            self.context.bezier_curve_to(
-                                x0l as f64, yc as f64, x1l as f64, yc as f64, x1l as f64, y1 as f64,
-                            );
-                        }
-                        WireStyle::Shrink0 => {
-                            self.context.bezier_curve_to(
-                                xcl as f64, y0 as f64, x1l as f64, yc as f64, x1l as f64, y1 as f64,
-                            );
-                        }
-                        WireStyle::Shrink1 => {
-                            self.context.bezier_curve_to(
-                                x0l as f64, yc as f64, xcl as f64, y1 as f64, x1l as f64, y1 as f64,
-                            );
-                        }
-                    }
+                    self.context.bezier_curve_to(
+                        x0lk as f64,
+                        y0lk as f64,
+                        x1lk as f64,
+                        y1lk as f64,
+                        x1l as f64,
+                        y1 as f64,
+                    );
                     self.context.line_to(x1r as f64, y1 as f64);
-                    match style {
-                        WireStyle::Smooth => {
-                            self.context.bezier_curve_to(
-                                x1r as f64, yc as f64, x0r as f64, yc as f64, x0r as f64, y0 as f64,
-                            );
-                        }
-                        WireStyle::Shrink0 => {
-                            self.context.bezier_curve_to(
-                                x1r as f64, yc as f64, xcr as f64, y0 as f64, x0r as f64, y0 as f64,
-                            );
-                        }
-                        WireStyle::Shrink1 => {
-                            self.context.bezier_curve_to(
-                                xcr as f64, y1 as f64, x0r as f64, yc as f64, x0r as f64, y0 as f64,
-                            );
-                        }
-                    }
+                    self.context.bezier_curve_to(
+                        x1rk as f64,
+                        y1rk as f64,
+                        x0rk as f64,
+                        y0rk as f64,
+                        x0r as f64,
+                        y0 as f64,
+                    );
+
                     self.context.fill();
                 }
             }
