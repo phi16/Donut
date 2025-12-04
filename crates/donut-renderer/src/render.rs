@@ -287,7 +287,7 @@ impl Renderer {
         self.context.fill();
     }
 
-    pub fn render(&self, cell: &Rc<LayoutCell>, x_axis: usize, y_axis: usize) {
+    pub fn render(&self, cell: &LayoutCell, x_axis: usize, y_axis: usize) {
         let slicer = Slicer::new(self, x_axis, y_axis);
         slicer.render_2d(cell);
     }
@@ -438,27 +438,27 @@ impl Slicer<'_> {
         }
     }
 
-    pub fn render_0d(&self, cell: &Rc<LayoutCell>, x_len: u32, y_len: u32) {
-        let prim = match &cell.0 {
-            CellF::Prim(id, _) => self.renderer.prim_table.get(*id).unwrap(),
-            CellF::Id(_) => unreachable!(), // TODO: extract prim
-            CellF::Comp(_, _, _) => unreachable!(), // TODO: extract prim
+    pub fn render_0d(&self, cell: &LayoutCell, x_len: u32, y_len: u32) {
+        let prim = match cell.0.as_ref() {
+            Cell::Prim(id, _) => self.renderer.prim_table.get(*id).unwrap(),
+            Cell::Id(_) => unreachable!(), // TODO: extract prim
+            Cell::Comp(_, _, _) => unreachable!(), // TODO: extract prim
         };
 
         self.renderer.set_fill_color(prim.color);
         self.renderer.rect(0, 0, x_len, y_len);
     }
 
-    pub fn render_1d(&self, cell: &Rc<LayoutCell>, y_len: u32) {
+    pub fn render_1d(&self, cell: &LayoutCell, y_len: u32) {
         let dim = cell.dim();
         assert!(self.x_axis < dim);
         let layout = &cell.1;
 
-        match &cell.0 {
-            CellF::Prim(id, shape) => {
+        match cell.0.as_ref() {
+            Cell::Prim(id, shape) => {
                 let (source, target) = match shape {
-                    ShapeF::Zero => unreachable!(),
-                    ShapeF::Succ(s, t) => (s, t),
+                    Shape::Zero => unreachable!(),
+                    Shape::Succ(s, t) => (s, t),
                 };
                 let prim = self.renderer.prim_table.get(*id).unwrap();
 
@@ -474,14 +474,14 @@ impl Slicer<'_> {
                 self.renderer.set_fill_color(prim.color);
                 self.renderer.rect(center_x - 5, 0, 10, y_len);
             }
-            CellF::Id(inner) => {
+            Cell::Id(inner) => {
                 if self.x_axis == dim - 1 {
                     self.render_0d(inner, layout.size[self.x_axis], y_len);
                 } else {
                     unimplemented!()
                 }
             }
-            CellF::Comp(children, level, inner_pads) => {
+            Cell::Comp(children, level, inner_pads) => {
                 let n = children.len();
                 if *level == 0 && self.x_axis == 0 {
                     let mut offset = 0;
@@ -489,7 +489,7 @@ impl Slicer<'_> {
                         self.renderer.push();
                         self.renderer.offset(offset, 0);
                         self.padded_1d(child, y_len);
-                        offset += child.cell.1.size[self.x_axis];
+                        offset += child.1.size[self.x_axis];
                         if index < n - 1 {
                             offset += inner_pads[index];
                         }
@@ -500,7 +500,7 @@ impl Slicer<'_> {
                         self.renderer.push();
                         let c0 = &children[index + 0];
                         let c1 = &children[index + 1];
-                        offset += c0.cell.1.size[self.x_axis];
+                        offset += c0.1.size[self.x_axis];
                         self.renderer.offset(offset, 0);
                         let x_len = inner_pads[index];
                         self.bridge_0d(&c0.t(), &c1.s(), x_len, y_len);
@@ -514,16 +514,16 @@ impl Slicer<'_> {
         }
     }
 
-    pub fn render_2d(&self, cell: &Rc<LayoutCell>) {
+    pub fn render_2d(&self, cell: &LayoutCell) {
         let dim = cell.dim();
         assert!(self.x_axis < dim && self.y_axis < dim);
         let layout = &cell.1;
 
-        match &cell.0 {
-            CellF::Prim(id, shape) => {
+        match cell.0.as_ref() {
+            Cell::Prim(id, shape) => {
                 let (source, target) = match shape {
-                    ShapeF::Zero => unreachable!(),
-                    ShapeF::Succ(s, t) => (s, t),
+                    Shape::Zero => unreachable!(),
+                    Shape::Succ(s, t) => (s, t),
                 };
                 let prim = self.renderer.prim_table.get(*id).unwrap();
 
@@ -541,14 +541,14 @@ impl Slicer<'_> {
 
                 self.renderer.frame(0, 0, size_x, size_y);
             }
-            CellF::Id(inner) => {
+            Cell::Id(inner) => {
                 if self.y_axis == dim - 1 {
                     self.render_1d(inner, layout.size[self.y_axis]);
                 } else {
                     unimplemented!()
                 }
             }
-            CellF::Comp(children, level, inner_pads) => {
+            Cell::Comp(children, level, inner_pads) => {
                 let n = children.len();
                 if *level == 0 && self.x_axis == 0 {
                     let mut offset = 0;
@@ -556,7 +556,7 @@ impl Slicer<'_> {
                         self.renderer.push();
                         self.renderer.offset(offset, 0);
                         self.padded_2d(child);
-                        offset += child.cell.1.size[self.x_axis];
+                        offset += child.1.size[self.x_axis];
                         if index < n - 1 {
                             offset += inner_pads[index];
                         }
@@ -568,7 +568,7 @@ impl Slicer<'_> {
                         self.renderer.push();
                         let c0 = &children[index + 0];
                         let c1 = &children[index + 1];
-                        offset += c0.cell.1.size[self.x_axis];
+                        offset += c0.1.size[self.x_axis];
                         self.renderer.offset(offset, 0);
                         let x_len = inner_pads[index];
                         self.bridge_0d(&c0.s().t(), &c1.s().s(), x_len, y_len);
@@ -581,7 +581,7 @@ impl Slicer<'_> {
                         self.renderer.push();
                         self.renderer.offset(0, offset);
                         self.padded_2d(child);
-                        offset += child.cell.1.size[self.y_axis];
+                        offset += child.1.size[self.y_axis];
                         if index < n - 1 {
                             offset += inner_pads[index];
                         }
@@ -592,7 +592,7 @@ impl Slicer<'_> {
                         self.renderer.push();
                         let c0 = &children[index + 0];
                         let c1 = &children[index + 1];
-                        offset += c0.cell.1.size[self.y_axis];
+                        offset += c0.1.size[self.y_axis];
                         self.renderer.offset(0, offset);
                         let y_len = inner_pads[index];
                         self.bridge_1d(&c0.t(), &c1.s(), y_len);
@@ -606,15 +606,15 @@ impl Slicer<'_> {
         }
     }
 
-    pub fn padded_0d(&self, pc: &PaddedCell, x_len: u32, y_len: u32) {
-        let cell = &pc.cell;
+    pub fn padded_0d(&self, pc: &LayoutCell, x_len: u32, y_len: u32) {
+        let cell = pc;
         self.render_0d(cell, x_len, y_len);
     }
 
-    pub fn padded_1d(&self, pc: &PaddedCell, y_len: u32) {
-        let cell = &pc.cell;
-        let min_x = pc.pad.min[self.x_axis];
-        let max_x = pc.pad.max[self.x_axis];
+    pub fn padded_1d(&self, pc: &LayoutCell, y_len: u32) {
+        let cell = pc;
+        let min_x = pc.1.pad.min[self.x_axis];
+        let max_x = pc.1.pad.max[self.x_axis];
         let size_x = cell.1.size[self.x_axis];
 
         self.renderer.push();
@@ -629,12 +629,12 @@ impl Slicer<'_> {
         self.renderer.pop();
     }
 
-    pub fn padded_2d(&self, pc: &PaddedCell) {
-        let cell = &pc.cell;
-        let min_x = pc.pad.min[self.x_axis];
-        let min_y = pc.pad.min[self.y_axis];
-        let max_x = pc.pad.max[self.x_axis];
-        let max_y = pc.pad.max[self.y_axis];
+    pub fn padded_2d(&self, pc: &LayoutCell) {
+        let cell = pc;
+        let min_x = pc.1.pad.min[self.x_axis];
+        let min_y = pc.1.pad.min[self.y_axis];
+        let max_x = pc.1.pad.max[self.x_axis];
+        let max_y = pc.1.pad.max[self.y_axis];
         let size_x = cell.1.size[self.x_axis];
         let size_y = cell.1.size[self.y_axis];
         let bounds_x = min_x + size_x + max_x;
@@ -660,21 +660,21 @@ impl Slicer<'_> {
         self.renderer.frame(0, 0, bounds_x, bounds_y);
     }
 
-    pub fn bridge_0d(&self, pc0: &PaddedCell, _pc1: &PaddedCell, x_len: u32, y_len: u32) {
-        self.render_0d(&pc0.cell, x_len, y_len);
+    pub fn bridge_0d(&self, pc0: &LayoutCell, _pc1: &LayoutCell, x_len: u32, y_len: u32) {
+        self.render_0d(pc0, x_len, y_len);
     }
 
-    pub fn extract_0d(&self, cell: &Rc<LayoutCell>) -> PrimId {
+    pub fn extract_0d(&self, cell: &LayoutCell) -> PrimId {
         assert!(cell.dim() == 0);
-        match &cell.0 {
-            CellF::Prim(id, _) => *id,
-            CellF::Id(_) => unreachable!(),
-            CellF::Comp(_, _, _) => unreachable!(),
+        match cell.0.as_ref() {
+            Cell::Prim(id, _) => *id,
+            Cell::Id(_) => unreachable!(),
+            Cell::Comp(_, _, _) => unreachable!(),
         }
     }
 
-    pub fn extract_1d(&self, pc: &PaddedCell, cs: &mut Vec<(PrimId, u32)>) {
-        let cell = &pc.cell;
+    pub fn extract_1d(&self, pc: &LayoutCell, cs: &mut Vec<(PrimId, u32)>) {
+        let cell = pc;
         let add = |cs: &mut Vec<(PrimId, u32)>, p: PrimId, l: u32| {
             if let Some((last_p, last_l)) = cs.last_mut() {
                 if *last_p == p {
@@ -684,25 +684,25 @@ impl Slicer<'_> {
             }
             cs.push((p, l));
         };
-        add(cs, self.extract_0d(&pc.s().cell), pc.pad.min[self.x_axis]);
-        match &cell.0 {
-            CellF::Prim(prim_id, shape) => {
+        add(cs, self.extract_0d(&pc.s()), pc.1.pad.min[self.x_axis]);
+        match cell.0.as_ref() {
+            Cell::Prim(prim_id, shape) => {
                 let (source, target) = match shape {
-                    ShapeF::Zero => unreachable!(),
-                    ShapeF::Succ(s, t) => (&s.cell, &t.cell),
+                    Shape::Zero => unreachable!(),
+                    Shape::Succ(s, t) => (s, t),
                 };
                 add(cs, self.extract_0d(source), cell.1.size[self.x_axis] / 2);
                 add(cs, *prim_id, 0);
                 add(cs, self.extract_0d(target), cell.1.size[self.x_axis] / 2);
             }
-            CellF::Id(inner) => {
+            Cell::Id(inner) => {
                 if self.x_axis == cell.dim() - 1 {
                     add(cs, self.extract_0d(inner), cell.1.size[self.x_axis]);
                 } else {
                     unimplemented!()
                 }
             }
-            CellF::Comp(children, _, inner_pads) => {
+            Cell::Comp(children, _, inner_pads) => {
                 for (index, child) in children.iter().enumerate() {
                     self.extract_1d(child, cs);
                     if index < children.len() - 1 {
@@ -711,10 +711,10 @@ impl Slicer<'_> {
                 }
             }
         }
-        add(cs, self.extract_0d(&pc.t().cell), pc.pad.max[self.x_axis]);
+        add(cs, self.extract_0d(&pc.t()), pc.1.pad.max[self.x_axis]);
     }
 
-    pub fn bridge_1d(&self, pc0: &PaddedCell, pc1: &PaddedCell, y_len: u32) {
+    pub fn bridge_1d(&self, pc0: &LayoutCell, pc1: &LayoutCell, y_len: u32) {
         let mut cs0 = vec![];
         let mut cs1 = vec![];
         self.extract_1d(pc0, &mut cs0);
@@ -776,13 +776,13 @@ impl Slicer<'_> {
         self.renderer.pop();
     }
 
-    pub fn shrink_1d(&self, pc: &PaddedCell, y_0d: u32, y_1d: u32) {
+    pub fn shrink_1d(&self, pc: &LayoutCell, y_0d: u32, y_1d: u32) {
         let mut cs = vec![];
         self.extract_1d(pc, &mut cs);
         assert!(cs.len() % 2 == 1);
         let last = cs.len() - 1;
 
-        let right = pc.pad.min[self.x_axis] + pc.cell.1.size[self.x_axis] + pc.pad.max[self.x_axis];
+        let right = pc.1.pad.min[self.x_axis] + pc.1.size[self.x_axis] + pc.1.pad.max[self.x_axis];
         let left = 0;
         let center = right / 2;
 

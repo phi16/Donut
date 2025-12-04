@@ -6,16 +6,16 @@ pub type Vec1<T> = NonEmpty<T>;
 pub type PrimId = u64;
 
 #[derive(Debug, Clone)]
-pub enum ShapeF<P> {
+pub enum Shape {
     Zero,
-    Succ(P, P),
+    Succ(LayoutCell, LayoutCell),
 }
 
 #[derive(Debug, Clone)]
-pub enum CellF<C, P> {
-    Prim(PrimId, ShapeF<P>),
-    Id(C),
-    Comp(Vec1<P>, Level, Vec<u32>),
+pub enum Cell {
+    Prim(PrimId, Shape),
+    Id(LayoutCell),
+    Comp(Vec1<LayoutCell>, Level, Vec<u32>),
 }
 
 // Layouts
@@ -52,65 +52,59 @@ impl Padding {
 #[derive(Debug, Clone)]
 pub struct Layout {
     pub size: Coord,
+    pub pad: Padding,
 }
 
 impl Layout {
     pub fn zero() -> Self {
-        Self { size: vec![] }
+        Self {
+            size: vec![],
+            pad: Padding::zero(0),
+        }
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct LayoutCell(pub CellF<Rc<LayoutCell>, PaddedCell>, pub Layout);
-
-#[derive(Debug, Clone)]
-pub struct PaddedCell {
-    pub cell: Rc<LayoutCell>,
-    pub pad: Padding,
-}
+pub struct LayoutCell(pub Rc<Cell>, pub Layout);
 
 impl LayoutCell {
     pub fn dim(&self) -> usize {
         self.1.size.len()
     }
-}
 
-impl PaddedCell {
-    pub fn from_cell(cell: Rc<LayoutCell>) -> Self {
-        let dim = cell.dim();
-        Self {
+    pub fn with_zero_pad(cell: Rc<Cell>, layout: Layout) -> Self {
+        let dim = layout.size.len();
+        Self(
             cell,
-            pad: Padding::zero(dim),
-        }
-    }
-
-    fn dim(&self) -> usize {
-        self.cell.dim()
+            Layout {
+                size: layout.size,
+                pad: Padding::zero(dim),
+            },
+        )
     }
 
     pub fn size(&self) -> Coord {
-        let base_size = &self.cell.1.size;
+        let base_size = &self.1.size;
         base_size
             .iter()
             .enumerate()
-            .map(|(i, s)| s + self.pad.min[i] + self.pad.max[i])
+            .map(|(i, s)| s + self.1.pad.min[i] + self.1.pad.max[i])
             .collect()
     }
 
     pub fn extend(&self, pad: &Padding) -> Self {
         // accepts higher padding
-        assert!(self.pad.min.len() <= pad.min.len());
-        assert!(self.pad.max.len() <= pad.max.len());
+        assert!(self.1.pad.min.len() <= pad.min.len());
+        assert!(self.1.pad.max.len() <= pad.max.len());
 
-        let mut new_pad = self.pad.clone();
+        let mut new_pad = self.1.pad.clone();
         for i in 0..new_pad.min.len() {
             new_pad.min[i] += pad.min[i];
             new_pad.max[i] += pad.max[i];
         }
-        PaddedCell {
-            cell: Rc::clone(&self.cell),
-            pad: new_pad,
-        }
+        let mut new_layout = self.1.clone();
+        new_layout.pad = new_pad;
+        LayoutCell(Rc::clone(&self.0), new_layout)
     }
 
     // cell.s().s() == cell.t().s()
@@ -118,55 +112,59 @@ impl PaddedCell {
 
     pub fn s(&self) -> Self {
         let dim = self.dim();
-        let cell = match &self.cell.0 {
-            CellF::Prim(_, shape) => match shape {
-                ShapeF::Zero => panic!("zero cell has no source"),
-                ShapeF::Succ(s, _) => return s.extend(&self.pad),
+        let cell = match self.0.as_ref() {
+            Cell::Prim(_, shape) => match shape {
+                Shape::Zero => panic!("zero cell has no source"),
+                Shape::Succ(s, _) => return s.extend(&self.1.pad),
             },
-            CellF::Id(inner) => Rc::clone(inner),
-            CellF::Comp(children, level, inner_pads) => {
+            Cell::Id(inner) => Rc::clone(&inner.0),
+            Cell::Comp(children, level, inner_pads) => {
                 if *level as usize + 1 == dim {
-                    return children.first().s().extend(&self.pad);
+                    return children.first().s().extend(&self.1.pad);
                 } else {
                     let cs = children.iter().map(|c| c.s()).collect::<Vec<_>>();
-                    let mut layout = self.cell.1.clone();
+                    let mut layout = self.1.clone();
                     layout.size.pop();
-                    Rc::new(LayoutCell(
-                        CellF::Comp(NonEmpty::from_vec(cs).unwrap(), *level, inner_pads.clone()),
-                        layout,
+                    Rc::new(Cell::Comp(
+                        NonEmpty::from_vec(cs).unwrap(),
+                        *level,
+                        inner_pads.clone(),
                     ))
                 }
             }
         };
-        let mut pad = self.pad.clone();
-        pad.pop();
-        PaddedCell { cell, pad }
+        let mut layout = self.1.clone();
+        layout.pad.pop();
+        layout.size.pop();
+        LayoutCell(cell, layout)
     }
     pub fn t(&self) -> Self {
         let dim = self.dim();
-        let cell = match &self.cell.0 {
-            CellF::Prim(_, shape) => match shape {
-                ShapeF::Zero => panic!("zero cell has no target"),
-                ShapeF::Succ(_, t) => return t.extend(&self.pad),
+        let cell = match self.0.as_ref() {
+            Cell::Prim(_, shape) => match shape {
+                Shape::Zero => panic!("zero cell has no target"),
+                Shape::Succ(_, t) => return t.extend(&self.1.pad),
             },
-            CellF::Id(inner) => Rc::clone(inner),
-            CellF::Comp(children, level, inner_pads) => {
+            Cell::Id(inner) => Rc::clone(&inner.0),
+            Cell::Comp(children, level, inner_pads) => {
                 if *level as usize + 1 == dim {
-                    return children.last().t().extend(&self.pad);
+                    return children.last().t().extend(&self.1.pad);
                 } else {
                     let cs = children.iter().map(|c| c.t()).collect::<Vec<_>>();
-                    let mut layout = self.cell.1.clone();
+                    let mut layout = self.1.clone();
                     layout.size.pop();
-                    Rc::new(LayoutCell(
-                        CellF::Comp(NonEmpty::from_vec(cs).unwrap(), *level, inner_pads.clone()),
-                        layout,
+                    Rc::new(Cell::Comp(
+                        NonEmpty::from_vec(cs).unwrap(),
+                        *level,
+                        inner_pads.clone(),
                     ))
                 }
             }
         };
-        let mut pad = self.pad.clone();
-        pad.pop();
-        PaddedCell { cell, pad }
+        let mut layout = self.1.clone();
+        layout.pad.pop();
+        layout.size.pop();
+        LayoutCell(cell, layout)
     }
 
     pub fn source(&self, level: Level) -> Self {

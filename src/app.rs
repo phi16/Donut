@@ -13,7 +13,7 @@ pub struct App {
     canvas: web_sys::HtmlCanvasElement,
     context: web_sys::CanvasRenderingContext2d,
     prim_table: Rc<PrimTable>,
-    cell: Rc<LayoutCell>,
+    cell: LayoutCell,
     geometry: RGeometry,
     t: f32,
 }
@@ -29,8 +29,8 @@ impl App {
         let ij = prim_table.id(&i, 150);
         let m = prim_table.prim("m");
         let w = prim_table.prim("w");
-        let g1 = prim_table.comp(nonempty![Rc::clone(&w), Rc::clone(&ij)], 0, 20);
-        let g2 = prim_table.comp(nonempty![Rc::clone(&ii), Rc::clone(&m)], 0, 80);
+        let g1 = prim_table.comp(nonempty![w.clone(), ij.clone()], 0, 20);
+        let g2 = prim_table.comp(nonempty![ii.clone(), m.clone()], 0, 80);
         let cell = prim_table.comp(nonempty![g1, g2], 1, 40);
 
         let test_cell = cell; // prim_table.prim("w");
@@ -44,7 +44,7 @@ impl App {
 
         // println(&format!("Geometry: {:#?}", g));
 
-        let cell = PaddedCell::from_cell(test_cell).s().cell;
+        let cell = test_cell.s();
 
         Self {
             renderer: Renderer::new(context.clone(), Rc::clone(&prim_table)),

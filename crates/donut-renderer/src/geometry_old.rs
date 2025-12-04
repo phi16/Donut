@@ -205,14 +205,14 @@ impl Builder {
         Self {}
     }
 
-    fn cell(&mut self, pc: &PaddedCell) -> Geometry {
-        let layout = &pc.cell.1;
+    fn cell(&mut self, pc: &LayoutCell) -> Geometry {
+        let layout = &pc.1;
         let mut geometry = Geometry::new(pc.size());
-        match &pc.cell.0 {
-            CellF::Prim(prim_id, shape) => {
+        match pc.0.as_ref() {
+            Cell::Prim(prim_id, shape) => {
                 let prim_id = *prim_id;
                 match shape {
-                    ShapeF::Zero => {
+                    Shape::Zero => {
                         let point = Cube::Point(vec![]);
                         geometry.add_element(
                             0,
@@ -222,19 +222,19 @@ impl Builder {
                             },
                         );
                     }
-                    ShapeF::Succ(source, target) => {
-                        let dim = pc.cell.dim();
+                    Shape::Succ(source, target) => {
+                        let dim = pc.dim();
                         assert!(dim > 0);
-                        let source = self.cell(&source.extend(&pc.pad));
-                        let target = self.cell(&target.extend(&pc.pad));
+                        let source = self.cell(&source.extend(&pc.1.pad));
+                        let target = self.cell(&target.extend(&pc.1.pad));
 
-                        let offset = pc.pad.min[dim - 1];
+                        let offset = pc.1.pad.min[dim - 1];
                         let size = layout.size[dim - 1];
                         let bound = geometry.size[dim - 1];
                         let center = layout
                             .size
                             .iter()
-                            .zip(pc.pad.min.iter())
+                            .zip(pc.1.pad.min.iter())
                             .map(|(s, p)| *s / 2 + *p)
                             .collect::<Vec<_>>();
                         let center_slice = &center[..dim - 1];
@@ -288,32 +288,31 @@ impl Builder {
                     }
                 }
             }
-            CellF::Id(inner) => {
+            Cell::Id(inner) => {
                 let dim = layout.size.len();
                 assert!(dim > 0);
                 let bound = geometry.size[dim - 1];
 
-                let inner_pc = PaddedCell {
-                    cell: Rc::clone(inner),
-                    pad: pc.pad.clone(),
-                };
+                let mut inner_layout = inner.1.clone();
+                inner_layout.pad = pc.1.pad.clone();
+                let inner_pc = LayoutCell(Rc::clone(&inner.0), inner_layout);
                 let inner = self.cell(&inner_pc);
                 geometry.elements = inner.id(0, bound);
             }
-            CellF::Comp(children, level, inner_pads) => {
+            Cell::Comp(children, level, inner_pads) => {
                 let n = children.len();
-                let mut pad = pc.pad.clone();
+                let mut pad = pc.1.pad.clone();
                 let children = children
                     .iter()
                     .enumerate()
                     .map(|(index, c)| {
                         pad.min[*level as usize] = if index == 0 {
-                            pc.pad.min[*level as usize]
+                            pc.1.pad.min[*level as usize]
                         } else {
                             0
                         };
                         pad.max[*level as usize] = if index == n - 1 {
-                            pc.pad.max[*level as usize]
+                            pc.1.pad.max[*level as usize]
                         } else {
                             0
                         };
@@ -345,13 +344,13 @@ impl Builder {
         geometry
     }
 
-    fn bridge(&mut self, s: &PaddedCell, t: &PaddedCell, level: Level, size: Coord) -> Geometry {
+    fn bridge(&mut self, s: &LayoutCell, t: &LayoutCell, level: Level, size: Coord) -> Geometry {
         // level:         2
         // s.size: [A, B, X]
         // t.size: [A, B, Y]
         // size:   [A, B, Z, D, E]
-        assert_eq!(s.cell.dim(), t.cell.dim());
-        assert_eq!(s.cell.dim(), level as usize);
+        assert_eq!(s.dim(), t.dim());
+        assert_eq!(s.dim(), level as usize);
         assert_eq!(size[..level as usize], s.size()[..level as usize]);
         assert_eq!(size[..level as usize], t.size()[..level as usize]);
         if (level as usize) + 1 < s.size().len() {
@@ -363,19 +362,18 @@ impl Builder {
 
         // contains only Prims and Comps (different level)
         // Note: Id-only case? (id-id-id ?)
-        /* fn extract(pc: &PaddedCell, level: Level) -> Vec<PaddedCell> {
-            match &pc.cell.0 {
-                CellF::Prim(_, _) => unimplemented!(),
-                CellF::Id(inner) => {
+        /* fn extract(pc: &LayoutCell, level: Level) -> Vec<LayoutCell> {
+            match &pc.0 {
+                Cell::Prim(_, _) => unimplemented!(),
+                Cell::Id(inner) => {
                     unimplemented!()
                 }
-                CellF::Comp(ref children, l, _) if l != level => children
+                Cell::Comp(ref children, l, _) if l != level => children
                     .iter()
                     .map(|c| {
-                        let child_pc = PaddedCell {
-                            cell: Rc::clone(c),
-                            pad: pc.pad.clone(),
-                        };
+                        let mut child_layout = c.1.clone();
+                        child_layout.pad = pc.1.pad.clone();
+                        let child_pc = LayoutCell(Rc::clone(&c.0), child_layout);
                         extract(&child_pc, level)
                     })
                     .flatten()
@@ -392,7 +390,7 @@ impl Builder {
     }
 }
 
-pub fn extract_geometry(cell: &Rc<LayoutCell>) -> Geometry {
+pub fn extract_geometry(cell: &LayoutCell) -> Geometry {
     let mut builder = Builder::new();
-    builder.cell(&PaddedCell::from_cell(Rc::clone(cell)))
+    builder.cell(cell)
 }

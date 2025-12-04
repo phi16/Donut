@@ -10,7 +10,7 @@ pub struct Prim {
     pub name: String,
     pub level: Level,
     pub color: Color,
-    pub base_cell: Rc<LayoutCell>,
+    pub base_cell: LayoutCell,
 }
 
 pub struct PrimTable {
@@ -26,15 +26,18 @@ impl PrimTable {
         }
     }
 
-    fn add_zero(&mut self, name: &str, level: Level, color: Color) -> Rc<LayoutCell> {
+    fn add_zero(&mut self, name: &str, level: Level, color: Color) -> LayoutCell {
         let id = self.table.len() as PrimId;
         self.id_map.insert(name.to_string(), id);
-        let cell = Rc::new(LayoutCell(CellF::Prim(id, ShapeF::Zero), Layout::zero()));
+        let cell = LayoutCell(
+            Rc::new(Cell::Prim(id, Shape::Zero)),
+            Layout::zero(),
+        );
         let p = Prim {
             name: name.to_string(),
             level,
             color,
-            base_cell: Rc::clone(&cell),
+            base_cell: cell.clone(),
         };
         self.table.insert(id, p);
         cell
@@ -47,9 +50,9 @@ impl PrimTable {
         size: Coord,
         bound: u32,
         color: Color,
-        source: &Rc<LayoutCell>,
-        target: &Rc<LayoutCell>,
-    ) -> Rc<LayoutCell> {
+        source: &LayoutCell,
+        target: &LayoutCell,
+    ) -> LayoutCell {
         assert_eq!(size.len(), level as usize);
         let id = self.table.len() as PrimId;
         self.id_map.insert(name.to_string(), id);
@@ -59,7 +62,7 @@ impl PrimTable {
             bounds[i] = source.1.size[i].max(target.1.size[i]);
         }
 
-        let pad_to_bounds = |cell: &Rc<LayoutCell>, bounds: &Coord| -> PaddedCell {
+        let pad_to_bounds = |cell: &LayoutCell, bounds: &Coord| -> LayoutCell {
             let mut pad = vec![0; level as usize - 1];
             for i in 0..(level as usize - 1) {
                 let b = bounds[i];
@@ -67,10 +70,9 @@ impl PrimTable {
                 assert!((b - s) % 2 == 0);
                 pad[i] = (b - s) / 2;
             }
-            PaddedCell {
-                cell: Rc::clone(cell),
-                pad: Padding::centered(pad),
-            }
+            let mut layout = cell.1.clone();
+            layout.pad = Padding::centered(pad);
+            LayoutCell(Rc::clone(&cell.0), layout)
         };
 
         let source = pad_to_bounds(source, &bounds);
@@ -78,17 +80,18 @@ impl PrimTable {
 
         bounds.push(bound);
 
-        let cell = Rc::new(LayoutCell(
-            CellF::Prim(id, ShapeF::Succ(source, target)),
+        let cell = LayoutCell(
+            Rc::new(Cell::Prim(id, Shape::Succ(source, target))),
             Layout {
                 size: bounds.clone(),
+                pad: Padding::zero(bounds.len()),
             },
-        ));
+        );
         let p = Prim {
             name: name.to_string(),
             level,
             color,
-            base_cell: Rc::clone(&cell),
+            base_cell: cell.clone(),
         };
         self.table.insert(id, p);
         cell
@@ -103,8 +106,8 @@ impl PrimTable {
         ps.add("a", 2, vec![20, 20], 100, (255, 255, 255, 255), &f, &g);
         let i = ps.add("i", 1, vec![10], 100, (64, 128, 255, 255), &a, &a);
         ps.add("b", 2, vec![20, 20], 100, (255, 255, 255, 255), &i, &i);
-        let ii = ps.comp(nonempty![Rc::clone(&i), Rc::clone(&i)], 0, 20);
-        let ij = ps.comp(nonempty![Rc::clone(&i), Rc::clone(&i)], 0, 40);
+        let ii = ps.comp(nonempty![i.clone(), i.clone()], 0, 20);
+        let ij = ps.comp(nonempty![i.clone(), i.clone()], 0, 40);
         ps.add(
             "k",
             2,
@@ -121,10 +124,10 @@ impl PrimTable {
         let g = ps.add("G", 1, vec![10], 100, (64, 128, 255, 255), &a, &b);
         let u = ps.add("U", 2, vec![20, 20], 100, (255, 255, 255, 255), &f, &g);
 
-        let mi = ps.comp(nonempty![Rc::clone(&m), ps.id(&i, 10)], 0, 20);
-        let im = ps.comp(nonempty![ps.id(&i, 10), Rc::clone(&m)], 0, 20);
-        let lmm = ps.comp(nonempty![mi, Rc::clone(&m)], 1, 20);
-        let rmm = ps.comp(nonempty![im, Rc::clone(&m)], 1, 20);
+        let mi = ps.comp(nonempty![m.clone(), ps.id(&i, 10)], 0, 20);
+        let im = ps.comp(nonempty![ps.id(&i, 10), m.clone()], 0, 20);
+        let lmm = ps.comp(nonempty![mi, m.clone()], 1, 20);
+        let rmm = ps.comp(nonempty![im, m.clone()], 1, 20);
         let assoc = ps.add(
             "assoc",
             3,
@@ -138,23 +141,22 @@ impl PrimTable {
         ps
     }
 
-    pub fn prim(&self, name: &str) -> Rc<LayoutCell> {
+    pub fn prim(&self, name: &str) -> LayoutCell {
         let prim_id = self
             .id_map
             .get(name)
             .expect(&format!("Prim \"{}\" not found", name));
         let prim = self.table.get(prim_id).unwrap();
-        Rc::clone(&prim.base_cell)
+        prim.base_cell.clone()
     }
 
-    pub fn id(&self, cell: &Rc<LayoutCell>, len: u32) -> Rc<LayoutCell> {
+    pub fn id(&self, cell: &LayoutCell, len: u32) -> LayoutCell {
         let mut layout = cell.1.clone();
-        let cell = CellF::Id(Rc::clone(cell));
         layout.size.push(len);
-        Rc::new(LayoutCell(cell, layout))
+        LayoutCell(Rc::new(Cell::Id(cell.clone())), layout)
     }
 
-    pub fn comp(&self, cells: Vec1<Rc<LayoutCell>>, level: Level, len: u32) -> Rc<LayoutCell> {
+    pub fn comp(&self, cells: Vec1<LayoutCell>, level: Level, len: u32) -> LayoutCell {
         let n = cells.len();
         let dim = cells.first().dim();
         let mut bounds = vec![0; dim];
@@ -179,18 +181,24 @@ impl PrimTable {
                     pad[i] = (b - s) / 2;
                 }
             }
-            pcs.push(PaddedCell {
-                cell: Rc::clone(&cell),
-                pad: Padding::centered(pad),
-            });
+            let mut layout = cell.1.clone();
+            layout.pad = Padding::centered(pad);
+            pcs.push(LayoutCell(Rc::clone(&cell.0), layout));
         }
         let inner_pads = vec![len; n - 1];
         bounds[level as usize] += len * (n as u32 - 1);
-        let layout = Layout { size: bounds };
-        Rc::new(LayoutCell(
-            CellF::Comp(NonEmpty::from_vec(pcs).unwrap(), level, inner_pads),
+        let layout = Layout {
+            size: bounds,
+            pad: Padding::zero(dim),
+        };
+        LayoutCell(
+            Rc::new(Cell::Comp(
+                NonEmpty::from_vec(pcs).unwrap(),
+                level,
+                inner_pads,
+            )),
             layout,
-        ))
+        )
     }
 
     pub fn get(&self, id: PrimId) -> Option<&Prim> {
