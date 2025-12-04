@@ -1,6 +1,5 @@
 use crate::geometry::*;
-use donut_core::cell::{Cell, LayoutCell, Level, PrimId, Shape, Vec1};
-use std::rc::Rc;
+use donut_core::cell::{Cell, LayoutCell, Level, PrimId, Vec1};
 
 struct Builder {}
 
@@ -9,26 +8,25 @@ impl Builder {
         Self {}
     }
 
-    fn prim(&self, prim_id: PrimId, level: Level, shape: &Shape) -> Block {
-        unimplemented!()
-    }
-
-    fn cell(&self, pc: &LayoutCell) -> Block {
-        let layout = &pc.1;
-        let dim = layout.size.len();
-        let size = pc.size();
-        match &pc.0.as_ref() {
-            Cell::Prim(prim_id, shape) => self.prim(*prim_id, dim as Level, shape),
-            Cell::Id(inner) => {
-                let bound = size[dim - 1];
-                let inner = inner.extend(&pc.1.pad);
-                self.cell(&inner).shift(bound)
-            }
-            Cell::Comp(level, children, _) => {
-                let cs = children.iter().map(|c| self.cell(c)).collect::<Vec<_>>();
+    fn cell(&self, c: &LayoutCell) -> Block {
+        let size = &c.1.size;
+        let dim = size.len();
+        let mut b = match c.0.as_ref() {
+            Cell::Prim(prim_id, shape) => {
                 unimplemented!()
             }
-        }
+            Cell::Id(inner) => {
+                let mut inner = self.cell(inner);
+                inner.shift(size[dim - 1]);
+                inner
+            }
+            Cell::Comp(l, cs, inner_pads) => {
+                let cs = cs.iter().map(|c| self.cell(c)).collect::<Vec<_>>();
+                unimplemented!()
+            }
+        };
+        b.pad(&c.1.pad);
+        b
     }
 }
 
