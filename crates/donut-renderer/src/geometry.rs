@@ -41,3 +41,73 @@ impl Cube {
         Cube::Bridge(face.clone(), face, 0, w)
     }
 }
+
+#[derive(Debug, Clone)]
+pub enum Geometry {
+    Prim(PrimId, Cube),
+    Comp(Level, Vec1<Rc<Geometry>>),
+}
+
+impl Geometry {
+    pub fn shift(self, w: u32) -> Self {
+        match self {
+            Geometry::Prim(prim_id, cube) => {
+                let cube = cube.shift(w);
+                Geometry::Prim(prim_id, cube)
+            }
+            Geometry::Comp(level, children) => {
+                let cs = children
+                    .into_iter()
+                    .map(|c| Rc::new(c.as_ref().clone().shift(w)))
+                    .collect::<Vec<_>>();
+                let children = Vec1::from_vec(cs).unwrap();
+                Geometry::Comp(level, children)
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Box {
+    pub prim_id: PrimId,
+    pub geometry: Geometry,
+    pub size: Coord,
+}
+
+impl Box {
+    pub fn shift(self, w: u32) -> Self {
+        let geometry = self.geometry.shift(w);
+        Box {
+            prim_id: self.prim_id,
+            geometry,
+            size: self.size,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum Block {
+    Unit(Box),
+    Comp(Level, Vec1<Box>),
+}
+
+impl Block {
+    pub fn shift(self, w: u32) -> Self {
+        match self {
+            Block::Unit(b) => {
+                let geometry = b.geometry.shift(w);
+                let b = Box {
+                    prim_id: b.prim_id,
+                    geometry,
+                    size: b.size,
+                };
+                Block::Unit(b)
+            }
+            Block::Comp(level, children) => {
+                let cs = children.into_iter().map(|c| c.shift(w)).collect::<Vec<_>>();
+                let children = Vec1::from_vec(cs).unwrap();
+                Block::Comp(level, children)
+            }
+        }
+    }
+}

@@ -15,7 +15,7 @@ pub enum Shape {
 pub enum Cell {
     Prim(PrimId, Shape),
     Id(LayoutCell),
-    Comp(Vec1<LayoutCell>, Level, Vec<u32>),
+    Comp(Level, Vec1<LayoutCell>, Vec<u32>),
 }
 
 // Layouts
@@ -56,10 +56,10 @@ pub struct Layout {
 }
 
 impl Layout {
-    pub fn zero() -> Self {
+    pub fn zero(dim: Level) -> Self {
         Self {
             size: vec![],
-            pad: Padding::zero(0),
+            pad: Padding::zero(dim as usize),
         }
     }
 }
@@ -68,19 +68,12 @@ impl Layout {
 pub struct LayoutCell(pub Rc<Cell>, pub Layout);
 
 impl LayoutCell {
-    pub fn dim(&self) -> usize {
-        self.1.size.len()
+    pub fn new(cell: Rc<Cell>, layout: Layout) -> Self {
+        Self(cell, layout)
     }
 
-    pub fn with_zero_pad(cell: Rc<Cell>, layout: Layout) -> Self {
-        let dim = layout.size.len();
-        Self(
-            cell,
-            Layout {
-                size: layout.size,
-                pad: Padding::zero(dim),
-            },
-        )
+    pub fn dim(&self) -> usize {
+        self.1.size.len()
     }
 
     pub fn size(&self) -> Coord {
@@ -118,7 +111,7 @@ impl LayoutCell {
                 Shape::Succ(s, _) => return s.extend(&self.1.pad),
             },
             Cell::Id(inner) => Rc::clone(&inner.0),
-            Cell::Comp(children, level, inner_pads) => {
+            Cell::Comp(level, children, inner_pads) => {
                 if *level as usize + 1 == dim {
                     return children.first().s().extend(&self.1.pad);
                 } else {
@@ -126,8 +119,8 @@ impl LayoutCell {
                     let mut layout = self.1.clone();
                     layout.size.pop();
                     Rc::new(Cell::Comp(
-                        NonEmpty::from_vec(cs).unwrap(),
                         *level,
+                        NonEmpty::from_vec(cs).unwrap(),
                         inner_pads.clone(),
                     ))
                 }
@@ -146,7 +139,7 @@ impl LayoutCell {
                 Shape::Succ(_, t) => return t.extend(&self.1.pad),
             },
             Cell::Id(inner) => Rc::clone(&inner.0),
-            Cell::Comp(children, level, inner_pads) => {
+            Cell::Comp(level, children, inner_pads) => {
                 if *level as usize + 1 == dim {
                     return children.last().t().extend(&self.1.pad);
                 } else {
@@ -154,8 +147,8 @@ impl LayoutCell {
                     let mut layout = self.1.clone();
                     layout.size.pop();
                     Rc::new(Cell::Comp(
-                        NonEmpty::from_vec(cs).unwrap(),
                         *level,
+                        NonEmpty::from_vec(cs).unwrap(),
                         inner_pads.clone(),
                     ))
                 }

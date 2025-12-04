@@ -481,7 +481,7 @@ impl Slicer<'_> {
                     unimplemented!()
                 }
             }
-            Cell::Comp(children, level, inner_pads) => {
+            Cell::Comp(level, children, inner_pads) => {
                 let n = children.len();
                 if *level == 0 && self.x_axis == 0 {
                     let mut offset = 0;
@@ -548,7 +548,7 @@ impl Slicer<'_> {
                     unimplemented!()
                 }
             }
-            Cell::Comp(children, level, inner_pads) => {
+            Cell::Comp(level, children, inner_pads) => {
                 let n = children.len();
                 if *level == 0 && self.x_axis == 0 {
                     let mut offset = 0;
@@ -702,7 +702,7 @@ impl Slicer<'_> {
                     unimplemented!()
                 }
             }
-            Cell::Comp(children, _, inner_pads) => {
+            Cell::Comp(_, children, inner_pads) => {
                 for (index, child) in children.iter().enumerate() {
                     self.extract_1d(child, cs);
                     if index < children.len() - 1 {

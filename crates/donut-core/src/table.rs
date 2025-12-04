@@ -26,13 +26,11 @@ impl PrimTable {
         }
     }
 
-    fn add_zero(&mut self, name: &str, level: Level, color: Color) -> LayoutCell {
+    fn add_zero(&mut self, name: &str, color: Color) -> LayoutCell {
+        let level = 0;
         let id = self.table.len() as PrimId;
         self.id_map.insert(name.to_string(), id);
-        let cell = LayoutCell(
-            Rc::new(Cell::Prim(id, Shape::Zero)),
-            Layout::zero(),
-        );
+        let cell = LayoutCell(Rc::new(Cell::Prim(id, Shape::Zero)), Layout::zero(level));
         let p = Prim {
             name: name.to_string(),
             level,
@@ -99,8 +97,8 @@ impl PrimTable {
 
     pub fn default() -> Self {
         let mut ps = Self::new();
-        let a = ps.add_zero("A", 0, (32, 32, 128, 192));
-        let b = ps.add_zero("B", 0, (128, 192, 255, 255));
+        let a = ps.add_zero("A", (32, 32, 128, 192));
+        let b = ps.add_zero("B", (128, 192, 255, 255));
         let f = ps.add("f", 1, vec![10], 100, (192, 64, 64, 255), &a, &b);
         let g = ps.add("g", 1, vec![10], 100, (96, 96, 192, 255), &a, &b);
         ps.add("a", 2, vec![20, 20], 100, (255, 255, 255, 255), &f, &g);
@@ -193,8 +191,8 @@ impl PrimTable {
         };
         LayoutCell(
             Rc::new(Cell::Comp(
-                NonEmpty::from_vec(pcs).unwrap(),
                 level,
+                NonEmpty::from_vec(pcs).unwrap(),
                 inner_pads,
             )),
             layout,

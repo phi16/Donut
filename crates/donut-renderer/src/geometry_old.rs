@@ -299,7 +299,7 @@ impl Builder {
                 let inner = self.cell(&inner_pc);
                 geometry.elements = inner.id(0, bound);
             }
-            Cell::Comp(children, level, inner_pads) => {
+            Cell::Comp(level, children, inner_pads) => {
                 let n = children.len();
                 let mut pad = pc.1.pad.clone();
                 let children = children
@@ -368,7 +368,7 @@ impl Builder {
                 Cell::Id(inner) => {
                     unimplemented!()
                 }
-                Cell::Comp(ref children, l, _) if l != level => children
+                Cell::Comp(l, ref children, _) if l != level => children
                     .iter()
                     .map(|c| {
                         let mut child_layout = c.1.clone();
