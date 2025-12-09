@@ -47,6 +47,10 @@ impl Padding {
         self.min.pop();
         self.max.pop();
     }
+
+    pub fn is_zero(&self) -> bool {
+        self.min.iter().all(|&x| x == 0) && self.max.iter().all(|&x| x == 0)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -84,6 +88,16 @@ impl LayoutCell {
             .map(|(i, s)| s + self.1.pad.min[i] + self.1.pad.max[i])
             .collect()
     }
+
+    /* pub fn extend(&mut self, pad: &Padding) {
+        assert!(self.1.pad.min.len() == pad.min.len());
+        assert!(self.1.pad.max.len() == pad.max.len());
+
+        for i in 0..pad.min.len() {
+            self.1.pad.min[i] += pad.min[i];
+            self.1.pad.max[i] += pad.max[i];
+        }
+    } */
 
     pub fn extend(&self, pad: &Padding) -> Self {
         // accepts higher padding

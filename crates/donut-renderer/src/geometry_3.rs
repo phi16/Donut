@@ -1,57 +1,71 @@
-use donut_core::cell::{Level, Padding, PrimId};
+use donut_core::cell::{Level, Padding, PrimId, Vec1};
+use std::rc::Rc;
 
 pub type Q = num_rational::Rational32;
 pub type CoordQ = Vec<Q>;
 
-type Vec1<T> = Vec<T>;
-type Vec2<T> = Vec<T>;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Dimensions {
-    pub effective: Level,
-    pub space: Level,
-}
-
-impl Dimensions {
-    pub fn new(d: Level) -> Self {
-        Dimensions {
-            effective: d,
-            space: d,
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub enum Cube {
     Point(CoordQ),
-    Bridge(Level, Vec2<(Cube, Q)>),
+    Bridge {
+        f0: Rc<Cube>,
+        x0: Q,
+        f1: Rc<Cube>,
+        x1: Q,
+    },
+    Comp(Level, Vec1<Rc<Cube>>),
+}
+
+#[derive(Debug, Clone)]
+pub enum Type {
+    Zero(Cube), // ...?
+    Succ(Level, Box<Block>, Box<Type>, Box<Block>),
+}
+
+#[derive(Debug, Clone)]
+pub struct Prim {
+    pub prim_id: PrimId,
+    pub ty: Type,
+    pub edim: Level,
+    pub size: CoordQ,
+}
+
+#[derive(Debug, Clone)]
+pub enum Block {
+    Prim(Prim),
+    Comp(Level, Vec1<Box<Block>>),
 }
 
 impl Cube {
-    pub fn dim(&self) -> Dimensions {
-        match self {
-            Cube::Point(c) => Dimensions::new(c.len() as Level),
-            Cube::Bridge(_, slices) => {
-                let mut l = slices.first().unwrap().0.dim();
-                for (face, _) in slices {
-                    assert_eq!(face.dim(), l);
-                }
-                l.space += 1;
-                l
-            }
-        }
-    }
-
     pub fn shift(&self, x0: Q, x1: Q) -> Self {
-        let face_dim = match self {
-            Cube::Point(_) => 0,
-            Cube::Bridge(l, _) => *l,
-        };
-        Cube::Bridge(face_dim + 1, vec![(self.clone(), x0), (self.clone(), x1)])
+        let face = Rc::new(self.clone());
+        Cube::Bridge {
+            f0: face.clone(),
+            x0,
+            f1: face,
+            x1,
+        }
     }
 
     pub fn pad(&self, pad: &Padding) -> Self {
         unimplemented!()
+    }
+
+    pub fn dim(&self) -> Level {
+        match self {
+            Cube::Point(_) => 0,
+            Cube::Bridge { f0, f1, .. } => {
+                assert_eq!(f0.dim(), f1.dim());
+                f0.dim() + 1
+            }
+            Cube::Comp(_, cs) => {
+                let d = cs.first().dim();
+                for c in cs.iter() {
+                    assert_eq!(c.dim(), d);
+                }
+                d
+            }
+        }
     }
 
     pub fn point() -> Self {
@@ -59,41 +73,13 @@ impl Cube {
     }
 }
 
-#[derive(Debug, Clone)]
-pub enum Unit {
-    Zero(Level, Cube),
-    Succ(Level, Box<Geometry>, Box<Unit>, Box<Geometry>),
-}
-
-impl Unit {
-    pub fn edim(&self) -> Level {
-        match self {
-            Unit::Zero(l, _) => 0,
-            Unit::Succ(l, _, f, _) => {
-                let d = *l;
-                assert_eq!(f.edim() + 1, d);
-                d
-            }
-        }
-    }
-
-    pub fn sdim(&self) -> Level {
-        match self {
-            Unit::Zero(l, cube) => cube.dim(),
-            Unit::Succ(_, s, f, t) => {
-                let d = s.sdim();
-                assert_eq!(f.sdim(), d);
-                assert_eq!(t.sdim(), d);
-                d
-            }
-        }
-    }
+impl Type {
     pub fn shift(&mut self, w: u32) {
         match self {
-            Unit::Zero(_, cube) => {
+            Type::Zero(cube) => {
                 *cube = cube.shift(0.into(), (w as i32).into());
             }
-            Unit::Succ(_, s, f, t) => {
+            Type::Succ(_, s, f, t) => {
                 s.shift(w);
                 f.shift(w);
                 t.shift(w);
@@ -103,10 +89,10 @@ impl Unit {
 
     pub fn pad(&mut self, pad: &Padding) {
         match self {
-            Unit::Zero(l, cube) => {
+            Type::Zero(cube) => {
                 *cube = cube.pad(pad);
             }
-            Unit::Succ(l, s, f, t) => {
+            Type::Succ(l, s, f, t) => {
                 let mut pad_inside = pad.clone();
                 pad_inside.min[*l as usize] = 0;
                 pad_inside.max[*l as usize] = 0;
@@ -135,21 +121,52 @@ impl Unit {
             }
         }
     }
+
+    pub fn edim(&self) -> Level {
+        match self {
+            Type::Zero(_) => 0,
+            Type::Succ(l, _, f, _) => {
+                let d = *l;
+                assert_eq!(f.edim() + 1, d);
+                d
+            }
+        }
+    }
+
+    pub fn sdim(&self) -> Level {
+        match self {
+            Type::Zero(cube) => cube.dim(),
+            Type::Succ(_, s, f, t) => {
+                let d = s.sdim();
+                assert_eq!(f.sdim(), d);
+                assert_eq!(t.sdim(), d);
+                d
+            }
+        }
+    }
 }
 
-#[derive(Debug, Clone)]
-pub enum Geometry {
-    Prim(PrimId, Unit),
-    Comp(Level, Vec2<Geometry>, Vec1<Geometry>),
+impl Prim {
+    pub fn shift(&mut self, w: u32) {
+        self.ty.shift(w);
+    }
+
+    pub fn pad(&mut self, pad: &Padding) {
+        assert!(self.size.len() == pad.min.len());
+        for i in 0..self.size.len() {
+            self.size[i] += Q::from((pad.min[i] + pad.max[i]) as i32);
+        }
+        self.ty.pad(pad);
+    }
 }
 
-impl Geometry {
+impl Block {
     pub fn shift(&mut self, w: u32) {
         match self {
-            Geometry::Prim(prim) => {
+            Block::Prim(prim) => {
                 prim.shift(w);
             }
-            Geometry::Comp(_, cs) => {
+            Block::Comp(_, cs) => {
                 for c in cs.iter_mut() {
                     c.shift(w);
                 }
@@ -159,10 +176,10 @@ impl Geometry {
 
     pub fn pad(&mut self, pad: &Padding) {
         match self {
-            Geometry::Prim(prim) => {
+            Block::Prim(prim) => {
                 prim.pad(pad);
             }
-            Geometry::Comp(axis, cs) => {
+            Block::Comp(axis, cs) => {
                 let n = cs.len();
                 assert!(n >= 2);
                 let mut pad_inside = pad.clone();
@@ -196,19 +213,19 @@ impl Geometry {
 
     pub fn edim(&self) -> Level {
         match self {
-            Geometry::Prim(prim) => prim.edim,
-            Geometry::Comp(_, cs) => cs.iter().map(|c| c.edim()).max().unwrap(),
+            Block::Prim(prim) => prim.edim,
+            Block::Comp(_, cs) => cs.iter().map(|c| c.edim()).max().unwrap(),
         }
     }
 
     pub fn sdim(&self) -> Level {
         match self {
-            Geometry::Prim(prim) => {
+            Block::Prim(prim) => {
                 let d = prim.size.len() as Level;
                 assert_eq!(prim.ty.sdim(), d);
                 d
             }
-            Geometry::Comp(_, cs) => {
+            Block::Comp(_, cs) => {
                 let d = cs.first().sdim();
                 for c in cs.iter() {
                     assert_eq!(c.sdim(), d);
@@ -218,11 +235,11 @@ impl Geometry {
         }
     }
 
-    pub fn bridge(&self, f0: &Geometry, f1: &Geometry, x0: u32, x1: u32) -> Self {
+    pub fn bridge(&self, f0: &Block, f1: &Block, x0: u32, x1: u32) -> Self {
         unimplemented!()
     }
 
-    pub fn comp(axis: Level, cs: Vec<Geometry>, inner_pads: &Vec<u32>) -> Self {
+    pub fn comp(axis: Level, cs: Vec<Block>, inner_pads: &Vec<u32>) -> Self {
         unimplemented!()
     }
 
