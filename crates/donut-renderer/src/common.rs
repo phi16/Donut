@@ -37,4 +37,11 @@ impl Dimensions {
             in_space: self.in_space + 1,
         }
     }
+
+    pub fn sliced(&self) -> Self {
+        Dimensions {
+            effective: self.effective,
+            in_space: self.in_space - 1,
+        }
+    }
 }

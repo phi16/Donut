@@ -12,6 +12,54 @@ pub struct Cube {
     c: RawCube,
 }
 
+impl RawCube {
+    pub fn s(&self, l: Level, d: Level) -> Self {
+        assert!(l < d);
+        match self {
+            RawCube::Point(_) => panic!(),
+            RawCube::Bridge(faces) => {
+                let fd = d - 1;
+                if l == fd {
+                    let f = faces.first().unwrap().clone();
+                    RawCube::Bridge(vec![(f.0, f.1, f.1)])
+                } else {
+                    let fs = faces
+                        .iter()
+                        .map(|(f, x0, x1)| {
+                            let source = f.s(l, fd);
+                            (source, *x0, *x1)
+                        })
+                        .collect();
+                    RawCube::Bridge(fs)
+                }
+            }
+        }
+    }
+
+    pub fn t(&self, l: Level, d: Level) -> Self {
+        assert!(l < d);
+        match self {
+            RawCube::Point(_) => panic!(),
+            RawCube::Bridge(faces) => {
+                let fd = d - 1;
+                if l == fd {
+                    let f = faces.last().unwrap().clone();
+                    RawCube::Bridge(vec![(f.0, f.2, f.2)])
+                } else {
+                    let fs = faces
+                        .iter()
+                        .map(|(f, x0, x1)| {
+                            let source = f.t(l, fd);
+                            (source, *x0, *x1)
+                        })
+                        .collect();
+                    RawCube::Bridge(fs)
+                }
+            }
+        }
+    }
+}
+
 impl Cube {
     pub fn zero() -> Self {
         Cube {
@@ -27,6 +75,19 @@ impl Cube {
         }
     }
 
+    pub fn bridge(f0: (Cube, Q), f1: (Cube, Q)) -> Self {
+        let d = f0.0.d.clone();
+        assert_eq!(f1.0.d, d);
+        Cube {
+            d: d.shifted(),
+            c: if f0.0.c == f1.0.c {
+                RawCube::Bridge(vec![(f0.0.c, f0.1, f1.1)])
+            } else {
+                RawCube::Bridge(vec![(f0.0.c, f0.1, f0.1), (f1.0.c, f1.1, f1.1)])
+            },
+        }
+    }
+
     pub fn dim(&self) -> Dimensions {
         self.d.clone()
     }
@@ -35,6 +96,13 @@ impl Cube {
         Cube {
             d: self.d.shifted(),
             c: RawCube::Bridge(vec![(self.c, x0, x1)]),
+        }
+    }
+
+    pub fn suspended(self, x: Q) -> Self {
+        Cube {
+            d: self.d.shifted(),
+            c: RawCube::Bridge(vec![(self.c, x, x)]),
         }
     }
 
@@ -61,24 +129,91 @@ impl Cube {
         self
     }
 
-    pub fn comp(axis: Level, cs: Vec2<Cube>) -> Self {
-        unimplemented!()
+    pub fn slice_s(&self) -> Self {
+        match &self.c {
+            RawCube::Point(_) => panic!(),
+            RawCube::Bridge(faces) => {
+                let f = faces.first().unwrap().0.clone();
+                Cube {
+                    d: self.d.sliced(),
+                    c: f,
+                }
+            }
+        }
     }
 
-    pub fn s(l: Level) -> Self {
-        unimplemented!()
+    pub fn slice_t(&self) -> Self {
+        match &self.c {
+            RawCube::Point(_) => panic!(),
+            RawCube::Bridge(faces) => {
+                let f = faces.last().unwrap().0.clone();
+                Cube {
+                    d: self.d.sliced(),
+                    c: f,
+                }
+            }
+        }
     }
 
-    pub fn t(l: Level) -> Self {
-        unimplemented!()
+    pub fn s(&self, l: Level) -> Self {
+        Cube {
+            d: self.d.clone(),
+            c: self.c.s(l, self.d.in_space),
+        }
+    }
+
+    pub fn t(&self, l: Level) -> Self {
+        Cube {
+            d: self.d.clone(),
+            c: self.c.t(l, self.d.in_space),
+        }
+    }
+
+    pub fn comp(axis: Level, cs: Vec1<Cube>) -> Self {
+        assert!(!cs.is_empty());
+        let d = cs.first().unwrap().d.clone();
+        assert!(axis < d.in_space);
+        for c in &cs {
+            assert_eq!(c.d, d);
+        }
+        let fd = d.in_space - 1;
+
+        if axis == fd {
+            let mut fs: Vec<(RawCube, Q, Q)> = Vec::new();
+            let mut last_face = None;
+            for c in &cs {
+                match &c.c {
+                    RawCube::Point(_) => panic!(),
+                    RawCube::Bridge(faces) => {
+                        let lf = &faces.last().unwrap().0;
+                        let mut faces = faces.iter();
+                        if let Some(last_face) = last_face {
+                            let f0 = faces.next().unwrap();
+                            assert_eq!(last_face, &f0.0);
+                            assert!(fs.last().unwrap().2 <= f0.1);
+                            fs.last_mut().unwrap().2 = f0.2;
+                        }
+                        fs.extend(faces.cloned());
+                        last_face = Some(lf);
+                    }
+                }
+            }
+            Cube {
+                d,
+                c: RawCube::Bridge(fs),
+            }
+        } else {
+            unimplemented!()
+        }
     }
 }
 
-// #[cfg(test)]
+#[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn point_test() {
-        use super::*;
         let p = Cube::zero()
             .shifted(1.into(), 2.into())
             .extended(&Padding::centered(vec![1]));
@@ -96,7 +231,6 @@ mod tests {
 
     #[test]
     fn extend_test() {
-        use super::*;
         let p = Cube::zero().shifted(1.into(), 2.into());
         let q = Cube::zero().shifted(2.into(), 3.into());
         let c = Cube {
@@ -127,6 +261,90 @@ mod tests {
                     )
                 ]),
             }
+        );
+    }
+
+    #[test]
+    fn st_test1() {
+        let c = Cube::zero().shifted(0.into(), 1.into());
+        let s = c.slice_s();
+        let t = c.slice_t();
+        assert_eq!(s, Cube::zero());
+        assert_eq!(t, Cube::zero());
+    }
+
+    #[test]
+    fn st_test2() {
+        let p = Cube::zero().shifted(0.into(), 1.into());
+        let q = Cube::zero().shifted(1.into(), 2.into());
+        let c = Cube {
+            d: Dimensions {
+                effective: 0,
+                in_space: 2,
+            },
+            c: RawCube::Bridge(vec![(p.c, 0.into(), 0.into()), (q.c, 1.into(), 1.into())]),
+        };
+        assert_eq!(
+            c.s(0),
+            Cube {
+                d: Dimensions {
+                    effective: 0,
+                    in_space: 2,
+                },
+                c: RawCube::Bridge(vec![
+                    (Cube::zero().suspended(0.into()).c, 0.into(), 0.into()),
+                    (Cube::zero().suspended(1.into()).c, 1.into(), 1.into())
+                ]),
+            }
+        );
+        assert_eq!(
+            c.s(1),
+            Cube {
+                d: Dimensions {
+                    effective: 0,
+                    in_space: 2,
+                },
+                c: RawCube::Bridge(vec![(
+                    Cube::zero().shifted(0.into(), 1.into()).c,
+                    0.into(),
+                    0.into()
+                )]),
+            }
+        );
+    }
+
+    #[test]
+    fn comp_1d_test() {
+        let c1 = Cube::zero().shifted(0.into(), 1.into());
+        let c2 = Cube::zero().shifted(1.into(), 2.into());
+        let c = Cube::comp(0, vec![c1, c2]);
+
+        assert_eq!(
+            c,
+            Cube {
+                d: Dimensions {
+                    effective: 0,
+                    in_space: 1,
+                },
+                c: RawCube::Bridge(vec![(Cube::zero().c, 0.into(), 2.into())])
+            }
+        );
+    }
+
+    #[test]
+    fn comp_2d_test() {
+        let base = Cube::zero().shifted(0.into(), 1.into());
+        let c1 = base.clone().shifted(0.into(), 1.into());
+        let c2 = base.clone().shifted(1.into(), 2.into());
+
+        let c = Cube::comp(1, vec![c1, c2]);
+        assert_eq!(c.d.in_space, 2);
+        assert_eq!(c.d.effective, 0);
+
+        let s = c.s(0);
+        assert_eq!(
+            s,
+            Cube::zero().suspended(0.into()).shifted(0.into(), 2.into())
         );
     }
 }
