@@ -1,8 +1,6 @@
 use donut_core::cell::*;
 use donut_core::table::*;
-use donut_renderer::geometry_old::extract_geometry;
-use donut_renderer::geometry_old::Geometry;
-use donut_renderer::render::RGeometry;
+// use donut_renderer::geometry::Geometry;
 use donut_renderer::render::Renderer;
 use donut_util::println;
 use nonempty::nonempty;
@@ -14,7 +12,7 @@ pub struct App {
     context: web_sys::CanvasRenderingContext2d,
     prim_table: Rc<PrimTable>,
     cell: LayoutCell,
-    geometry: RGeometry,
+    // geometry: Geometry,
     t: f32,
 }
 
@@ -39,12 +37,12 @@ impl App {
         let assoc = prim_table.prim("assoc");
         let test_cell = assoc;
 
-        let g = extract_geometry(&test_cell);
-        let rg = RGeometry::from(&g);
+        // let g = extract_geometry(&test_cell);
+        // let rg = RGeometry::from(&g);
 
         // println(&format!("Geometry: {:#?}", g));
 
-        let cell = test_cell.s();
+        let cell = test_cell;
 
         Self {
             renderer: Renderer::new(context.clone(), Rc::clone(&prim_table)),
@@ -52,7 +50,7 @@ impl App {
             context,
             prim_table,
             cell,
-            geometry: rg,
+            // geometry: rg,
             t: 0.0,
         }
     }
@@ -64,11 +62,10 @@ impl App {
         self.context.fill_rect(0.0, 0.0, width, height);
         self.renderer.push();
         self.renderer.offset(50, 50);
-        self.renderer.render(&self.cell, 0, 1);
+        // self.renderer.render(&self.cell, 0, 1);
         self.renderer.offset(450, 0);
         let x = self.t.sin() * 0.5 + 0.5;
-        self.renderer
-            .render_geometry(&self.geometry.slice(x * self.geometry.size[2] as f32));
+        // self.renderer.render_geometry(&self.geometry.slice(x * self.geometry.size[2] as f32));
 
         self.renderer.pop();
         self.t += 0.03;

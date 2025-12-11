@@ -1,93 +1,49 @@
-use donut_core::cell::{Level, Padding, PrimId};
+use crate::common::*;
+use crate::cube::*;
+use donut_core::cell::{Padding, PrimId};
 
-pub type Q = num_rational::Rational32;
-pub type CoordQ = Vec<Q>;
+/*
 
-type Vec1<T> = Vec<T>;
-type Vec2<T> = Vec<T>;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Dimensions {
-    pub effective: Level,
-    pub space: Level,
-}
-
-impl Dimensions {
-    pub fn new(d: Level) -> Self {
-        Dimensions {
-            effective: d,
-            space: d,
-        }
-    }
+#[derive(Debug, Clone)]
+pub struct Unit {
+    pub prim_id: PrimId,
+    pub dim: Dimensions,
+    pub cube: Cube,
+    pub source: Box<Geometry>,
+    pub target: Box<Geometry>,
 }
 
 #[derive(Debug, Clone)]
-pub enum Cube {
-    Point(CoordQ),
-    Bridge(Level, Vec2<(Cube, Q)>),
+pub enum Geometry {
+    Unit(Unit),
+    Comp(Level, Vec2<Geometry>, Vec1<Geometry>),
 }
 
-impl Cube {
-    pub fn dim(&self) -> Dimensions {
-        match self {
-            Cube::Point(c) => Dimensions::new(c.len() as Level),
-            Cube::Bridge(_, slices) => {
-                let mut l = slices.first().unwrap().0.dim();
-                for (face, _) in slices {
-                    assert_eq!(face.dim(), l);
-                }
-                l.space += 1;
-                l
-            }
-        }
-    }
-
-    pub fn shift(&self, x0: Q, x1: Q) -> Self {
-        let face_dim = match self {
-            Cube::Point(_) => 0,
-            Cube::Bridge(l, _) => *l,
-        };
-        Cube::Bridge(face_dim + 1, vec![(self.clone(), x0), (self.clone(), x1)])
-    }
-
-    pub fn pad(&self, pad: &Padding) -> Self {
-        unimplemented!()
-    }
-
-    pub fn point() -> Self {
-        Cube::Point(vec![])
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum Unit {
-    Zero(Level, Cube),
-    Succ(Level, Box<Geometry>, Box<Unit>, Box<Geometry>),
+enum UnitSlice {
+    IdSection(Unit),
+    PrimSection(Geometry),
 }
 
 impl Unit {
-    pub fn edim(&self) -> Level {
+    pub fn dim(&self) -> Dimensions {
         match self {
-            Unit::Zero(l, _) => 0,
-            Unit::Succ(l, _, f, _) => {
-                let d = *l;
-                assert_eq!(f.edim() + 1, d);
-                d
+            Unit::Zero(l, c) => {
+                assert_eq!(*l, c.dim().space);
+                Dimensions::from_unit(*l)
+            }
+            Unit::Succ(dim, s, f, t) => {
+                let fd = f.dim();
+                assert_eq!(dim.effective, fd.effective + 1);
+                assert!(dim.effective > s.dim().effective);
+                assert!(dim.effective > t.dim().effective);
+                assert_eq!(dim.space, fd.space + 1);
+                assert_eq!(dim.space, s.dim().space);
+                assert_eq!(dim.space, t.dim().space);
+                dim.clone()
             }
         }
     }
 
-    pub fn sdim(&self) -> Level {
-        match self {
-            Unit::Zero(l, cube) => cube.dim(),
-            Unit::Succ(_, s, f, t) => {
-                let d = s.sdim();
-                assert_eq!(f.sdim(), d);
-                assert_eq!(t.sdim(), d);
-                d
-            }
-        }
-    }
     pub fn shift(&mut self, w: u32) {
         match self {
             Unit::Zero(_, cube) => {
@@ -101,140 +57,181 @@ impl Unit {
         }
     }
 
-    pub fn pad(&mut self, pad: &Padding) {
+    pub fn extend(&mut self, pad: &Padding) {
         match self {
-            Unit::Zero(l, cube) => {
-                *cube = cube.pad(pad);
+            Unit::Zero(_, cube) => {
+                *cube = cube.extend(pad);
             }
-            Unit::Succ(l, s, f, t) => {
+            Unit::Succ(dim, s, f, t) => {
+                let l = (dim.space - 1) as usize;
                 let mut pad_inside = pad.clone();
-                pad_inside.min[*l as usize] = 0;
-                pad_inside.max[*l as usize] = 0;
+                pad_inside.min[l] = 0;
+                pad_inside.max[l] = 0;
                 if !pad_inside.is_zero() {
-                    s.pad(&pad_inside);
-                    f.pad(&pad_inside);
-                    t.pad(&pad_inside);
+                    s.extend(&pad_inside);
+                    f.extend(&pad_inside);
+                    t.extend(&pad_inside);
                 }
 
-                let min_end = pad.min[*l as usize];
-                let max_end = pad.max[*l as usize];
+                let min_end = pad.min[l];
+                let max_end = pad.max[l];
                 let mut end_pad = Padding {
                     min: vec![0; pad.min.len()],
                     max: vec![0; pad.max.len()],
                 };
                 if min_end != 0 {
-                    end_pad.min[*l as usize] = min_end;
-                    s.pad(&end_pad);
-                    end_pad.min[*l as usize] = 0;
+                    end_pad.min[l] = min_end;
+                    s.extend(&end_pad);
+                    end_pad.min[l] = 0;
                 }
                 if max_end != 0 {
-                    end_pad.max[*l as usize] = max_end;
-                    t.pad(&end_pad);
-                    end_pad.max[*l as usize] = 0;
+                    end_pad.max[l] = max_end;
+                    t.extend(&end_pad);
+                    end_pad.max[l] = 0;
                 }
             }
         }
     }
-}
 
-#[derive(Debug, Clone)]
-pub enum Geometry {
-    Prim(PrimId, Unit),
-    Comp(Level, Vec2<Geometry>, Vec1<Geometry>),
+    fn s(&self, l: Level) -> UnitSlice {
+        unimplemented!()
+    }
+
+    fn t(&self, l: Level) -> UnitSlice {
+        unimplemented!()
+    }
 }
 
 impl Geometry {
     pub fn shift(&mut self, w: u32) {
         match self {
-            Geometry::Prim(prim) => {
-                prim.shift(w);
+            Geometry::Prim(_, unit) => {
+                unit.shift(w);
             }
-            Geometry::Comp(_, cs) => {
+            Geometry::Comp(_, cs, ps) => {
                 for c in cs.iter_mut() {
                     c.shift(w);
+                }
+                for p in ps.iter_mut() {
+                    p.shift(w);
                 }
             }
         }
     }
 
-    pub fn pad(&mut self, pad: &Padding) {
+    pub fn extend(&mut self, pad: &Padding) {
         match self {
-            Geometry::Prim(prim) => {
-                prim.pad(pad);
+            Geometry::Prim(_, unit) => {
+                unit.extend(pad);
             }
-            Geometry::Comp(axis, cs) => {
+            Geometry::Comp(axis, cs, ps) => {
+                let axis = *axis as usize;
                 let n = cs.len();
                 assert!(n >= 2);
                 let mut pad_inside = pad.clone();
-                pad_inside.min[*axis as usize] = 0;
-                pad_inside.max[*axis as usize] = 0;
+                pad_inside.min[axis] = 0;
+                pad_inside.max[axis] = 0;
                 if !pad_inside.is_zero() {
                     for c in cs.iter_mut() {
-                        c.pad(&pad_inside);
+                        c.extend(&pad_inside);
+                    }
+                    for p in ps.iter_mut() {
+                        p.extend(&pad_inside);
                     }
                 }
 
-                let min_end = pad.min[*axis as usize];
-                let max_end = pad.max[*axis as usize];
+                let min_end = pad.min[axis];
+                let max_end = pad.max[axis];
                 let mut end_pad = Padding {
                     min: vec![0; pad.min.len()],
                     max: vec![0; pad.max.len()],
                 };
                 if min_end != 0 {
-                    end_pad.min[*axis as usize] = min_end;
-                    cs[0].pad(&end_pad);
-                    end_pad.min[*axis as usize] = 0;
+                    end_pad.min[axis] = min_end;
+                    cs[0].extend(&end_pad);
+                    end_pad.min[axis] = 0;
                 }
                 if max_end != 0 {
-                    end_pad.max[*axis as usize] = max_end;
-                    cs[n - 1].pad(&end_pad);
-                    end_pad.max[*axis as usize] = 0;
+                    end_pad.max[axis] = max_end;
+                    cs[n - 1].extend(&end_pad);
+                    end_pad.max[axis] = 0;
                 }
             }
         }
     }
 
-    pub fn edim(&self) -> Level {
+    pub fn dim(&self) -> Dimensions {
         match self {
-            Geometry::Prim(prim) => prim.edim,
-            Geometry::Comp(_, cs) => cs.iter().map(|c| c.edim()).max().unwrap(),
-        }
-    }
-
-    pub fn sdim(&self) -> Level {
-        match self {
-            Geometry::Prim(prim) => {
-                let d = prim.size.len() as Level;
-                assert_eq!(prim.ty.sdim(), d);
-                d
-            }
-            Geometry::Comp(_, cs) => {
-                let d = cs.first().sdim();
-                for c in cs.iter() {
-                    assert_eq!(c.sdim(), d);
+            Geometry::Prim(_, unit) => unit.dim(),
+            Geometry::Comp(_, cs, ps) => {
+                let d = cs
+                    .iter()
+                    .map(|c| c.dim())
+                    .reduce(|a, b| {
+                        assert_eq!(a.space, b.space);
+                        Dimensions {
+                            effective: a.effective.max(b.effective),
+                            space: a.space,
+                        }
+                    })
+                    .unwrap();
+                for p in ps {
+                    let pd = p.dim();
+                    assert_eq!(pd.space, d.space);
+                    assert!(pd.effective < d.effective);
                 }
                 d
             }
         }
     }
 
-    pub fn bridge(&self, f0: &Geometry, f1: &Geometry, x0: u32, x1: u32) -> Self {
+    pub fn s(&self, l: Level) -> Self {
+        match self {
+            Geometry::Prim(prim_id, unit) => match unit.s(l) {
+                UnitSlice::PrimSection(g) => g,
+                UnitSlice::IdSection(u) => Geometry::Prim(*prim_id, u),
+            },
+            Geometry::Comp(axis, cs, ps) => {
+                if *axis == self.dim().space - 1 {
+                    cs.first().unwrap().s(l)
+                } else {
+                    let cs = cs.iter().map(|c| c.s(l)).collect::<Vec<_>>();
+                    let ps = ps.iter().map(|p| p.s(l)).collect::<Vec<_>>();
+                    Geometry::comp(*axis, cs, ps)
+                }
+            }
+        }
+    }
+
+    pub fn t(&self, l: Level) -> Self {
+        match self {
+            Geometry::Prim(prim_id, unit) => match unit.t(l) {
+                UnitSlice::PrimSection(g) => g,
+                UnitSlice::IdSection(u) => Geometry::Prim(*prim_id, u),
+            },
+            Geometry::Comp(axis, cs, ps) => {
+                if *axis == self.dim().space - 1 {
+                    cs.last().unwrap().t(l)
+                } else {
+                    let cs = cs.iter().map(|c| c.t(l)).collect::<Vec<_>>();
+                    let ps = ps.iter().map(|p| p.t(l)).collect::<Vec<_>>();
+                    Geometry::comp(*axis, cs, ps)
+                }
+            }
+        }
+    }
+
+    pub fn comp(axis: Level, cs: Vec<Geometry>, ps: Vec<Geometry>) -> Self {
         unimplemented!()
     }
 
-    pub fn comp(axis: Level, cs: Vec<Geometry>, inner_pads: &Vec<u32>) -> Self {
+    pub fn bridge(f0: Geometry, f1: Geometry, w: u32) -> Self {
         unimplemented!()
     }
 
-    pub fn s(&self) -> Self {
-        unimplemented!()
-    }
-
-    pub fn t(&self) -> Self {
-        unimplemented!()
-    }
-
-    pub fn lerp(b0: &Self, b1: &Self, a: Q) -> Self {
+    pub fn lerp(b0: &Geometry, b1: &Geometry, a: Q) -> Self {
         unimplemented!()
     }
 }
+
+*/

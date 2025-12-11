@@ -43,9 +43,15 @@ impl Padding {
         }
     }
 
-    pub fn pop(&mut self) {
-        self.min.pop();
-        self.max.pop();
+    pub fn pop(&mut self) -> Option<(u32, u32)> {
+        let min_val = self.min.pop()?;
+        let max_val = self.max.pop()?;
+        Some((min_val, max_val))
+    }
+
+    pub fn dim(&self) -> Level {
+        assert_eq!(self.min.len(), self.max.len());
+        self.min.len() as Level
     }
 
     pub fn is_zero(&self) -> bool {
@@ -80,7 +86,7 @@ impl LayoutCell {
         self.1.size.len()
     }
 
-    pub fn size(&self) -> Coord {
+    pub fn full_size(&self) -> Coord {
         let base_size = &self.1.size;
         base_size
             .iter()
@@ -89,7 +95,7 @@ impl LayoutCell {
             .collect()
     }
 
-    /* pub fn extend(&mut self, pad: &Padding) {
+    pub fn extend(&mut self, pad: &Padding) {
         assert!(self.1.pad.min.len() == pad.min.len());
         assert!(self.1.pad.max.len() == pad.max.len());
 
@@ -97,37 +103,27 @@ impl LayoutCell {
             self.1.pad.min[i] += pad.min[i];
             self.1.pad.max[i] += pad.max[i];
         }
-    } */
-
-    pub fn extend(&self, pad: &Padding) -> Self {
-        // accepts higher padding
-        assert!(self.1.pad.min.len() <= pad.min.len());
-        assert!(self.1.pad.max.len() <= pad.max.len());
-
-        let mut new_pad = self.1.pad.clone();
-        for i in 0..new_pad.min.len() {
-            new_pad.min[i] += pad.min[i];
-            new_pad.max[i] += pad.max[i];
-        }
-        let mut new_layout = self.1.clone();
-        new_layout.pad = new_pad;
-        LayoutCell(Rc::clone(&self.0), new_layout)
     }
 
-    // cell.s().s() == cell.t().s()
-    // cell.s().t() == cell.t().t()
+    pub fn extended(mut self, pad: &Padding) -> Self {
+        self.extend(pad);
+        self
+    }
+
+    // cell.s().s() ~ cell.t().s()
+    // cell.s().t() ~ cell.t().t()
 
     pub fn s(&self) -> Self {
         let dim = self.dim();
         let cell = match self.0.as_ref() {
             Cell::Prim(_, shape) => match shape {
                 Shape::Zero => panic!("zero cell has no source"),
-                Shape::Succ(s, _) => return s.extend(&self.1.pad),
+                Shape::Succ(s, _) => return s.clone().extended(&self.1.pad),
             },
             Cell::Id(inner) => Rc::clone(&inner.0),
             Cell::Comp(level, children, inner_pads) => {
                 if *level as usize + 1 == dim {
-                    return children.first().s().extend(&self.1.pad);
+                    return children.first().s().extended(&self.1.pad);
                 } else {
                     let cs = children.iter().map(|c| c.s()).collect::<Vec<_>>();
                     let mut layout = self.1.clone();
@@ -145,17 +141,18 @@ impl LayoutCell {
         layout.size.pop();
         LayoutCell(cell, layout)
     }
+
     pub fn t(&self) -> Self {
         let dim = self.dim();
         let cell = match self.0.as_ref() {
             Cell::Prim(_, shape) => match shape {
                 Shape::Zero => panic!("zero cell has no target"),
-                Shape::Succ(_, t) => return t.extend(&self.1.pad),
+                Shape::Succ(_, t) => return t.clone().extended(&self.1.pad),
             },
             Cell::Id(inner) => Rc::clone(&inner.0),
             Cell::Comp(level, children, inner_pads) => {
                 if *level as usize + 1 == dim {
-                    return children.last().t().extend(&self.1.pad);
+                    return children.last().t().extended(&self.1.pad);
                 } else {
                     let cs = children.iter().map(|c| c.t()).collect::<Vec<_>>();
                     let mut layout = self.1.clone();
@@ -172,24 +169,5 @@ impl LayoutCell {
         layout.pad.pop();
         layout.size.pop();
         LayoutCell(cell, layout)
-    }
-
-    pub fn source(&self, level: Level) -> Self {
-        let mut dim = self.dim();
-        let mut cell = self.clone();
-        while (level as usize) + 1 < dim {
-            cell = cell.s(); // s or t
-            dim -= 1;
-        }
-        cell.s()
-    }
-    pub fn target(&self, level: Level) -> Self {
-        let mut dim = self.dim();
-        let mut cell = self.clone();
-        while (level as usize) + 1 < dim {
-            cell = cell.s(); // s or t
-            dim -= 1;
-        }
-        cell.t()
     }
 }
