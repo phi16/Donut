@@ -4,6 +4,7 @@ use crate::common::*;
 enum RawCube {
     Point(CoordQ),
     Bridge(Vec1<(RawCube, Q, Q)>),
+    Comp(Level, Vec2<RawCube>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -13,6 +14,38 @@ pub struct Cube {
 }
 
 impl RawCube {
+    pub fn slice_s(&self, d: Level) -> Self {
+        match self {
+            RawCube::Point(_) => panic!(),
+            RawCube::Bridge(faces) => faces.first().unwrap().0.clone(),
+            RawCube::Comp(axis, cs) => {
+                let fd = d - 1;
+                if axis == &fd {
+                    cs.first().unwrap().slice_s(d)
+                } else {
+                    let cs = cs.iter().map(|c| c.slice_s(d)).collect();
+                    RawCube::comp(*axis, fd, cs)
+                }
+            }
+        }
+    }
+
+    pub fn slice_t(&self, d: Level) -> Self {
+        match self {
+            RawCube::Point(_) => panic!(),
+            RawCube::Bridge(faces) => faces.last().unwrap().0.clone(),
+            RawCube::Comp(axis, cs) => {
+                let fd = d - 1;
+                if axis == &fd {
+                    cs.last().unwrap().slice_t(d)
+                } else {
+                    let cs = cs.iter().map(|c| c.slice_t(d)).collect();
+                    RawCube::comp(*axis, fd, cs)
+                }
+            }
+        }
+    }
+
     pub fn s(&self, l: Level, d: Level) -> Self {
         assert!(l < d);
         match self {
@@ -31,6 +64,14 @@ impl RawCube {
                         })
                         .collect();
                     RawCube::Bridge(fs)
+                }
+            }
+            RawCube::Comp(axis, cs) => {
+                if axis == &l {
+                    cs.first().unwrap().s(l, d)
+                } else {
+                    let cs = cs.iter().map(|c| c.s(l, d)).collect();
+                    RawCube::comp(*axis, d, cs)
                 }
             }
         }
@@ -56,7 +97,22 @@ impl RawCube {
                     RawCube::Bridge(fs)
                 }
             }
+            RawCube::Comp(axis, cs) => {
+                if axis == &l {
+                    cs.last().unwrap().t(l, d)
+                } else {
+                    let cs = cs.iter().map(|c| c.t(l, d)).collect();
+                    RawCube::comp(*axis, d, cs)
+                }
+            }
         }
+    }
+
+    pub fn comp(axis: Level, _d: Level, cs: Vec2<RawCube>) -> Self {
+        // TODO: simplify
+        assert!(cs.len() >= 2);
+        // TODO: check faces
+        RawCube::Comp(axis, cs)
     }
 }
 
@@ -75,7 +131,12 @@ impl Cube {
         }
     }
 
+    pub fn interval(x0: Q, x1: Q) -> Self {
+        Cube::zero().shifted(x0, x1)
+    }
+
     pub fn bridge(f0: (Cube, Q), f1: (Cube, Q)) -> Self {
+        // TODO: f0.0 / f1.0 should have the same structure
         let d = f0.0.d.clone();
         assert_eq!(f1.0.d, d);
         Cube {
@@ -123,6 +184,39 @@ impl Cube {
                     faces.first_mut().unwrap().1 -= Q::from(min_pad[fd as usize] as i32);
                     faces.last_mut().unwrap().2 += Q::from(max_pad[fd as usize] as i32);
                 }
+                RawCube::Comp(axis, cs) => {
+                    if &dim < axis {
+                        for c in cs.iter_mut() {
+                            go(c, dim, min_pad, max_pad);
+                        }
+                    } else {
+                        let mut min_pad = min_pad.to_vec();
+                        let mut max_pad = max_pad.to_vec();
+                        let axis = *axis as usize;
+                        let min_pad_axis = min_pad[axis];
+                        let max_pad_axis = max_pad[axis];
+                        min_pad[axis] = 0;
+                        max_pad[axis] = 0;
+                        for c in cs.iter_mut() {
+                            go(c, dim, &min_pad, &max_pad);
+                        }
+                        if min_pad_axis == 0 && max_pad_axis == 0 {
+                            return;
+                        }
+                        let mut zero_min_pad = vec![0; dim as usize];
+                        let mut zero_max_pad = vec![0; dim as usize];
+                        if min_pad_axis != 0 {
+                            zero_min_pad[axis] = min_pad_axis;
+                            go(cs.first_mut().unwrap(), dim, &zero_min_pad, &zero_max_pad);
+                            zero_min_pad[axis] = 0;
+                        }
+                        if max_pad_axis != 0 {
+                            zero_max_pad[axis] = max_pad_axis;
+                            go(cs.last_mut().unwrap(), dim, &zero_min_pad, &zero_max_pad);
+                            zero_max_pad[axis] = 0;
+                        }
+                    }
+                }
             }
         }
         go(&mut self.c, self.d.in_space, &pad.min, &pad.max);
@@ -130,28 +224,16 @@ impl Cube {
     }
 
     pub fn slice_s(&self) -> Self {
-        match &self.c {
-            RawCube::Point(_) => panic!(),
-            RawCube::Bridge(faces) => {
-                let f = faces.first().unwrap().0.clone();
-                Cube {
-                    d: self.d.sliced(),
-                    c: f,
-                }
-            }
+        Cube {
+            d: self.d.sliced(),
+            c: self.c.slice_s(self.d.in_space),
         }
     }
 
     pub fn slice_t(&self) -> Self {
-        match &self.c {
-            RawCube::Point(_) => panic!(),
-            RawCube::Bridge(faces) => {
-                let f = faces.last().unwrap().0.clone();
-                Cube {
-                    d: self.d.sliced(),
-                    c: f,
-                }
-            }
+        Cube {
+            d: self.d.sliced(),
+            c: self.c.slice_t(self.d.in_space),
         }
     }
 
@@ -179,6 +261,7 @@ impl Cube {
         let fd = d.in_space - 1;
 
         if axis == fd {
+            let mut fss = Vec::new();
             let mut fs: Vec<(RawCube, Q, Q)> = Vec::new();
             let mut last_face = None;
             for c in &cs {
@@ -196,14 +279,28 @@ impl Cube {
                         fs.extend(faces.cloned());
                         last_face = Some(lf);
                     }
+                    RawCube::Comp(_, _) => {
+                        fss.push(RawCube::Bridge(fs));
+                        fss.push(c.c.clone());
+                        fs = Vec::new();
+                        last_face = None;
+                    }
                 }
             }
             Cube {
                 d,
-                c: RawCube::Bridge(fs),
+                c: if fss.is_empty() {
+                    RawCube::Bridge(fs)
+                } else {
+                    if !fs.is_empty() {
+                        fss.push(RawCube::Bridge(fs));
+                    }
+                    fss.into_iter().next().unwrap()
+                },
             }
         } else {
-            unimplemented!()
+            let c = RawCube::comp(axis, d.in_space, cs.into_iter().map(|c| c.c).collect());
+            Cube { d, c }
         }
     }
 }
@@ -214,9 +311,7 @@ mod tests {
 
     #[test]
     fn point_test() {
-        let p = Cube::zero()
-            .shifted(1.into(), 2.into())
-            .extended(&Padding::centered(vec![1]));
+        let p = Cube::interval(1.into(), 2.into()).extended(&Padding::centered(vec![1]));
         assert_eq!(
             p,
             Cube {
@@ -231,8 +326,8 @@ mod tests {
 
     #[test]
     fn extend_test() {
-        let p = Cube::zero().shifted(1.into(), 2.into());
-        let q = Cube::zero().shifted(2.into(), 3.into());
+        let p = Cube::interval(1.into(), 2.into());
+        let q = Cube::interval(2.into(), 3.into());
         let c = Cube {
             d: Dimensions {
                 effective: 0,
@@ -249,16 +344,8 @@ mod tests {
                     in_space: 2,
                 },
                 c: RawCube::Bridge(vec![
-                    (
-                        Cube::zero().shifted(0.into(), 3.into()).c,
-                        0.into(),
-                        1.into()
-                    ),
-                    (
-                        Cube::zero().shifted(1.into(), 4.into()).c,
-                        2.into(),
-                        3.into()
-                    )
+                    (Cube::interval(0.into(), 3.into()).c, 0.into(), 1.into()),
+                    (Cube::interval(1.into(), 4.into()).c, 2.into(), 3.into())
                 ]),
             }
         );
@@ -266,7 +353,7 @@ mod tests {
 
     #[test]
     fn st_test1() {
-        let c = Cube::zero().shifted(0.into(), 1.into());
+        let c = Cube::interval(0.into(), 1.into());
         let s = c.slice_s();
         let t = c.slice_t();
         assert_eq!(s, Cube::zero());
@@ -275,8 +362,8 @@ mod tests {
 
     #[test]
     fn st_test2() {
-        let p = Cube::zero().shifted(0.into(), 1.into());
-        let q = Cube::zero().shifted(1.into(), 2.into());
+        let p = Cube::interval(0.into(), 1.into());
+        let q = Cube::interval(1.into(), 2.into());
         let c = Cube {
             d: Dimensions {
                 effective: 0,
@@ -315,8 +402,8 @@ mod tests {
 
     #[test]
     fn comp_1d_test() {
-        let c1 = Cube::zero().shifted(0.into(), 1.into());
-        let c2 = Cube::zero().shifted(1.into(), 2.into());
+        let c1 = Cube::interval(0.into(), 1.into());
+        let c2 = Cube::interval(1.into(), 2.into());
         let c = Cube::comp(0, vec![c1, c2]);
 
         assert_eq!(
@@ -333,7 +420,7 @@ mod tests {
 
     #[test]
     fn comp_2d_test() {
-        let base = Cube::zero().shifted(0.into(), 1.into());
+        let base = Cube::interval(0.into(), 1.into());
         let c1 = base.clone().shifted(0.into(), 1.into());
         let c2 = base.clone().shifted(1.into(), 2.into());
 
@@ -345,6 +432,43 @@ mod tests {
         assert_eq!(
             s,
             Cube::zero().suspended(0.into()).shifted(0.into(), 2.into())
+        );
+    }
+
+    #[test]
+    fn comp0_extend_test() {
+        let c1 = Cube::bridge(
+            (Cube::interval(1.into(), 2.into()), 1.into()),
+            (Cube::interval(2.into(), 2.into()), 2.into()),
+        );
+        let c2 = Cube::bridge(
+            (Cube::interval(2.into(), 2.into()), 1.into()),
+            (Cube::interval(2.into(), 3.into()), 2.into()),
+        );
+
+        let c = Cube::comp(0, vec![c1, c2]).extended(&Padding::centered(vec![1, 1]));
+
+        assert_eq!(
+            c,
+            Cube {
+                d: Dimensions {
+                    effective: 0,
+                    in_space: 2,
+                },
+                c: RawCube::Comp(
+                    0,
+                    vec![
+                        RawCube::Bridge(vec![
+                            (Cube::interval(0.into(), 2.into()).c, 0.into(), 1.into()),
+                            (Cube::interval(1.into(), 2.into()).c, 2.into(), 3.into())
+                        ]),
+                        RawCube::Bridge(vec![
+                            (Cube::interval(2.into(), 3.into()).c, 0.into(), 1.into()),
+                            (Cube::interval(2.into(), 4.into()).c, 2.into(), 3.into())
+                        ]),
+                    ]
+                ),
+            }
         );
     }
 }

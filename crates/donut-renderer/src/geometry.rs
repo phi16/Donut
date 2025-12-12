@@ -2,12 +2,11 @@ use crate::common::*;
 use crate::cube::*;
 use donut_core::cell::{Padding, PrimId};
 
-/*
-
 #[derive(Debug, Clone)]
 pub struct Unit {
     pub prim_id: PrimId,
     pub dim: Dimensions,
+    pub origin: CoordQ,
     pub cube: Cube,
     pub source: Box<Geometry>,
     pub target: Box<Geometry>,
@@ -23,6 +22,8 @@ enum UnitSlice {
     IdSection(Unit),
     PrimSection(Geometry),
 }
+
+/*
 
 impl Unit {
     pub fn dim(&self) -> Dimensions {

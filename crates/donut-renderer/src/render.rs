@@ -4,7 +4,7 @@ use donut_util::println;
 use std::rc::Rc;
 
 type R = f32;
-type RCoord = Vec<R>;
+type CoordR = Vec<R>;
 
 fn lerp(a: R, b: R, r: R) -> R {
     a * (1.0 - r) + b * r
