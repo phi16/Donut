@@ -1,21 +1,17 @@
-use nonempty::{nonempty, NonEmpty};
+use crate::common::*;
+use crate::padded_cell::*;
 use std::collections::HashMap;
-use std::rc::Rc;
-use std::vec;
-
-use crate::layout_cell::*;
 
 pub type Color = (u8, u8, u8, u8);
-pub struct Prim {
+pub struct PrimData {
     pub name: String,
-    pub level: Level,
     pub color: Color,
-    pub base_cell: LayoutCell,
+    pub base_cell: PaddedCell,
 }
 
 pub struct PrimTable {
-    id_map: HashMap<String, PrimId>,
-    table: HashMap<PrimId, Prim>,
+    id_map: HashMap<String, Prim>,
+    table: HashMap<Prim, PrimData>,
 }
 
 impl PrimTable {
@@ -137,66 +133,6 @@ impl PrimTable {
         );
 
         ps
-    }
-
-    pub fn prim(&self, name: &str) -> LayoutCell {
-        let prim_id = self
-            .id_map
-            .get(name)
-            .expect(&format!("Prim \"{}\" not found", name));
-        let prim = self.table.get(prim_id).unwrap();
-        prim.base_cell.clone()
-    }
-
-    pub fn id(&self, cell: &LayoutCell, len: u32) -> LayoutCell {
-        let mut layout = cell.1.clone();
-        layout.size.push(len);
-        LayoutCell(Rc::new(Cell::Id(cell.clone())), layout)
-    }
-
-    pub fn comp(&self, cells: Vec1<LayoutCell>, level: Level, len: u32) -> LayoutCell {
-        let n = cells.len();
-        let dim = cells.first().dim();
-        let mut bounds = vec![0; dim];
-        for cell in &cells {
-            let layout = &cell.1;
-            for i in 0..dim {
-                if i == level as usize {
-                    bounds[i] += layout.size[i];
-                } else {
-                    bounds[i] = bounds[i].max(layout.size[i]);
-                }
-            }
-        }
-        let mut pcs = vec![];
-        for cell in cells {
-            let mut pad = vec![0; dim];
-            for i in 0..dim {
-                if i != level as usize {
-                    let b = bounds[i];
-                    let s = cell.1.size[i];
-                    assert!((b - s) % 2 == 0);
-                    pad[i] = (b - s) / 2;
-                }
-            }
-            let mut layout = cell.1.clone();
-            layout.pad = Padding::centered(pad);
-            pcs.push(LayoutCell(Rc::clone(&cell.0), layout));
-        }
-        let inner_pads = vec![len; n - 1];
-        bounds[level as usize] += len * (n as u32 - 1);
-        let layout = Layout {
-            size: bounds,
-            pad: Padding::zero(dim),
-        };
-        LayoutCell(
-            Rc::new(Cell::Comp(
-                level,
-                NonEmpty::from_vec(pcs).unwrap(),
-                inner_pads,
-            )),
-            layout,
-        )
     }
 
     pub fn get(&self, id: PrimId) -> Option<&Prim> {

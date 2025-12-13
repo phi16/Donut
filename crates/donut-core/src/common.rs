@@ -10,6 +10,12 @@ pub struct Prim {
     id: u64,
 }
 
+impl Prim {
+    pub fn new(id: u64) -> Self {
+        Prim { id }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Dim {
     pub effective: Level,

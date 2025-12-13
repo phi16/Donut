@@ -1,19 +1,14 @@
 use crate::common::*;
 
 #[derive(Debug, Clone)]
-struct FaceBlock {
-    pub cell: LayoutCell,
-    pub width: N,
-    pub extend: N,
-}
-
-#[derive(Debug, Clone)]
 enum Shape {
     Zero,
     Succ {
-        source: FaceBlock,
-        shrink_point: CoordN,
-        target: FaceBlock,
+        source_extend: N,
+        source: LayoutCell,
+        width: N,
+        target: LayoutCell,
+        target_extend: N,
     },
 }
 
