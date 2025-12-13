@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::vec;
 
-use crate::cell::*;
+use crate::layout_cell::*;
 
 pub type Color = (u8, u8, u8, u8);
 pub struct Prim {

@@ -1,4 +1,4 @@
-use donut_core::cell::*;
+use donut_core::layout_cell::*;
 use donut_core::table::*;
 // use donut_renderer::geometry::Geometry;
 use donut_renderer::render::Renderer;
@@ -10,10 +10,6 @@ pub struct App {
     renderer: Renderer,
     canvas: web_sys::HtmlCanvasElement,
     context: web_sys::CanvasRenderingContext2d,
-    prim_table: Rc<PrimTable>,
-    cell: LayoutCell,
-    // geometry: Geometry,
-    t: f32,
 }
 
 impl App {
@@ -21,37 +17,10 @@ impl App {
         canvas: web_sys::HtmlCanvasElement,
         context: web_sys::CanvasRenderingContext2d,
     ) -> Self {
-        let prim_table = Rc::new(PrimTable::default());
-        let i = prim_table.prim("i");
-        let ii = prim_table.id(&i, 50);
-        let ij = prim_table.id(&i, 150);
-        let m = prim_table.prim("m");
-        let w = prim_table.prim("w");
-        let g1 = prim_table.comp(nonempty![w.clone(), ij.clone()], 0, 20);
-        let g2 = prim_table.comp(nonempty![ii.clone(), m.clone()], 0, 80);
-        let cell = prim_table.comp(nonempty![g1, g2], 1, 40);
-
-        let test_cell = cell; // prim_table.prim("w");
-                              // println(&format!("Cell: {:#?}", test_cell));
-
-        let assoc = prim_table.prim("assoc");
-        let test_cell = assoc;
-
-        // let g = extract_geometry(&test_cell);
-        // let rg = RGeometry::from(&g);
-
-        // println(&format!("Geometry: {:#?}", g));
-
-        let cell = test_cell;
-
         Self {
-            renderer: Renderer::new(context.clone(), Rc::clone(&prim_table)),
+            renderer: Renderer::new(context.clone()),
             canvas,
             context,
-            prim_table,
-            cell,
-            // geometry: rg,
-            t: 0.0,
         }
     }
 
@@ -60,14 +29,17 @@ impl App {
         let height = self.canvas.height() as f64;
         self.context.set_fill_style_str("rgb(40 40 40)");
         self.context.fill_rect(0.0, 0.0, width, height);
-        self.renderer.push();
-        self.renderer.offset(50, 50);
-        // self.renderer.render(&self.cell, 0, 1);
-        self.renderer.offset(450, 0);
-        let x = self.t.sin() * 0.5 + 0.5;
-        // self.renderer.render_geometry(&self.geometry.slice(x * self.geometry.size[2] as f32));
 
-        self.renderer.pop();
-        self.t += 0.03;
+        self.context.set_fill_style_str("rgb(255 255 255)"); // why flickers
+        self.context
+            .arc(
+                width / 2.0,
+                height / 2.0,
+                100.0,
+                0.0,
+                std::f64::consts::PI * 2.0,
+            )
+            .unwrap();
+        self.context.fill();
     }
 }
