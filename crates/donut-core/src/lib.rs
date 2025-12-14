@@ -3,4 +3,3 @@ pub mod common;
 pub mod layout_cell;
 pub mod padded_cell;
 pub mod pure_cell;
-pub mod table;

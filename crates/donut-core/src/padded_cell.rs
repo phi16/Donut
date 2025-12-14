@@ -163,7 +163,9 @@ impl Cellular for PaddedCell {
         }
         assert!(n >= 2);
         let mut dim = children[0].dim();
-        assert!(axis < dim.in_space);
+        if axis >= dim.in_space {
+            return None;
+        }
 
         for i in 0..n - 1 {
             let t = target_face(&children[i], axis);

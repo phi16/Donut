@@ -1,6 +1,6 @@
 use crate::common::*;
 
-pub trait Cellular: Clone + Sized {
+pub trait Cellular: Clone {
     fn dim(&self) -> Dim;
     fn zero(prim: Prim) -> Self;
     fn prim(prim: Prim, source: Self, target: Self) -> Self;

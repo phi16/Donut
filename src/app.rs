@@ -1,9 +1,7 @@
 use donut_core::layout_cell::*;
-use donut_core::table::*;
 // use donut_renderer::geometry::Geometry;
 use donut_renderer::render::Renderer;
 use donut_util::println;
-use nonempty::nonempty;
 use std::rc::Rc;
 
 pub struct App {

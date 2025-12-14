@@ -59,6 +59,9 @@ impl Cellular for PureCell {
         }
         assert!(n >= 1);
 
+        let first_source_face = source_face(&children[0], axis);
+        let last_target_face = target_face(&children[n - 1], axis);
+
         for i in 0..n - 1 {
             let t = target_face(&children[i], axis);
             let s = source_face(&children[i + 1], axis);
@@ -85,7 +88,15 @@ impl Cellular for PureCell {
                 }
             }
         }
-        Some(PureCell::Comp(axis, cs, dim))
+
+        Some(match cs.len() {
+            0 => {
+                assert!(first_source_face.is_convertible(&last_target_face));
+                first_source_face
+            }
+            1 => cs.into_iter().next().unwrap(),
+            _ => PureCell::Comp(axis, cs, dim),
+        })
     }
 
     fn s(&self) -> Self {

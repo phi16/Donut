@@ -5,7 +5,7 @@ pub type CoordN = Vec<N>;
 pub type Vec1<T> = Vec<T>;
 pub type Vec2<T> = Vec<T>;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Prim {
     id: u64,
 }
