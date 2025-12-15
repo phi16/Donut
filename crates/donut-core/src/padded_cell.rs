@@ -1,6 +1,9 @@
 use crate::cell::*;
 use crate::common::*;
+use crate::layout_cell;
 use crate::pure_cell::PureCell;
+
+const BLOCK_WIDTH: N = 100;
 
 #[derive(Debug, Clone)]
 enum Shape {
@@ -16,7 +19,7 @@ enum Shape {
 enum RawCell {
     Prim(Prim, Shape),
     Id(PaddedCell, N),
-    Comp(Axis, Vec2<PaddedCell>, Vec1<N>),
+    Comp(Axis, Vec2<PaddedCell>),
 }
 
 #[derive(Debug, Clone)]
@@ -31,6 +34,12 @@ impl Pad {
             min_pad: vec![0; dim as usize],
             max_pad: vec![0; dim as usize],
         }
+    }
+
+    fn pop(&mut self) -> Option<(N, N)> {
+        let min = self.min_pad.pop()?;
+        let max = self.max_pad.pop()?;
+        Some((min, max))
     }
 }
 
@@ -98,7 +107,7 @@ impl PaddedCell {
                 let f = face.to_pure();
                 PureCell::id(f)
             }
-            RawCell::Comp(axis, children, _) => {
+            RawCell::Comp(axis, children) => {
                 let cs = children
                     .iter()
                     .map(|c| c.to_pure())
@@ -107,10 +116,67 @@ impl PaddedCell {
             }
         }
     }
-}
 
-const BLOCK_WIDTH: N = 16;
-const PAD_WIDTH: N = 4;
+    pub fn resolve_pad(&self) -> layout_cell::LayoutCell {
+        use layout_cell as l;
+        use layout_cell::LayoutCell;
+        fn resolve(cell: &PaddedCell, mut pad: Pad) -> LayoutCell {
+            let dim = cell.1.dim;
+            add_coord(&mut pad.min_pad, &cell.1.pad.min_pad);
+            add_coord(&mut pad.max_pad, &cell.1.pad.max_pad);
+            let raw_cell = match &cell.0.as_ref() {
+                RawCell::Prim(prim, shape) => match shape {
+                    Shape::Zero => l::RawCell::Prim(prim.clone(), l::Shape::Zero),
+                    Shape::Succ {
+                        source,
+                        width,
+                        target,
+                    } => {
+                        let extend = pad.pop().unwrap();
+                        let s = resolve(source, pad.clone());
+                        let t = resolve(target, pad);
+                        l::RawCell::Prim(
+                            prim.clone(),
+                            l::Shape::Succ {
+                                source_extend: extend.0,
+                                source: s,
+                                width: *width,
+                                target: t,
+                                target_extend: extend.1,
+                            },
+                        )
+                    }
+                },
+                RawCell::Id(face, width) => {
+                    let extend = pad.pop().unwrap();
+                    let f = resolve(face, pad);
+                    l::RawCell::Id(f, extend.0 + *width + extend.1)
+                }
+                RawCell::Comp(axis, children) => {
+                    let n = children.len();
+                    let cs = children
+                        .iter()
+                        .enumerate()
+                        .map(|(i, c)| {
+                            let mut pad = pad.clone();
+                            if i != 0 {
+                                pad.max_pad[*axis as usize] = 0;
+                            }
+                            if i != n - 1 {
+                                pad.min_pad[*axis as usize] = 0;
+                            }
+                            resolve(c, pad)
+                        })
+                        .collect::<Vec2<l::LayoutCell>>();
+                    l::RawCell::Comp(*axis, cs)
+                }
+            };
+            let size = cell.1.full_size.clone();
+            LayoutCell(Box::new(raw_cell), l::Layout { dim, size })
+        }
+        resolve(self, Pad::zero(self.1.dim.in_space))
+    }
+}
 
 impl Cellular for PaddedCell {
     fn dim(&self) -> Dim {
@@ -184,7 +250,6 @@ impl Cellular for PaddedCell {
             max_coord(&mut max_size, &child.1.full_size);
             axis_size += child.1.full_size[axis as usize];
         }
-        axis_size += PAD_WIDTH * (children.len() as N - 1);
 
         let mut size = max_size;
         size[axis as usize] = axis_size;
@@ -196,8 +261,7 @@ impl Cellular for PaddedCell {
             c.fit(&new_size);
         }
 
-        let inner_pads = vec![PAD_WIDTH; children.len() - 1];
-        let cell = Box::new(RawCell::Comp(axis, children, inner_pads));
+        let cell = Box::new(RawCell::Comp(axis, children));
         let layout = Layout::new(dim, size);
         Some(PaddedCell(cell, layout))
     }
@@ -211,7 +275,7 @@ impl Cellular for PaddedCell {
                 Shape::Zero => panic!("zero-cell has no source"),
             },
             RawCell::Id(ref face, _) => face.clone(),
-            RawCell::Comp(axis, ref children, inner_pads) => {
+            RawCell::Comp(axis, ref children) => {
                 if axis == &d {
                     children.first().unwrap().s()
                 } else {
@@ -225,7 +289,7 @@ impl Cellular for PaddedCell {
                             Dim::new(d0.effective.max(d1.effective), d0.in_space)
                         })
                         .unwrap();
-                    let cell = Box::new(RawCell::Comp(*axis, cs, inner_pads.clone()));
+                    let cell = Box::new(RawCell::Comp(*axis, cs));
                     let size = self.1.inner_size[..d as usize].to_vec();
                     let layout = Layout::new(dim, size);
                     PaddedCell(cell, layout)
@@ -248,7 +312,7 @@ impl Cellular for PaddedCell {
                 Shape::Zero => panic!("zero-cell has no target"),
             },
             RawCell::Id(ref face, _) => face.clone(),
-            RawCell::Comp(axis, ref children, inner_pads) => {
+            RawCell::Comp(axis, ref children) => {
                 if axis == &d {
                     children.last().unwrap().t()
                 } else {
@@ -262,7 +326,7 @@ impl Cellular for PaddedCell {
                             Dim::new(d0.effective.max(d1.effective), d0.in_space)
                         })
                         .unwrap();
-                    let cell = Box::new(RawCell::Comp(*axis, cs, inner_pads.clone()));
+                    let cell = Box::new(RawCell::Comp(*axis, cs));
                     let size = self.1.inner_size[..d as usize].to_vec();
                     let layout = Layout::new(dim, size);
                     PaddedCell(cell, layout)
@@ -293,17 +357,11 @@ mod tests {
 
     #[test]
     fn padded_cell_assoc() {
-        let a = PaddedCell::zero(Prim::new(0));
-        let x = PaddedCell::prim(Prim::new(1), a.clone(), a.clone());
-        let xx = PaddedCell::comp(0, vec![x.clone(), x.clone()]).unwrap();
-        let m = PaddedCell::prim(Prim::new(2), xx.clone(), x.clone());
-        let xi = PaddedCell::id(x.clone());
-        let mx = PaddedCell::comp(0, vec![m.clone(), xi.clone()]).unwrap();
-        let xm = PaddedCell::comp(0, vec![xi.clone(), m.clone()]).unwrap();
-        let mm_l = PaddedCell::comp(1, vec![mx, m.clone()]).unwrap();
-        let mm_r = PaddedCell::comp(1, vec![xm, m.clone()]).unwrap();
-        let assoc = PaddedCell::prim(Prim::new(3), mm_l, mm_r);
-
+        let assoc = crate::cell::tests::assoc::<PaddedCell>();
         assert!(assoc.s().s().is_convertible(&assoc.t().s()));
+        assert!(assoc.s().t().is_convertible(&assoc.t().t()));
+
+        eprintln!("{}", assoc.resolve_pad());
+        assert!(false);
     }
 }

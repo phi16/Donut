@@ -1,13 +1,27 @@
+use donut_core::cell::*;
+use donut_core::common::*;
 use donut_core::layout_cell::*;
-// use donut_renderer::geometry::Geometry;
 use donut_renderer::render::Renderer;
 use donut_util::println;
-use std::rc::Rc;
+
+pub fn assoc<T: Cellular>() -> T {
+    let a = T::zero(Prim::new(0));
+    let x = T::prim(Prim::new(1), a.clone(), a.clone());
+    let xx = T::comp(0, vec![x.clone(), x.clone()]).unwrap();
+    let m = T::prim(Prim::new(2), xx.clone(), x.clone());
+    let xi = T::id(x.clone());
+    let mx = T::comp(0, vec![m.clone(), xi.clone()]).unwrap();
+    let xm = T::comp(0, vec![xi.clone(), m.clone()]).unwrap();
+    let mm_l = T::comp(1, vec![mx, m.clone()]).unwrap();
+    let mm_r = T::comp(1, vec![xm, m.clone()]).unwrap();
+    let assoc = T::prim(Prim::new(3), mm_l, mm_r);
+    assoc
+}
 
 pub struct App {
-    renderer: Renderer,
     canvas: web_sys::HtmlCanvasElement,
     context: web_sys::CanvasRenderingContext2d,
+    cell: LayoutCell,
 }
 
 impl App {
@@ -15,10 +29,13 @@ impl App {
         canvas: web_sys::HtmlCanvasElement,
         context: web_sys::CanvasRenderingContext2d,
     ) -> Self {
+        let cell = assoc::<donut_core::padded_cell::PaddedCell>();
+        let cell = cell.s();
+        let cell = cell.resolve_pad();
         Self {
-            renderer: Renderer::new(context.clone()),
             canvas,
             context,
+            cell,
         }
     }
 
@@ -39,5 +56,11 @@ impl App {
             )
             .unwrap();
         self.context.fill();
+
+        self.context.save();
+        self.context.translate(100.0, 100.0).unwrap();
+        let renderer = Renderer::new(self.context.clone());
+        renderer.cell_2d(&self.cell);
+        self.context.restore();
     }
 }

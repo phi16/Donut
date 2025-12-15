@@ -150,17 +150,7 @@ mod tests {
 
     #[test]
     fn pure_cell_assoc() {
-        let a = PureCell::zero(Prim::new(0));
-        let x = PureCell::prim(Prim::new(1), a.clone(), a.clone());
-        let xx = PureCell::comp(0, vec![x.clone(), x.clone()]).unwrap();
-        let m = PureCell::prim(Prim::new(2), xx.clone(), x.clone());
-        let xi = PureCell::id(x.clone());
-        let mx = PureCell::comp(0, vec![m.clone(), xi.clone()]).unwrap();
-        let xm = PureCell::comp(0, vec![xi.clone(), m.clone()]).unwrap();
-        let mm_l = PureCell::comp(1, vec![mx, m.clone()]).unwrap();
-        let mm_r = PureCell::comp(1, vec![xm, m.clone()]).unwrap();
-        let assoc = PureCell::prim(Prim::new(3), mm_l, mm_r);
-
+        let assoc = crate::cell::tests::assoc::<PureCell>();
         assert_eq!(assoc.s().s(), assoc.t().s());
         assert_eq!(assoc.s().t(), assoc.t().t());
     }

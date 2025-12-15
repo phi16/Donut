@@ -34,3 +34,22 @@ pub fn target_face<T: Cellular>(cell: &T, axis: Level) -> T {
     }
     cell
 }
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+
+    pub fn assoc<T: Cellular>() -> T {
+        let a = T::zero(Prim::new(0));
+        let x = T::prim(Prim::new(1), a.clone(), a.clone());
+        let xx = T::comp(0, vec![x.clone(), x.clone()]).unwrap();
+        let m = T::prim(Prim::new(2), xx.clone(), x.clone());
+        let xi = T::id(x.clone());
+        let mx = T::comp(0, vec![m.clone(), xi.clone()]).unwrap();
+        let xm = T::comp(0, vec![xi.clone(), m.clone()]).unwrap();
+        let mm_l = T::comp(1, vec![mx, m.clone()]).unwrap();
+        let mm_r = T::comp(1, vec![xm, m.clone()]).unwrap();
+        let assoc = T::prim(Prim::new(3), mm_l, mm_r);
+        assoc
+    }
+}

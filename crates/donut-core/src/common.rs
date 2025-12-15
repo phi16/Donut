@@ -7,7 +7,7 @@ pub type Vec2<T> = Vec<T>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Prim {
-    id: u64,
+    pub id: u64,
 }
 
 impl Prim {
