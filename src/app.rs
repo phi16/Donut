@@ -30,7 +30,7 @@ impl App {
         context: web_sys::CanvasRenderingContext2d,
     ) -> Self {
         let cell = assoc::<donut_core::padded_cell::PaddedCell>();
-        let cell = cell.s();
+        let cell = cell.t();
         let cell = cell.resolve_pad();
         Self {
             canvas,
