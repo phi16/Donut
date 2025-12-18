@@ -92,7 +92,7 @@ impl Cellular for PureCell {
         Some(match cs.len() {
             0 => {
                 assert!(first_source_face.is_convertible(&last_target_face));
-                first_source_face
+                PureCell::id(first_source_face)
             }
             1 => cs.into_iter().next().unwrap(),
             _ => PureCell::Comp(axis, cs, dim),

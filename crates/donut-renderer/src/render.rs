@@ -1,5 +1,5 @@
-use donut_core::common::N;
-use donut_core::layout_cell::{LayoutCell, RawCell, Shape};
+use donut_core::common::{Prim, Q};
+use donut_core::draw_cell::{Cube, DrawCell, Shape};
 
 pub struct Renderer {
     context: web_sys::CanvasRenderingContext2d,
@@ -10,7 +10,11 @@ impl Renderer {
         Self { context }
     }
 
-    pub fn cell_1d(&self, cell: &LayoutCell) {
+    /* pub fn cell_1d(&self, cell: &LayoutCell) {
+        self.context.save();
+        self.context
+            .translate(cell.1.origin[0] as f64, 0.0)
+            .unwrap();
         self.context.begin_path();
         self.context
             .set_stroke_style_str("rgba(255, 255, 255, 0.2)");
@@ -25,10 +29,14 @@ impl Renderer {
                 let x = match shape {
                     Shape::Zero => unreachable!(),
                     Shape::Succ {
-                        source_extend,
-                        width,
+                        source_limit,
+                        source_coord,
+                        target_coord,
                         ..
-                    } => (*source_extend as f64) + (*width as f64) / 2.0,
+                    } => {
+                        let source_width = ((*target_coord - *source_coord) as f64) / 2.0;
+                        (*source_limit as f64) + source_width
+                    }
                 };
                 self.context.begin_path();
                 self.context.set_fill_style_str("rgb(0 100 255)");
@@ -37,24 +45,29 @@ impl Renderer {
                     .unwrap();
                 self.context.fill();
             }
-            RawCell::Id(face, width) => {
+            RawCell::Id(face, s, t) => {
                 unimplemented!()
             }
             RawCell::Comp(axis, children) => {
                 self.context.save();
                 for child in children {
                     self.cell_1d(&child);
-                    match axis {
+                    /* match axis {
                         0 => self.context.translate(child.1.size[0] as f64, 0.0).unwrap(),
                         _ => unreachable!(),
-                    }
+                    } */
                 }
                 self.context.restore();
             }
         }
+        self.context.restore();
     }
 
     pub fn cell_2d(&self, cell: &LayoutCell) {
+        self.context.save();
+        self.context
+            .translate(cell.1.origin[0] as f64, cell.1.origin[1] as f64)
+            .unwrap();
         self.context.begin_path();
         self.context
             .set_stroke_style_str("rgba(255, 255, 255, 0.2)");
@@ -81,13 +94,13 @@ impl Renderer {
                     Shape::Succ { source, target, .. } => {
                         self.context.save();
                         self.cell_1d(source);
-                        self.context.translate(0.0, h).unwrap();
+                        // self.context.translate(0.0, h).unwrap();
                         self.cell_1d(target);
                         self.context.restore();
                     }
                 }
             }
-            RawCell::Id(face, width) => {
+            RawCell::Id(face, _, _) => {
                 self.context.save();
                 let h = cell.1.size[1] as f64;
                 self.context.translate(0.0, h / 2.0).unwrap();
@@ -98,13 +111,117 @@ impl Renderer {
                 self.context.save();
                 for child in children {
                     self.cell_2d(&child);
-                    match axis {
+                    /* match axis {
                         0 => self.context.translate(child.1.size[0] as f64, 0.0).unwrap(),
                         1 => self.context.translate(0.0, child.1.size[1] as f64).unwrap(),
                         _ => unreachable!(),
-                    }
+                    } */
                 }
                 self.context.restore();
+            }
+        }
+        self.context.restore();
+    } */
+
+    pub fn circle(&self, x: Q, y: Q) {
+        let x = (*x.numer() as f64) / (*x.denom() as f64);
+        let y = (*y.numer() as f64) / (*y.denom() as f64);
+        self.context.begin_path();
+        self.context
+            .arc(x, y, 8.0, 0.0, std::f64::consts::PI * 2.0)
+            .unwrap();
+        self.context.set_fill_style_str("rgb(255 100 0)");
+        self.context.fill();
+    }
+    pub fn path(&self, x0: Q, y0: Q, x1: Q, y1: Q) {
+        let x0 = (*x0.numer() as f64) / (*x0.denom() as f64);
+        let y0 = (*y0.numer() as f64) / (*y0.denom() as f64);
+        let x1 = (*x1.numer() as f64) / (*x1.denom() as f64);
+        let y1 = (*y1.numer() as f64) / (*y1.denom() as f64);
+        let yh = (y0 + y1) / 2.0;
+        self.context.begin_path();
+        self.context.move_to(x0, y0);
+        self.context.bezier_curve_to(x0, yh, x1, yh, x1, y1);
+        self.context.set_stroke_style_str("rgb(0 100 255)");
+        self.context.set_line_width(6.0);
+        self.context.stroke();
+    }
+    pub fn region(&self, x0: (Q, Q), y0: Q, x1: (Q, Q), y1: Q) {
+        let x0s = (*x0.0.numer() as f64) / (*x0.0.denom() as f64);
+        let x0t = (*x0.1.numer() as f64) / (*x0.1.denom() as f64);
+        let y0 = (*y0.numer() as f64) / (*y0.denom() as f64);
+        let x1s = (*x1.0.numer() as f64) / (*x1.0.denom() as f64);
+        let x1t = (*x1.1.numer() as f64) / (*x1.1.denom() as f64);
+        let y1 = (*y1.numer() as f64) / (*y1.denom() as f64);
+        let yh = (y0 + y1) / 2.0;
+        // (x0s, y0)      (x0t, y0)
+        //    |               ^
+        //    |               |
+        //    v               |
+        // (x1s, y1) ---> (x1t, y1)
+        self.context.begin_path();
+        self.context.move_to(x0s, y0);
+        self.context.bezier_curve_to(x0s, yh, x1s, yh, x1s, y1);
+        self.context.line_to(x1t, y1);
+        self.context.bezier_curve_to(x1t, yh, x0t, yh, x0t, y0);
+        self.context.close_path();
+        self.context.set_fill_style_str("rgb(20 20 20)");
+        // self.context.fill();
+        self.context.set_stroke_style_str("rgba(255 255 255 0.1)");
+        self.context.set_line_width(1.0);
+        self.context.stroke();
+    }
+
+    pub fn cube_2d(&self, prim: &Prim, cube: &Cube) {
+        match cube {
+            Cube::Point(p) => {
+                assert_eq!(p.len(), 2);
+                self.circle(p[0].eval(), p[1].eval());
+            }
+            Cube::Bridge { source, target } => match (source.0.as_ref(), target.0.as_ref()) {
+                (Cube::Point(s), Cube::Point(t)) => {
+                    assert_eq!(s.len(), 1);
+                    assert_eq!(t.len(), 1);
+                    self.path(s[0].eval(), source.1.eval(), t[0].eval(), target.1.eval());
+                }
+                (
+                    Cube::Bridge {
+                        source: ss,
+                        target: st,
+                    },
+                    Cube::Bridge {
+                        source: ts,
+                        target: tt,
+                    },
+                ) => {
+                    self.region(
+                        (ss.1.eval(), st.1.eval()),
+                        source.1.eval(),
+                        (ts.1.eval(), tt.1.eval()),
+                        target.1.eval(),
+                    );
+                }
+                _ => unreachable!(),
+            },
+        }
+    }
+
+    pub fn cell_2d(&self, cell: &DrawCell) {
+        match cell {
+            DrawCell::Prim(prim, shape, cube, _) => {
+                match shape {
+                    Shape::Zero => {}
+                    Shape::Succ { source, target, .. } => {
+                        self.cell_2d(source);
+                        self.cell_2d(target);
+                    }
+                }
+                self.cube_2d(prim, cube);
+            }
+            DrawCell::Comp(_, children, _) => {
+                for child in children {
+                    self.cell_2d(child);
+                }
             }
         }
     }

@@ -120,8 +120,10 @@ impl PaddedCell {
     pub fn resolve_pad(&self) -> layout_cell::LayoutCell {
         use layout_cell as l;
         use layout_cell::LayoutCell;
-        fn resolve(cell: &PaddedCell, mut pad: Pad) -> LayoutCell {
+        fn resolve(cell: &PaddedCell, mut origin: CoordN, mut pad: Pad) -> LayoutCell {
             let dim = cell.1.dim;
+            let o = origin.clone();
+            add_coord(&mut origin, &cell.1.pad.min_pad);
             add_coord(&mut pad.min_pad, &cell.1.pad.min_pad);
             add_coord(&mut pad.max_pad, &cell.1.pad.max_pad);
             let (raw_cell, size) = match &cell.0.as_ref() {
@@ -133,20 +135,33 @@ impl PaddedCell {
                         target,
                     } => {
                         let extend = pad.pop().unwrap();
-                        let s = resolve(source, pad.clone());
-                        let t = resolve(target, pad);
+                        let coord = origin
+                            .iter()
+                            .zip(cell.1.inner_size.iter())
+                            .map(|(&o, &x)| Q::from(o as i32) + Q::from(x as i32) / 2)
+                            .collect();
+                        let source_coord = origin[dim.in_space as usize - 1];
+                        let source_limit = source_coord - extend.0;
+                        let target_coord = source_coord + width;
+                        let target_limit = target_coord + extend.1;
+                        origin.pop();
+                        let s = resolve(source, origin.clone(), pad.clone());
+                        let t = resolve(target, origin, pad);
                         let mut size = s.1.size.clone();
                         assert_eq!(size, t.1.size);
-                        size.push(extend.0 + *width + extend.1);
+                        let width = target_limit - source_limit;
+                        size.push(width);
                         (
                             l::RawCell::Prim(
                                 prim.clone(),
                                 l::Shape::Succ {
-                                    source_extend: extend.0,
+                                    source_limit,
                                     source: s,
-                                    width: *width,
+                                    source_coord,
+                                    coord,
+                                    target_coord,
                                     target: t,
-                                    target_extend: extend.1,
+                                    target_limit,
                                 },
                             ),
                             size,
@@ -155,11 +170,14 @@ impl PaddedCell {
                 },
                 RawCell::Id(face, width) => {
                     let extend = pad.pop().unwrap();
-                    let f = resolve(face, pad);
+                    let s = origin[dim.in_space as usize - 1];
+                    origin.pop();
+                    let f = resolve(face, origin, pad);
                     let width = extend.0 + *width + extend.1;
                     let mut size = f.1.size.clone();
                     size.push(width);
-                    (l::RawCell::Id(f, width), size)
+                    let t = s + width;
+                    (l::RawCell::Id(f, s, t), size)
                 }
                 RawCell::Comp(axis, children) => {
                     let n = children.len();
@@ -174,7 +192,9 @@ impl PaddedCell {
                             if i != n - 1 {
                                 pad.max_pad[*axis as usize] = 0;
                             }
-                            resolve(c, pad)
+                            let lc = resolve(c, origin.clone(), pad);
+                            origin[*axis as usize] += c.1.full_size[*axis as usize];
+                            lc
                         })
                         .collect::<Vec2<l::LayoutCell>>();
                     let mut size = cs.first().unwrap().1.size.clone();
@@ -184,9 +204,11 @@ impl PaddedCell {
                     (l::RawCell::Comp(*axis, cs), size)
                 }
             };
-            LayoutCell(Box::new(raw_cell), l::Layout { dim, size })
+            let origin = o;
+            LayoutCell(Box::new(raw_cell), l::Layout { dim, origin, size })
         }
-        resolve(self, Pad::zero(self.1.dim.in_space))
+        let d = self.1.dim.in_space;
+        resolve(self, vec![0; d as usize], Pad::zero(d))
     }
 }
 
@@ -373,7 +395,7 @@ mod tests {
         assert!(assoc.s().s().is_convertible(&assoc.t().s()));
         assert!(assoc.s().t().is_convertible(&assoc.t().t()));
 
-        eprintln!("{}", assoc.resolve_pad());
-        assert!(false);
+        // eprintln!("{}", assoc.resolve_pad());
+        // assert!(false);
     }
 }

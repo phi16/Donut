@@ -6,24 +6,27 @@ use crate::common::*;
 pub enum Shape {
     Zero,
     Succ {
-        source_extend: N,
+        source_limit: N,
         source: LayoutCell,
-        width: N,
+        source_coord: N,
+        coord: CoordQ,
+        target_coord: N,
         target: LayoutCell,
-        target_extend: N,
+        target_limit: N,
     },
 }
 
 #[derive(Debug, Clone)]
 pub enum RawCell {
     Prim(Prim, Shape),
-    Id(LayoutCell, N),
+    Id(LayoutCell, N, N),
     Comp(Axis, Vec2<LayoutCell>),
 }
 
 #[derive(Debug, Clone)]
 pub struct Layout {
     pub dim: Dim,
+    pub origin: CoordN,
     pub size: CoordN,
 }
 
@@ -45,13 +48,41 @@ impl fmt::Display for LayoutCell {
                     match shape {
                         Shape::Zero => {}
                         Shape::Succ {
-                            source_extend,
+                            source_limit,
                             source,
-                            width,
+                            source_coord,
+                            coord,
+                            target_coord,
                             target,
-                            target_extend,
+                            target_limit,
                         } => {
-                            writeln!(f, " [{}-{}-{}] {{", source_extend, width, target_extend)?;
+                            fn coord_to_string(coord: &CoordQ) -> String {
+                                let mut s = String::new();
+                                s.push('[');
+                                for (i, c) in coord.iter().enumerate() {
+                                    if i > 0 {
+                                        s.push_str(", ");
+                                    }
+                                    let numer = *c.numer();
+                                    let denom = *c.denom();
+                                    if denom == 1 {
+                                        s.push_str(&format!("{:?}", numer));
+                                    } else {
+                                        s.push_str(&format!("{:?}/{:?}", numer, denom));
+                                    }
+                                }
+                                s.push(']');
+                                s
+                            }
+                            writeln!(
+                                f,
+                                " [{}-{}-{}-{}-{}] {{",
+                                source_limit,
+                                source_coord,
+                                coord_to_string(coord),
+                                target_coord,
+                                target_limit
+                            )?;
                             go(source, f, indent + 2)?;
                             writeln!(f, ",")?;
                             go(target, f, indent + 2)?;
@@ -60,8 +91,8 @@ impl fmt::Display for LayoutCell {
                         }
                     }
                 }
-                RawCell::Id(cell, width) => {
-                    writeln!(f, "I[{}] {{", width)?;
+                RawCell::Id(cell, s, t) => {
+                    writeln!(f, "I[{}-{}] {{", s, t)?;
                     go(cell, f, indent + 2)?;
                     writeln!(f, "")?;
                     write!(f, "{}}}", pad)?;

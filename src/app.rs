@@ -1,5 +1,6 @@
 use donut_core::cell::*;
 use donut_core::common::*;
+use donut_core::draw_cell::*;
 use donut_core::layout_cell::*;
 use donut_renderer::render::Renderer;
 use donut_util::println;
@@ -21,7 +22,8 @@ pub fn assoc<T: Cellular>() -> T {
 pub struct App {
     canvas: web_sys::HtmlCanvasElement,
     context: web_sys::CanvasRenderingContext2d,
-    cell: LayoutCell,
+    layout_cell: LayoutCell,
+    draw_cell: DrawCell,
 }
 
 impl App {
@@ -31,11 +33,13 @@ impl App {
     ) -> Self {
         let cell = assoc::<donut_core::padded_cell::PaddedCell>();
         let cell = cell.t();
-        let cell = cell.resolve_pad();
+        let layout_cell = cell.resolve_pad();
+        let draw_cell = DrawCell::from_layout_cell(&layout_cell);
         Self {
             canvas,
             context,
-            cell,
+            layout_cell,
+            draw_cell,
         }
     }
 
@@ -60,7 +64,7 @@ impl App {
         self.context.save();
         self.context.translate(100.0, 100.0).unwrap();
         let renderer = Renderer::new(self.context.clone());
-        renderer.cell_2d(&self.cell);
+        renderer.cell_2d(&self.draw_cell);
         self.context.restore();
     }
 }
