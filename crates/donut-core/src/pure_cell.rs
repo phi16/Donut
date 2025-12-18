@@ -105,8 +105,8 @@ impl Cellular for PureCell {
                 PureCell::Prim(prim.clone(), shape.clone(), dim.sliced())
             }
             PureCell::Prim(_, shape, _) => match shape {
-                Shape::Succ { source, .. } => source.as_ref().clone(),
                 Shape::Zero => panic!("zero-cell has no source"),
+                Shape::Succ { source, .. } => source.as_ref().clone(),
             },
             PureCell::Comp(axis, children, dim) => {
                 if *axis == dim.in_space - 1 {
@@ -125,8 +125,8 @@ impl Cellular for PureCell {
                 PureCell::Prim(prim.clone(), shape.clone(), dim.sliced())
             }
             PureCell::Prim(_, shape, _) => match shape {
-                Shape::Succ { target, .. } => target.as_ref().clone(),
                 Shape::Zero => panic!("zero-cell has no target"),
+                Shape::Succ { target, .. } => target.as_ref().clone(),
             },
             PureCell::Comp(axis, children, dim) => {
                 if *axis == dim.in_space - 1 {

@@ -38,7 +38,7 @@ impl Renderer {
                 self.context.fill();
             }
             RawCell::Id(face, width) => {
-                // unimplemented!()
+                unimplemented!()
             }
             RawCell::Comp(axis, children) => {
                 self.context.save();

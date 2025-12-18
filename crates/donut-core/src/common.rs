@@ -23,6 +23,13 @@ pub struct Dim {
 }
 
 impl Dim {
+    pub fn zero() -> Self {
+        Dim {
+            effective: 0,
+            in_space: 0,
+        }
+    }
+
     pub fn new(effective: Level, in_space: Level) -> Self {
         Dim {
             effective,

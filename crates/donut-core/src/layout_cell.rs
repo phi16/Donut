@@ -77,7 +77,7 @@ impl fmt::Display for LayoutCell {
             }
             Ok(())
         }
-        go(self, f, 0);
+        go(self, f, 0)?;
         writeln!(f, "")
     }
 }
