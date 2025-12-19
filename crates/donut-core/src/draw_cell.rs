@@ -59,26 +59,6 @@ impl Fusable for X {
     fn fuse(left: &Self, right: &Self, action: fn(lx: &X, rx: &X)) -> Option<()> {
         action(left, right);
         Some(())
-        /* let X::X(l) = left;
-        let X::X(r) = right;
-        if Rc::ptr_eq(l, r) {
-            return Some(());
-        }
-        let mut l = l.borrow_mut();
-        let mut r = r.borrow_mut();
-        if Rc::ptr_eq(&*l, &*r) {
-            return Some(());
-        }
-        let h = {
-            let lv = l.borrow();
-            let rv = r.borrow();
-            let hv = (*lv + *rv) / 2;
-            Rc::new(RefCell::new(hv))
-        };
-
-        *l = h.clone();
-        *r = h;
-        Some(()) */
     }
 }
 
