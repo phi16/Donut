@@ -3,6 +3,7 @@ use donut_core::common::*;
 use donut_core::draw_cell::*;
 use donut_core::layout_cell::*;
 use donut_renderer::render::Renderer;
+use donut_renderer::render_cell::{RenderCell, R};
 use donut_util::println;
 
 pub fn assoc<T: Cellular>() -> T {
@@ -23,7 +24,8 @@ pub struct App {
     canvas: web_sys::HtmlCanvasElement,
     context: web_sys::CanvasRenderingContext2d,
     layout_cell: LayoutCell,
-    draw_cell: DrawCell,
+    render_cell: RenderCell,
+    t: R,
 }
 
 impl App {
@@ -32,14 +34,17 @@ impl App {
         context: web_sys::CanvasRenderingContext2d,
     ) -> Self {
         let cell = assoc::<donut_core::padded_cell::PaddedCell>();
-        let cell = cell.t();
+        // let cell = cell.s();
         let layout_cell = cell.resolve_pad();
         let draw_cell = DrawCell::from_layout_cell(&layout_cell);
+        let render_cell = RenderCell::from_draw_cell(&draw_cell);
+
         Self {
             canvas,
             context,
             layout_cell,
-            draw_cell,
+            render_cell,
+            t: 0.0,
         }
     }
 
@@ -49,7 +54,6 @@ impl App {
         self.context.set_fill_style_str("rgb(40 40 40)");
         self.context.fill_rect(0.0, 0.0, width, height);
 
-        self.context.set_fill_style_str("rgb(255 255 255)"); // why flickers
         self.context
             .arc(
                 width / 2.0,
@@ -59,12 +63,18 @@ impl App {
                 std::f64::consts::PI * 2.0,
             )
             .unwrap();
+        self.context.close_path();
+        self.context.set_fill_style_str("rgb(255 255 255)"); // why flickers
         self.context.fill();
 
         self.context.save();
         self.context.translate(100.0, 100.0).unwrap();
         let renderer = Renderer::new(self.context.clone());
-        renderer.cell_2d(&self.draw_cell);
+        let x = (self.t.sin() * 0.5 + 0.5) * 100.0;
+        let rc = self.render_cell.sliced(x);
+        renderer.cell(&rc);
         self.context.restore();
+
+        self.t += 0.03;
     }
 }

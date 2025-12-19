@@ -31,16 +31,17 @@ impl X {
         }
     }
 
-    fn shrink(&self, min: u32, max: u32) {
+    fn shrink(&self, min: u32, max: u32) -> bool {
         let v = self.eval();
         if v == Q::from(min as i32) || v == Q::from(max as i32) {
-            return;
+            return false;
         }
         let c = Q::from((min + max) as i32) / 2;
         let X::X(r) = self;
         let r = r.borrow_mut();
         let mut r = r.borrow_mut();
         *r = c;
+        true
     }
 
     fn deep_clone(&self) -> Self {
@@ -152,11 +153,13 @@ impl Cube {
                 let min = *origin.last().unwrap();
                 let width = size.last().unwrap();
                 let max = min + width;
-                source.1.shrink(min, max);
-                target.1.shrink(min, max);
                 let n = origin.len() - 1;
-                source.0.shrink(&origin[..n], &size[..n]);
-                target.0.shrink(&origin[..n], &size[..n]);
+                if source.1.shrink(min, max) {
+                    source.0.shrink(&origin[..n], &size[..n]);
+                }
+                if target.1.shrink(min, max) {
+                    target.0.shrink(&origin[..n], &size[..n]);
+                }
             }
         }
     }
@@ -254,7 +257,7 @@ impl Fusable for Shape {
 }
 
 impl DrawCell {
-    fn dim(&self) -> Dim {
+    pub fn dim(&self) -> Dim {
         match self {
             DrawCell::Prim(_, _, _, dim) => dim.clone(),
             DrawCell::Comp(_, _, dim) => dim.clone(),

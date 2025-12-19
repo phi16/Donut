@@ -1,5 +1,5 @@
+use crate::render_cell::{Cube, RenderCell, R};
 use donut_core::common::{Prim, Q};
-use donut_core::draw_cell::{Cube, DrawCell, Shape};
 
 pub struct Renderer {
     context: web_sys::CanvasRenderingContext2d,
@@ -123,21 +123,16 @@ impl Renderer {
         self.context.restore();
     } */
 
-    pub fn circle(&self, x: Q, y: Q) {
-        let x = (*x.numer() as f64) / (*x.denom() as f64);
-        let y = (*y.numer() as f64) / (*y.denom() as f64);
+    pub fn circle(&self, x: R, y: R) {
         self.context.begin_path();
         self.context
             .arc(x, y, 8.0, 0.0, std::f64::consts::PI * 2.0)
             .unwrap();
+        self.context.close_path();
         self.context.set_fill_style_str("rgb(255 100 0)");
         self.context.fill();
     }
-    pub fn path(&self, x0: Q, y0: Q, x1: Q, y1: Q) {
-        let x0 = (*x0.numer() as f64) / (*x0.denom() as f64);
-        let y0 = (*y0.numer() as f64) / (*y0.denom() as f64);
-        let x1 = (*x1.numer() as f64) / (*x1.denom() as f64);
-        let y1 = (*y1.numer() as f64) / (*y1.denom() as f64);
+    pub fn path(&self, x0: R, y0: R, x1: R, y1: R) {
         let yh = (y0 + y1) / 2.0;
         self.context.begin_path();
         self.context.move_to(x0, y0);
@@ -146,18 +141,16 @@ impl Renderer {
         self.context.set_line_width(6.0);
         self.context.stroke();
     }
-    pub fn region(&self, x0: (Q, Q), y0: Q, x1: (Q, Q), y1: Q) {
-        let x0s = (*x0.0.numer() as f64) / (*x0.0.denom() as f64);
-        let x0t = (*x0.1.numer() as f64) / (*x0.1.denom() as f64);
-        let y0 = (*y0.numer() as f64) / (*y0.denom() as f64);
-        let x1s = (*x1.0.numer() as f64) / (*x1.0.denom() as f64);
-        let x1t = (*x1.1.numer() as f64) / (*x1.1.denom() as f64);
-        let y1 = (*y1.numer() as f64) / (*y1.denom() as f64);
+    pub fn region(&self, x0: (R, R), y0: R, x1: (R, R), y1: R) {
+        let x0s = x0.0;
+        let x0t = x0.1;
+        let x1s = x1.0;
+        let x1t = x1.1;
         let yh = (y0 + y1) / 2.0;
         // (x0s, y0)      (x0t, y0)
-        //    |               ^
-        //    |               |
-        //    v               |
+        //     |              ^
+        //     |              |
+        //     v              |
         // (x1s, y1) ---> (x1t, y1)
         self.context.begin_path();
         self.context.move_to(x0s, y0);
@@ -172,17 +165,17 @@ impl Renderer {
         self.context.stroke();
     }
 
-    pub fn cube_2d(&self, prim: &Prim, cube: &Cube) {
+    pub fn cube(&self, prim: &Prim, cube: &Cube) {
         match cube {
             Cube::Point(p) => {
                 assert_eq!(p.len(), 2);
-                self.circle(p[0].eval(), p[1].eval());
+                self.circle(p[0], p[1]);
             }
             Cube::Bridge { source, target } => match (source.0.as_ref(), target.0.as_ref()) {
                 (Cube::Point(s), Cube::Point(t)) => {
                     assert_eq!(s.len(), 1);
                     assert_eq!(t.len(), 1);
-                    self.path(s[0].eval(), source.1.eval(), t[0].eval(), target.1.eval());
+                    self.path(s[0], source.1, t[0], target.1);
                 }
                 (
                     Cube::Bridge {
@@ -194,34 +187,17 @@ impl Renderer {
                         target: tt,
                     },
                 ) => {
-                    self.region(
-                        (ss.1.eval(), st.1.eval()),
-                        source.1.eval(),
-                        (ts.1.eval(), tt.1.eval()),
-                        target.1.eval(),
-                    );
+                    self.region((ss.1, st.1), source.1, (ts.1, tt.1), target.1);
                 }
                 _ => unreachable!(),
             },
         }
     }
 
-    pub fn cell_2d(&self, cell: &DrawCell) {
-        match cell {
-            DrawCell::Prim(prim, shape, cube, _) => {
-                match shape {
-                    Shape::Zero => {}
-                    Shape::Succ { source, target, .. } => {
-                        self.cell_2d(source);
-                        self.cell_2d(target);
-                    }
-                }
-                self.cube_2d(prim, cube);
-            }
-            DrawCell::Comp(_, children, _) => {
-                for child in children {
-                    self.cell_2d(child);
-                }
+    pub fn cell(&self, cell: &RenderCell) {
+        for cubes in cell.cubes.iter() {
+            for (prim, cube) in cubes {
+                self.cube(prim, cube);
             }
         }
     }
