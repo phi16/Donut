@@ -176,6 +176,7 @@ impl PaddedCell {
                     let width = extend.0 + *width + extend.1;
                     let mut size = f.1.size.clone();
                     size.push(width);
+                    let s = s - extend.0;
                     let t = s + width;
                     (l::RawCell::Id(f, s, t), size)
                 }
@@ -247,8 +248,8 @@ impl Cellular for PaddedCell {
     fn id(face: Self) -> Self {
         let dim = face.dim().shifted();
         let mut size = face.1.full_size.clone();
-        size.push(BLOCK_WIDTH);
-        let cell = Box::new(RawCell::Id(face, BLOCK_WIDTH));
+        size.push(0);
+        let cell = Box::new(RawCell::Id(face, 0));
         let layout = Layout::new(dim, size);
         PaddedCell(cell, layout)
     }
