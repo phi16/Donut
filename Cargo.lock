@@ -47,6 +47,7 @@ dependencies = [
 name = "donut-core"
 version = "0.1.0"
 dependencies = [
+ "donut-util",
  "num-rational",
 ]
 

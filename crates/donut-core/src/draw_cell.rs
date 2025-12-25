@@ -31,16 +31,15 @@ impl X {
         }
     }
 
-    fn shrink(&self, min: u32, max: u32) -> bool {
+    fn shrink(&self, min: u32, max: u32, center: Q) -> bool {
         let v = self.eval();
         if v == Q::from(min as i32) || v == Q::from(max as i32) {
             return false;
         }
-        let c = Q::from((min + max) as i32) / 2;
         let X::X(r) = self;
         let r = r.borrow_mut();
         let mut r = r.borrow_mut();
-        *r = c;
+        *r = center;
         true
     }
 
@@ -120,25 +119,29 @@ impl Cube {
         }
     }
 
-    fn shrink(&self, origin: &[u32], size: &[u32]) {
+    fn shrink(&self, origin: &[u32], size: &[u32], center: &[Q]) {
         assert_eq!(origin.len(), size.len());
         match self {
             Cube::Point(coords) => {
                 assert_eq!(coords.len(), size.len());
-                for (coord, (min, width)) in coords.iter().zip(origin.iter().zip(size.iter())) {
-                    coord.shrink(*min, *min + *width);
+                for (coord, ((min, width), center)) in coords
+                    .iter()
+                    .zip(origin.iter().zip(size.iter()).zip(center.iter()))
+                {
+                    coord.shrink(*min, *min + *width, *center);
                 }
             }
             Cube::Bridge { source, target } => {
                 let min = *origin.last().unwrap();
                 let width = size.last().unwrap();
                 let max = min + width;
+                let c = *center.last().unwrap();
                 let n = origin.len() - 1;
-                if source.1.shrink(min, max) {
-                    source.0.shrink(&origin[..n], &size[..n]);
+                if source.1.shrink(min, max, c) {
+                    source.0.shrink(&origin[..n], &size[..n], &center[..n]);
                 }
-                if target.1.shrink(min, max) {
-                    target.0.shrink(&origin[..n], &size[..n]);
+                if target.1.shrink(min, max, c) {
+                    target.0.shrink(&origin[..n], &size[..n], &center[..n]);
                 }
             }
         }
@@ -414,21 +417,21 @@ impl DrawCell {
         }
     }
 
-    fn shrink(&self, origin: &CoordN, size: &CoordN) {
+    fn shrink(&self, origin: &CoordN, size: &CoordN, center: &CoordQ) {
         match self {
             DrawCell::Prim(_, shape, cube, _) => {
                 match shape {
                     Shape::Zero => {}
                     Shape::Succ { source, target } => {
-                        source.shrink(origin, size);
-                        target.shrink(origin, size);
+                        source.shrink(origin, size, center);
+                        target.shrink(origin, size, center);
                     }
                 }
-                cube.shrink(origin, size);
+                cube.shrink(origin, size, center);
             }
             DrawCell::Comp(_, children, _) => {
                 for child in children.iter() {
-                    child.shrink(origin, size);
+                    child.shrink(origin, size, center);
                 }
             }
         }
@@ -446,31 +449,27 @@ impl DrawCell {
                     DrawCell::Prim(prim.clone(), shape, cube, dim)
                 }
                 layout_cell::Shape::Succ {
-                    source_limit,
                     source,
-                    source_coord,
                     coord,
-                    target_coord,
                     target,
-                    target_limit,
                 } => {
                     assert_eq!(dim.effective, dim.in_space);
-                    let source_limit = Q::from(*source_limit as i32);
-                    let target_limit = Q::from(*target_limit as i32);
-                    let source_coord = Q::from(*source_coord as i32);
-                    let target_coord = Q::from(*target_coord as i32);
-                    let center = (source_coord + target_coord) / 2;
-                    let mut source = DrawCell::from_layout_cell(source);
-                    let mut target = DrawCell::from_layout_cell(target);
-                    source.shift(source_limit, center);
-                    target.shift(center, target_limit);
+                    let source_coord = Q::from(source.1 as i32);
+                    let target_coord = Q::from(target.1 as i32);
+                    let center = coord.last().unwrap().clone();
+                    let mut source = DrawCell::from_layout_cell(&source.0);
+                    let mut target = DrawCell::from_layout_cell(&target.0);
+                    source.shift(source_coord, center);
+                    target.shift(center, target_coord);
 
                     let mut face_origin = cell.1.origin.clone();
                     face_origin.pop();
                     let mut face_size = size.clone();
                     face_size.pop();
-                    source.t().shrink(&face_origin, &face_size);
-                    target.s().shrink(&face_origin, &face_size);
+                    let mut face_center = coord.clone();
+                    face_center.pop();
+                    source.t().shrink(&face_origin, &face_size, &face_center);
+                    target.s().shrink(&face_origin, &face_size, &face_center);
 
                     let shape = Shape::Succ {
                         source: Box::new(source),

@@ -6,13 +6,9 @@ use crate::common::*;
 pub enum Shape {
     Zero,
     Succ {
-        source_limit: N,
-        source: LayoutCell,
-        source_coord: N,
+        source: (LayoutCell, N),
         coord: CoordQ,
-        target_coord: N,
-        target: LayoutCell,
-        target_limit: N,
+        target: (LayoutCell, N),
     },
 }
 
@@ -48,13 +44,9 @@ impl fmt::Display for LayoutCell {
                     match shape {
                         Shape::Zero => {}
                         Shape::Succ {
-                            source_limit,
                             source,
-                            source_coord,
                             coord,
-                            target_coord,
                             target,
-                            target_limit,
                         } => {
                             fn coord_to_string(coord: &CoordQ) -> String {
                                 let mut s = String::new();
@@ -76,16 +68,14 @@ impl fmt::Display for LayoutCell {
                             }
                             writeln!(
                                 f,
-                                " [{}-{}-{}-{}-{}] {{",
-                                source_limit,
-                                source_coord,
+                                " [{}-{}-{}] {{",
+                                source.1,
                                 coord_to_string(coord),
-                                target_coord,
-                                target_limit
+                                target.1
                             )?;
-                            go(source, f, indent + 2)?;
+                            go(&source.0, f, indent + 2)?;
                             writeln!(f, ",")?;
-                            go(target, f, indent + 2)?;
+                            go(&target.0, f, indent + 2)?;
                             writeln!(f, "")?;
                             write!(f, "{}}}", pad)?;
                         }

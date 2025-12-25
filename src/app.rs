@@ -34,10 +34,13 @@ impl App {
         context: web_sys::CanvasRenderingContext2d,
     ) -> Self {
         let cell = assoc::<donut_core::padded_cell::PaddedCell>();
-        // let cell = cell.s();
+        let cell = cell.display();
         let layout_cell = cell.resolve_pad();
         let draw_cell = DrawCell::from_layout_cell(&layout_cell);
         let render_cell = RenderCell::from_draw_cell(&draw_cell);
+
+        println(&format!("LayoutCell:\n{}", layout_cell));
+        println(&format!("DrawCell:\n{}", draw_cell));
 
         Self {
             canvas,
@@ -68,9 +71,9 @@ impl App {
         self.context.fill();
 
         self.context.save();
-        self.context.translate(100.0, 100.0).unwrap();
+        self.context.translate(50.0, 50.0).unwrap();
         let renderer = Renderer::new(self.context.clone());
-        let x = (self.t.sin() * 0.5 + 0.5) * 100.0;
+        let x = (self.t.sin() * 0.5 + 0.5) * 200.0;
         let rc = self.render_cell.sliced(x);
         renderer.cell(&rc);
         self.context.restore();
