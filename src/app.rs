@@ -39,9 +39,6 @@ impl App {
         let draw_cell = DrawCell::from_layout_cell(&layout_cell);
         let render_cell = RenderCell::from_draw_cell(&draw_cell);
 
-        println(&format!("LayoutCell:\n{}", layout_cell));
-        println(&format!("DrawCell:\n{}", draw_cell));
-
         Self {
             canvas,
             context,
