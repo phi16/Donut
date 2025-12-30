@@ -1,11 +1,7 @@
 use crate::common::*;
 
-pub trait Cellular: Clone {
+pub trait CellLike {
     fn dim(&self) -> Dim;
-    fn zero(prim: Prim) -> Self;
-    fn prim(prim: Prim, source: Self, target: Self) -> Self;
-    fn id(face: Self) -> Self;
-    fn comp(axis: Axis, children: Vec2<Self>) -> Option<Self>;
 
     // cell.s().s() ~ cell.t().s()
     // cell.s().t() ~ cell.t().t()
@@ -15,7 +11,33 @@ pub trait Cellular: Clone {
     fn is_convertible(&self, other: &Self) -> bool;
 }
 
-pub fn source_face<T: Cellular>(cell: &T, axis: Level) -> T {
+pub trait CellFactory {
+    type Cell: CellLike;
+
+    fn clone(&mut self, cell: &Self::Cell) -> Self::Cell;
+    fn zero(&mut self, prim: Prim) -> Self::Cell;
+    fn prim(&mut self, prim: Prim, source: Self::Cell, target: Self::Cell) -> Self::Cell;
+    fn id(&mut self, face: Self::Cell) -> Self::Cell;
+    fn comp(&mut self, axis: Axis, children: Vec2<Self::Cell>) -> Option<Self::Cell>;
+
+    fn prim_c(&mut self, prim: Prim, source: &Self::Cell, target: &Self::Cell) -> Self::Cell {
+        let source = self.clone(source);
+        let target = self.clone(target);
+        self.prim(prim, source, target)
+    }
+
+    fn id_c(&mut self, face: &Self::Cell) -> Self::Cell {
+        let face = self.clone(face);
+        self.id(face)
+    }
+
+    fn comp_c(&mut self, axis: Axis, children: Vec2<&Self::Cell>) -> Option<Self::Cell> {
+        let children: Vec2<Self::Cell> = children.iter().map(|child| self.clone(child)).collect();
+        self.comp(axis, children)
+    }
+}
+
+pub fn source_face<T: CellLike>(cell: &T, axis: Level) -> T {
     let d = cell.dim().in_space;
     assert!(axis < d);
     let mut cell = cell.s();
@@ -25,7 +47,7 @@ pub fn source_face<T: Cellular>(cell: &T, axis: Level) -> T {
     cell
 }
 
-pub fn target_face<T: Cellular>(cell: &T, axis: Level) -> T {
+pub fn target_face<T: CellLike>(cell: &T, axis: Level) -> T {
     let d = cell.dim().in_space;
     assert!(axis < d);
     let mut cell = cell.t();
@@ -39,17 +61,17 @@ pub fn target_face<T: Cellular>(cell: &T, axis: Level) -> T {
 pub(crate) mod tests {
     use super::*;
 
-    pub fn assoc<T: Cellular>() -> T {
-        let a = T::zero(Prim::new(0));
-        let x = T::prim(Prim::new(1), a.clone(), a.clone());
-        let xx = T::comp(0, vec![x.clone(), x.clone()]).unwrap();
-        let m = T::prim(Prim::new(2), xx.clone(), x.clone());
-        let xi = T::id(x.clone());
-        let mx = T::comp(0, vec![m.clone(), xi.clone()]).unwrap();
-        let xm = T::comp(0, vec![xi.clone(), m.clone()]).unwrap();
-        let mm_l = T::comp(1, vec![mx, m.clone()]).unwrap();
-        let mm_r = T::comp(1, vec![xm, m.clone()]).unwrap();
-        let assoc = T::prim(Prim::new(3), mm_l, mm_r);
+    pub fn assoc<T: CellFactory>(cb: &mut T) -> T::Cell {
+        let a = cb.zero(Prim::new(0));
+        let x = cb.prim_c(Prim::new(1), &a, &a);
+        let xx = cb.comp_c(0, vec![&x, &x]).unwrap();
+        let m = cb.prim_c(Prim::new(2), &xx, &x);
+        let xi = cb.id_c(&x);
+        let mx = cb.comp_c(0, vec![&m, &xi]).unwrap();
+        let xm = cb.comp_c(0, vec![&xi, &m]).unwrap();
+        let mm_l = cb.comp_c(1, vec![&mx, &m]).unwrap();
+        let mm_r = cb.comp_c(1, vec![&xm, &m]).unwrap();
+        let assoc = cb.prim_c(Prim::new(3), &mm_l, &mm_r);
         assoc
     }
 }
