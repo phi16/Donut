@@ -1,0 +1,13 @@
+[package]
+name = "donut-renderer"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+donut-core = { path = "../donut-core" }
+donut-util = { path = "../donut-util" }
+num-rational = "0.4.2"
+
+[dependencies.web-sys]
+version = "0.3.82"
+features = [ "CanvasRenderingContext2d" ]
