@@ -1,12 +1,14 @@
+use std::vec;
+
 use crate::cell::{CellFactory, CellLike};
 use crate::common::*;
-use crate::lins::{Cloner, Lins};
+use crate::draw_cell;
+use crate::draw_cell::DrawCell;
+use crate::lins::{Cloner, Lins, Solution};
 use crate::pure_cell;
 use crate::pure_cell::PureCell;
 
 type X = crate::lins::X;
-
-pub const BORDER_WIDTH: N = 32;
 
 #[derive(Debug, Clone)]
 pub enum Shape {
@@ -34,6 +36,7 @@ pub enum RawCell {
 pub struct Layout {
     pub dim: Dim,
     pub cube: Cube,
+    pub vars: Vec<X>,
 }
 
 #[derive(Debug, Clone)]
@@ -85,6 +88,7 @@ impl Layout {
         Layout {
             dim: Dim::zero(),
             cube: Cube::zero(),
+            vars: vec![],
         }
     }
 
@@ -311,6 +315,7 @@ impl CellLike for LayoutCell {
                     Layout {
                         dim: dim.sliced(),
                         cube: self.1.cube.sliced(),
+                        vars: self.1.vars.clone(),
                     },
                 )
             }
@@ -343,6 +348,7 @@ impl CellLike for LayoutCell {
                     Layout {
                         dim: dim.sliced(),
                         cube: self.1.cube.sliced(),
+                        vars: self.1.vars.clone(),
                     },
                 )
             }
@@ -442,6 +448,93 @@ impl LayoutCellFactory {
             _ => unreachable!(),
         }
     }
+
+    fn collect_vars(&self, cell: &LayoutCell) -> X {
+        let mut x = X::zero();
+        fn collect(x: &mut X, cell: &LayoutCell) {
+            for v in &cell.1.vars {
+                *x = x.add(v);
+            }
+            match cell.0.as_ref() {
+                RawCell::Prim(_, shape, _) => match shape {
+                    Shape::Zero => {}
+                    Shape::Succ { source, target, .. } => {
+                        collect(x, &source.0);
+                        collect(x, &target.0);
+                    }
+                },
+                RawCell::Comp(_, children) => {
+                    for child in children {
+                        collect(x, child);
+                    }
+                }
+            }
+        }
+        collect(&mut x, cell);
+        x
+    }
+
+    fn convert(&self, cell: &LayoutCell, sol: &Solution) -> DrawCell {
+        fn convert_cube(cube: &Cube, sol: &Solution) -> draw_cell::Cube {
+            let mins = cube.mins.iter().map(|x| sol.eval(x)).collect();
+            let maxs = cube.maxs.iter().map(|x| sol.eval(x)).collect();
+            draw_cell::Cube { mins, maxs }
+        }
+        fn convert_cell(cell: &LayoutCell, sol: &Solution) -> DrawCell {
+            let layout = draw_cell::Layout {
+                dim: cell.1.dim,
+                cube: convert_cube(&cell.1.cube, sol),
+            };
+            let cell = match cell.0.as_ref() {
+                RawCell::Prim(prim, shape, cube) => {
+                    let draw_shape = match shape {
+                        Shape::Zero => draw_cell::Shape::Zero,
+                        Shape::Succ {
+                            source,
+                            center_doubled,
+                            target,
+                        } => draw_cell::Shape::Succ {
+                            source: (convert_cell(&source.0, sol), sol.eval(&source.1)),
+                            center: center_doubled.iter().map(|x| sol.eval(x) / 2).collect(),
+                            target: (convert_cell(&target.0, sol), sol.eval(&target.1)),
+                        },
+                    };
+                    let draw_cube = convert_cube(cube, sol);
+                    draw_cell::RawCell::Prim(prim.clone(), draw_shape, draw_cube)
+                }
+                RawCell::Comp(axis, children) => {
+                    let draw_children = children
+                        .iter()
+                        .map(|child| convert_cell(child, sol))
+                        .collect();
+                    draw_cell::RawCell::Comp(*axis, draw_children)
+                }
+            };
+            DrawCell(Box::new(cell), layout)
+        }
+        convert_cell(cell, sol)
+    }
+
+    fn solve(&mut self, cell: &LayoutCell) -> DrawCell {
+        let d = cell.1.dim.in_space;
+        let ws = (0..d)
+            .map(|i| self.var(format!("Mw{}", i)))
+            .collect::<Vec<_>>();
+        for i in 0..d as usize {
+            let min = X::zero();
+            let w = &ws[i];
+            let base = X::one();
+            let max = min.add(&base).add(w);
+            self.eq(&cell.1.cube.mins[i], &min);
+            self.eq(&cell.1.cube.maxs[i], &max);
+        }
+        let vars = self.collect_vars(cell);
+        let mut lins = Lins::new();
+        std::mem::swap(&mut self.0, &mut lins);
+        let sol = lins.solve(&vars).unwrap();
+
+        self.convert(cell, &sol)
+    }
 }
 
 impl CellFactory for LayoutCellFactory {
@@ -460,9 +553,11 @@ impl CellFactory for LayoutCellFactory {
         }
         fn clone_layout(cloner: &mut Cloner, layout: &Layout) -> Layout {
             let cube = clone_cube(cloner, &layout.cube);
+            let vars = clone_xs(cloner, &layout.vars);
             Layout {
                 dim: layout.dim,
                 cube,
+                vars,
             }
         }
         fn clone_cell(cloner: &mut Cloner, cell: &LayoutCell) -> LayoutCell {
@@ -494,7 +589,9 @@ impl CellFactory for LayoutCellFactory {
             };
             LayoutCell(Box::new(cell), layout)
         }
-        clone_cell(&mut cloner, cell)
+        let c = clone_cell(&mut cloner, cell);
+        cloner.drop();
+        c
     }
 
     fn zero(&mut self, prim: Prim) -> Self::Cell {
@@ -507,16 +604,15 @@ impl CellFactory for LayoutCellFactory {
         let d = source.dim().in_space;
         let dim = Dim::new(d + 1, d + 1);
 
-        // s |--u--> x <----> y <--v--| t
+        // s |--u+w--> x <----> y <--v+w--| t
 
-        let u = self.var(format!("Pu{}", d));
-        let v = self.var(format!("Pv{}", d));
-        let s = self.var(format!("Ps{}", d));
-        let t = self.var(format!("Pt{}", d));
-        let x = s.add(&u);
-        let y = x.add(&X::k(BORDER_WIDTH * 2));
-        let t2 = y.add(&v);
-        self.eq(&t, &t2);
+        let s = self.var(format!("P[{}]s{}", prim.id, d));
+        let u = self.var(format!("P[{}]u{}", prim.id, d));
+        let v = self.var(format!("P[{}]v{}", prim.id, d));
+        let w = self.var(format!("P[{}]w{}", prim.id, d));
+        let x = s.add(&u.add(&w));
+        let y = x.add(&X::one());
+        let t = y.add(&v.add(&w));
 
         let mut cube = source.1.cube.clone();
         let center_doubled = cube // TODO: this is not an appropriate center, maybe
@@ -534,17 +630,19 @@ impl CellFactory for LayoutCellFactory {
 
         let cell = RawCell::Prim(prim, shape, Cube::zero());
         cube.shift(&s, &t);
-        LayoutCell(Box::new(cell), Layout { dim, cube })
+        let vars = vec![s, u, v, w];
+        LayoutCell(Box::new(cell), Layout { dim, cube, vars })
     }
 
     fn id(&mut self, face: Self::Cell) -> Self::Cell {
         let d = face.dim().in_space;
         let s = self.var(format!("Is{}", d));
-        let t = self.var(format!("It{}", d));
         let w = self.var(format!("Iw{}", d));
-        self.eq(&t, &s.add(&w));
+        let t = s.add(&w);
         let mut cell = face;
         cell.shift(&s, &t);
+        cell.1.vars.push(s);
+        cell.1.vars.push(w);
         cell
     }
 
@@ -559,7 +657,6 @@ impl CellFactory for LayoutCellFactory {
                     t.to_pure(),
                     s.to_pure()
                 );
-                assert!(false);
                 return None;
             }
             self.fuse(&t, &s);
@@ -568,7 +665,11 @@ impl CellFactory for LayoutCellFactory {
         let maxs = children[n - 1].1.cube.maxs.clone();
         let (cell, dim) = LayoutCell::comp_unchecked(axis, children);
         let cube = Cube { mins, maxs };
-        let layout = Layout { dim, cube };
+        let layout = Layout {
+            dim,
+            cube,
+            vars: vec![],
+        };
         Some(LayoutCell(cell, layout))
     }
 }
@@ -582,8 +683,8 @@ mod tests {
         use crate::cell::tests::assoc;
         let mut cb = LayoutCellFactory::new();
         let a = assoc(&mut cb);
-        let sol = cb.0.solve().unwrap();
-
-        eprintln!("assoc layout: {:#?}", a);
+        let cell = cb.solve(&a);
+        eprintln!("assoc layout:\n{}", cell);
+        assert!(false);
     }
 }

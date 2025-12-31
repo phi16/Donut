@@ -29,12 +29,20 @@ pub struct Solution {
 }
 
 impl X {
+    pub fn zero() -> Self {
+        X(vec![])
+    }
+
     pub fn var(id: Id) -> Self {
         X(vec![Factor::Var(id)])
     }
 
     pub fn k(n: N) -> Self {
         X(vec![Factor::Const(n)])
+    }
+
+    pub fn one() -> Self {
+        X::k(1)
     }
 
     pub fn add(&self, other: &X) -> X {
@@ -46,6 +54,9 @@ impl X {
 
 impl std::fmt::Debug for X {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.0.is_empty() {
+            return write!(f, "0");
+        }
         let parts: Vec<String> = self
             .0
             .iter()
@@ -86,13 +97,83 @@ impl Lins {
         }
     }
 
-    pub fn solve(self) -> Option<Solution> {
-        eprintln!("Constraints: {{");
+    fn show(&self, x: &X) -> String {
+        if x.0.is_empty() {
+            return "0".to_string();
+        }
+        let parts: Vec<String> =
+            x.0.iter()
+                .map(|factor| match factor {
+                    Factor::Var(id) => {
+                        format!("{}(x{})", self.names.get(id).unwrap(), id.0)
+                    }
+                    Factor::Const(n) => format!("{}", n),
+                })
+                .collect();
+        parts.join(" + ")
+    }
+
+    pub fn solve(self, minimize: &X) -> Option<Solution> {
+        eprintln!("Constraints = {{");
         for (l, r) in &self.constraints {
-            eprintln!("  {:?} = {:?},", l, r);
+            eprintln!("  {} = {},", self.show(l), self.show(r));
         }
         eprintln!("}}");
-        unimplemented!()
+        eprintln!("Minimize: {}", self.show(minimize));
+
+        use microlp::{ComparisonOp, LinearExpr, OptimizationDirection, Problem};
+        let mut p = Problem::new(OptimizationDirection::Minimize);
+        let vars = (0..self.next_id)
+            .map(|_| p.add_var(1.0, (0.0, f64::INFINITY)))
+            .collect::<Vec<_>>();
+        for (l, r) in &self.constraints {
+            let mut lhs: HashMap<Id, i32> = HashMap::new();
+            let mut rhs = 0.0;
+            for factor in &l.0 {
+                match factor {
+                    Factor::Var(id) => {
+                        lhs.entry(id.clone()).and_modify(|e| *e += 1).or_insert(1);
+                    }
+                    Factor::Const(n) => {
+                        rhs -= *n as f64;
+                    }
+                }
+            }
+            for factor in &r.0 {
+                match factor {
+                    Factor::Var(id) => {
+                        lhs.entry(id.clone()).and_modify(|e| *e -= 1).or_insert(-1);
+                    }
+                    Factor::Const(n) => {
+                        rhs += *n as f64;
+                    }
+                }
+            }
+            let mut e = LinearExpr::empty();
+            for (id, coeff) in lhs {
+                e.add(vars[id.0 as usize], coeff as f64);
+            }
+            p.add_constraint(e, ComparisonOp::Eq, rhs);
+        }
+        let solution = p.solve().ok()?;
+        eprintln!("Solution found: {:?}", solution);
+        for i in 0..self.next_id {
+            eprintln!(
+                "  {}(x{}) = {}",
+                self.names.get(&Id(i)).unwrap(),
+                i,
+                solution[vars[i as usize]]
+            );
+        }
+
+        Some(Solution {
+            map: (0..self.next_id)
+                .map(|i| {
+                    let value = solution[vars[i as usize]];
+                    (Id(i), Q::approximate_float(value).unwrap())
+                })
+                .collect(),
+        })
     }
 }
 
@@ -118,6 +199,44 @@ impl<'a> Cloner<'a> {
             }
         }
         X(new_factors)
+    }
+
+    pub fn translate(&self, x: &X) -> Option<X> {
+        let mut updated = false;
+        let mut new_factors = Vec::new();
+        for factor in &x.0 {
+            match factor {
+                Factor::Var(id) => match self.map.get(id) {
+                    Some(new_id) => {
+                        updated = true;
+                        new_factors.push(Factor::Var(new_id.clone()))
+                    }
+                    None => new_factors.push(Factor::Var(id.clone())),
+                },
+                Factor::Const(n) => {
+                    new_factors.push(Factor::Const(*n));
+                }
+            }
+        }
+        if updated {
+            Some(X(new_factors))
+        } else {
+            None
+        }
+    }
+
+    pub fn drop(self) {
+        let mut new_constraints = vec![];
+        let n = self.lins.constraints.len();
+        for i in 0..n {
+            let (l, r) = &self.lins.constraints[i];
+            if let Some(l_new) = self.translate(l) {
+                if let Some(r_new) = self.translate(r) {
+                    new_constraints.push((l_new, r_new));
+                }
+            }
+        }
+        self.lins.constraints.append(&mut new_constraints);
     }
 }
 
