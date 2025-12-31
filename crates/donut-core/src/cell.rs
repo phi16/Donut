@@ -37,7 +37,7 @@ pub trait CellFactory {
     }
 }
 
-pub fn source_face<T: CellLike>(cell: &T, axis: Level) -> T {
+pub fn source_face<T: CellLike>(cell: &T, axis: Axis) -> T {
     let d = cell.dim().in_space;
     assert!(axis < d);
     let mut cell = cell.s();
@@ -47,7 +47,7 @@ pub fn source_face<T: CellLike>(cell: &T, axis: Level) -> T {
     cell
 }
 
-pub fn target_face<T: CellLike>(cell: &T, axis: Level) -> T {
+pub fn target_face<T: CellLike>(cell: &T, axis: Axis) -> T {
     let d = cell.dim().in_space;
     assert!(axis < d);
     let mut cell = cell.t();

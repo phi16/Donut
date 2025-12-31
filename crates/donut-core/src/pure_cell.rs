@@ -129,15 +129,16 @@ impl CellFactory for PureCellFactory {
             let d = c.dim();
             assert_eq!(d.in_space, dim.in_space);
             dim.effective = dim.effective.max(d.effective);
-            match c {
-                PureCell::Comp(a, mut cc, _) if a == axis => {
-                    cs.append(&mut cc);
-                }
-                PureCell::Prim(_, _, dim) if dim.effective < axis => {
-                    // do nothing
-                }
-                _ => {
-                    cs.push(c);
+            if d.effective < axis {
+                // do nothing
+            } else {
+                match c {
+                    PureCell::Comp(a, mut cc, _) if a == axis => {
+                        cs.append(&mut cc);
+                    }
+                    _ => {
+                        cs.push(c);
+                    }
                 }
             }
         }

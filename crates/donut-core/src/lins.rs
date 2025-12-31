@@ -87,9 +87,11 @@ impl Lins {
     }
 
     pub fn solve(self) -> Option<Solution> {
+        eprintln!("Constraints: {{");
         for (l, r) in &self.constraints {
-            eprintln!("Constraint: {:?} = {:?}", l, r);
+            eprintln!("  {:?} = {:?},", l, r);
         }
+        eprintln!("}}");
         unimplemented!()
     }
 }

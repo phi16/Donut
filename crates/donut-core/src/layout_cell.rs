@@ -67,9 +67,16 @@ impl Cube {
         self.maxs.push(t.clone());
     }
 
-    fn squash(&mut self, axis: Level, s: &X, t: &X) {
+    fn squash(&mut self, axis: Axis, s: &X, t: &X) {
         self.mins[axis as usize] = s.clone();
         self.maxs[axis as usize] = t.clone();
+    }
+
+    fn move_face_to(&mut self, axis: Axis, side: Side, x: &X) {
+        match side {
+            Side::Source => self.mins[axis as usize] = x.clone(),
+            Side::Target => self.maxs[axis as usize] = x.clone(),
+        }
     }
 }
 
@@ -109,7 +116,7 @@ impl LayoutCell {
         }
     }
 
-    fn face_at(&self, a: Level, side: Side, s: &X, t: &X) -> Self {
+    fn face_at(&self, a: Axis, side: Side, s: &X, t: &X) -> Self {
         let dim = &self.1.dim;
         match self.0.as_ref() {
             RawCell::Prim(prim, shape, cube) if dim.effective <= a => {
@@ -166,7 +173,7 @@ impl LayoutCell {
         }
     }
 
-    fn face(&self, axis: Level, side: Side) -> Self {
+    fn face(&self, axis: Axis, side: Side) -> Self {
         let x = match side {
             Side::Source => self.1.cube.mins[axis as usize].clone(),
             Side::Target => self.1.cube.maxs[axis as usize].clone(),
@@ -174,6 +181,41 @@ impl LayoutCell {
         let face = self.face_at(axis, side, &x, &x);
         assert_eq!(self.1.dim.in_space, face.1.dim.in_space);
         face
+    }
+
+    fn move_face_to(&mut self, a: Axis, side: Side, x: &X) {
+        let dim = &self.1.dim;
+        match self.0.as_mut() {
+            RawCell::Prim(_, _, cube) if dim.effective <= a => {
+                cube.move_face_to(a - dim.effective, side, x);
+            }
+            RawCell::Prim(_, shape, _) => {
+                if dim.effective == a + 1 {
+                    // do nothing
+                } else {
+                    match shape {
+                        Shape::Zero => panic!("zero-cell has no faces"),
+                        Shape::Succ { source, target, .. } => {
+                            source.0.move_face_to(a, side, x);
+                            target.0.move_face_to(a, side, x);
+                        }
+                    }
+                }
+            }
+            RawCell::Comp(axis, cs) => {
+                if *axis == a {
+                    match side {
+                        Side::Source => cs.first_mut().unwrap().move_face_to(a, side, x),
+                        Side::Target => cs.last_mut().unwrap().move_face_to(a, side, x),
+                    }
+                } else {
+                    for child in cs.iter_mut() {
+                        child.move_face_to(a, side, x);
+                    }
+                }
+            }
+        }
+        self.1.cube.move_face_to(a, side, x);
     }
 
     fn shift(&mut self, s: &X, t: &X) {
@@ -194,32 +236,59 @@ impl LayoutCell {
         let n = children.len();
         assert!(n >= 1);
 
-        let first_x = children[0].1.cube.mins[axis as usize].clone();
         let last_x = children[n - 1].1.cube.maxs[axis as usize].clone();
-        let zero_cylinder = children[0].face_at(axis, Side::Source, &first_x, &last_x);
 
-        let mut cs = vec![];
+        let mut cs: Vec<LayoutCell> = vec![];
+        let mut first_id = None;
         let mut dim = children.first().unwrap().dim();
         for mut c in children {
             let d = c.dim();
             assert_eq!(d.in_space, dim.in_space);
             dim.effective = dim.effective.max(d.effective);
-            match c.0.as_mut() {
-                RawCell::Comp(a, cc) if *a == axis => {
-                    cs.append(cc);
+            if d.effective < axis {
+                // id
+                match cs.last_mut() {
+                    Some(l) => {
+                        // unites to the last element
+                        l.move_face_to(axis, Side::Target, &c.1.cube.maxs[axis as usize]);
+                    }
+                    None => {
+                        if first_id.is_none() {
+                            first_id = Some(c);
+                        } else {
+                            // do nothing
+                        }
+                    }
                 }
-                RawCell::Prim(_, _, _) if dim.effective < axis => {
-                    // do nothing ??????
-                    unimplemented!()
+            } else {
+                match c.0.as_mut() {
+                    RawCell::Comp(a, cc) if *a == axis => {
+                        cs.append(cc);
+                    }
+                    _ => {
+                        cs.push(c);
+                    }
                 }
-                _ => {
-                    cs.push(c);
+            }
+        }
+
+        if let Some(first) = first_id {
+            let first_x = first.1.cube.mins[axis as usize].clone();
+            match cs.first_mut() {
+                Some(f) => {
+                    // unites to the first element
+                    f.move_face_to(axis, Side::Source, &first_x);
+                }
+                None => {
+                    // id only case
+                    let zero_cylinder = first.face_at(axis, Side::Source, &first_x, &last_x);
+                    return (zero_cylinder.0, dim);
                 }
             }
         }
 
         let cell = match cs.len() {
-            0 => zero_cylinder.0,
+            0 => unreachable!(),
             1 => cs.into_iter().next().unwrap().0,
             _ => Box::new(RawCell::Comp(axis, cs)),
         };
@@ -450,7 +519,7 @@ impl CellFactory for LayoutCellFactory {
         self.eq(&t, &t2);
 
         let mut cube = source.1.cube.clone();
-        let center_doubled = cube // TODO: this is not an appropriate center
+        let center_doubled = cube // TODO: this is not an appropriate center, maybe
             .mins
             .iter()
             .zip(cube.maxs.iter())
