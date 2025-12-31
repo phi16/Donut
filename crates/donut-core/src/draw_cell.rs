@@ -1,46 +1,7 @@
 use crate::common::*;
+use crate::render_cell::*;
+use donut_util::println;
 use std::fmt;
-
-/* type X = crate::lins::X;
-
-#[derive(Debug, Clone, Copy)]
-pub enum Tangent {
-    Perp,
-    Shrink,
-}
-
-#[derive(Debug, Clone)]
-pub enum Cuboid {
-    Point(Vec<X>),
-    Bridge {
-        source: (Box<Cuboid>, X, Tangent),
-        target: (Box<Cuboid>, X, Tangent),
-    },
-}
-
-impl Cuboid {
-    fn s(&self) -> Self {
-        match self {
-            Cuboid::Point(_) => unreachable!(),
-            Cuboid::Bridge { source, .. } => source.0.as_ref().clone(),
-        }
-    }
-    fn t(&self) -> Self {
-        match self {
-            Cuboid::Point(_) => unreachable!(),
-            Cuboid::Bridge { target, .. } => target.0.as_ref().clone(),
-        }
-    }
-
-    fn shift(&mut self, s: &X, t: &X) {
-        let mut face = Cuboid::Point(vec![]);
-        std::mem::swap(self, &mut face);
-        *self = Cuboid::Bridge {
-            source: (Box::new(face.clone()), s.clone(), Tangent::Perp),
-            target: (Box::new(face), t.clone(), Tangent::Perp),
-        };
-    }
-} */
 
 #[derive(Debug, Clone)]
 pub enum Shape {
@@ -72,6 +33,69 @@ pub struct Layout {
 
 #[derive(Debug, Clone)]
 pub struct DrawCell(pub Box<RawCell>, pub Layout);
+
+impl DrawCell {
+    pub fn render(&self) -> RenderCell {
+        let d = self.1.dim.in_space;
+        match self.0.as_ref() {
+            RawCell::Prim(prim, shape, cube) => {
+                let cur_d = d - cube.mins.len() as Level;
+                let mut rc = RenderCell::new(cur_d);
+                match shape {
+                    Shape::Zero => {
+                        rc.add_point(prim.clone(), vec![]);
+                    }
+                    Shape::Succ {
+                        source,
+                        center,
+                        target,
+                    } => {
+                        let min = self.1.cube.mins[(cur_d - 1) as usize];
+                        let max = self.1.cube.maxs[(cur_d - 1) as usize];
+                        let s = source.1;
+                        let t = target.1;
+                        let c = (s + t) / 2;
+                        let mins = (source.0).1.cube.mins.clone();
+                        let maxs = (target.0).1.cube.maxs.clone();
+                        let mut source = source.0.render();
+                        let mut target = target.0.render();
+
+                        let mut source_shrink = source.shifted(&s, &c);
+                        let mut target_shrink = target.shifted(&c, &t);
+                        source_shrink.shrink_face(Side::Target, center, &mins, &maxs);
+                        target_shrink.shrink_face(Side::Source, center, &mins, &maxs);
+                        rc.merge(source_shrink);
+                        rc.merge(target_shrink);
+
+                        if min < s {
+                            source.shift(&min, &s);
+                            rc.merge(source);
+                        }
+                        if t < max {
+                            target.shift(&t, &max);
+                            rc.merge(target);
+                        }
+
+                        let mut center = center.clone();
+                        center.push(c);
+                        rc.add_point(prim.clone(), center);
+                    }
+                }
+                for (s, t) in cube.mins.iter().zip(cube.maxs.iter()) {
+                    rc.shift(s, t);
+                }
+                rc
+            }
+            RawCell::Comp(_, children) => {
+                let mut rc = RenderCell::new(d);
+                for child in children {
+                    rc.merge(child.render());
+                }
+                rc
+            }
+        }
+    }
+}
 
 impl fmt::Display for DrawCell {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {

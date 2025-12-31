@@ -57,16 +57,8 @@ impl Dim {
     }
 }
 
-pub fn add_coord(a: &mut CoordN, b: &CoordN) {
-    assert_eq!(a.len(), b.len());
-    for (x, y) in a.iter_mut().zip(b.iter()) {
-        *x += *y;
-    }
-}
-
-pub fn max_coord(a: &mut CoordN, b: &CoordN) {
-    assert_eq!(a.len(), b.len());
-    for (x, y) in a.iter_mut().zip(b.iter()) {
-        *x = (*x).max(*y);
-    }
+#[derive(Debug, Clone, Copy)]
+pub enum Side {
+    Source,
+    Target,
 }

@@ -44,12 +44,6 @@ pub struct LayoutCell(Box<RawCell>, Layout);
 
 pub struct LayoutCellFactory(Lins);
 
-#[derive(Debug, Clone, Copy)]
-enum Side {
-    Source,
-    Target,
-}
-
 impl Cube {
     fn zero() -> Self {
         Cube {
@@ -515,7 +509,7 @@ impl LayoutCellFactory {
         convert_cell(cell, sol)
     }
 
-    fn solve(&mut self, cell: &LayoutCell) -> DrawCell {
+    pub fn solve(&mut self, cell: &LayoutCell) -> DrawCell {
         let d = cell.1.dim.in_space;
         let ws = (0..d)
             .map(|i| self.var(format!("Mw{}", i)))

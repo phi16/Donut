@@ -61,17 +61,17 @@ pub fn target_face<T: CellLike>(cell: &T, axis: Axis) -> T {
 pub(crate) mod tests {
     use super::*;
 
-    pub fn assoc<T: CellFactory>(cb: &mut T) -> T::Cell {
-        let a = cb.zero(Prim::new(0));
-        let x = cb.prim_c(Prim::new(1), &a, &a);
-        let xx = cb.comp_c(0, vec![&x, &x]).unwrap();
-        let m = cb.prim_c(Prim::new(2), &xx, &x);
-        let xi = cb.id_c(&x);
-        let mx = cb.comp_c(0, vec![&m, &xi]).unwrap();
-        let xm = cb.comp_c(0, vec![&xi, &m]).unwrap();
-        let mm_l = cb.comp_c(1, vec![&mx, &m]).unwrap();
-        let mm_r = cb.comp_c(1, vec![&xm, &m]).unwrap();
-        let assoc = cb.prim_c(Prim::new(3), &mm_l, &mm_r);
+    pub fn assoc<T: CellFactory>(f: &mut T) -> T::Cell {
+        let a = f.zero(Prim::new(0));
+        let x = f.prim_c(Prim::new(1), &a, &a);
+        let xx = f.comp_c(0, vec![&x, &x]).unwrap();
+        let m = f.prim_c(Prim::new(2), &xx, &x);
+        let xi = f.id_c(&x);
+        let mx = f.comp_c(0, vec![&m, &xi]).unwrap();
+        let xm = f.comp_c(0, vec![&xi, &m]).unwrap();
+        let mm_l = f.comp_c(1, vec![&mx, &m]).unwrap();
+        let mm_r = f.comp_c(1, vec![&xm, &m]).unwrap();
+        let assoc = f.prim_c(Prim::new(3), &mm_l, &mm_r);
         assoc
     }
 }
