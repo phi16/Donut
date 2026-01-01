@@ -1,5 +1,6 @@
 use crate::cell::*;
 use crate::common::*;
+use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Shape {
@@ -152,6 +153,26 @@ impl CellFactory for PureCellFactory {
             1 => cs.into_iter().next().unwrap(),
             _ => PureCell::Comp(axis, cs, dim),
         })
+    }
+}
+
+impl fmt::Display for PureCell {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PureCell::Prim(prim, _, _) => {
+                write!(f, "P{}", prim.id)
+            }
+            PureCell::Comp(axis, children, _) => {
+                write!(f, "[{}: ", axis)?;
+                for (i, child) in children.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", child)?;
+                }
+                write!(f, "]")
+            }
+        }
     }
 }
 

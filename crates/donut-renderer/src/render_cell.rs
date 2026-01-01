@@ -1,5 +1,6 @@
 use donut_core::common::*;
 use donut_core::render_cell as q;
+use donut_core::render_cell::Tangent;
 
 pub type R = f64;
 pub type CoordR = Vec<R>;
@@ -14,6 +15,34 @@ fn lerp(a: R, b: R, t: R) -> R {
     a * (1.0 - t) + b * t
 }
 
+fn bezier(x0: R, t0: R, x1: R, t1: R, t: R) -> R {
+    let a = x0;
+    let b = lerp(x0, x1, t0);
+    let c = lerp(x1, x0, t1);
+    let d = x1;
+    let x = lerp(a, b, t);
+    let y = lerp(b, c, t);
+    let z = lerp(c, d, t);
+    let u = lerp(x, y, t);
+    let v = lerp(y, z, t);
+    lerp(u, v, t)
+}
+
+fn inverse_bezier(x0: R, t0: R, x1: R, t1: R, x: R) -> R {
+    let mut a = 0.0;
+    let mut b = 1.0;
+    for _ in 0..20 {
+        let m = (a + b) / 2.0;
+        let xm = bezier(x0, t0, x1, t1, m);
+        if xm < x {
+            a = m;
+        } else {
+            b = m;
+        }
+    }
+    (a + b) / 2.0
+}
+
 fn lerp_v(a: &CoordR, b: &CoordR, t: R) -> CoordR {
     assert_eq!(a.len(), b.len());
     let mut v = vec![];
@@ -21,6 +50,21 @@ fn lerp_v(a: &CoordR, b: &CoordR, t: R) -> CoordR {
         v.push(lerp(a[i], b[i], t));
     }
     v
+}
+
+fn from_tangent(t: Tangent, d: Level) -> CoordR {
+    match t {
+        q::Tangent::Perp => {
+            let mut v = vec![0.0; d as usize];
+            v.push(0.5);
+            v
+        }
+        q::Tangent::Shrink => {
+            let mut v = vec![1.0; d as usize];
+            v.push(0.0);
+            v
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -35,6 +79,7 @@ pub enum Cuboid {
 #[derive(Debug, Clone)]
 pub struct RenderCell {
     pub cubes: Vec<Vec<(Prim, Cuboid)>>,
+    pub spheres: Vec<(Prim, CoordR, R)>,
 }
 
 impl Cuboid {
@@ -53,30 +98,8 @@ impl Cuboid {
                 let (t, td) = Cuboid::from(t);
                 assert_eq!(sd, td);
                 let d = sd;
-                let st = match st {
-                    q::Tangent::Perp => {
-                        let mut v = vec![0.0; d as usize];
-                        v.push(0.5);
-                        v
-                    }
-                    q::Tangent::Shrink => {
-                        let mut v = vec![1.0; d as usize];
-                        v.push(0.0);
-                        v
-                    }
-                };
-                let tt = match tt {
-                    q::Tangent::Perp => {
-                        let mut v = vec![0.0; d as usize];
-                        v.push(0.5);
-                        v
-                    }
-                    q::Tangent::Shrink => {
-                        let mut v = vec![1.0; d as usize];
-                        v.push(0.0);
-                        v
-                    }
-                };
+                let st = from_tangent(*st, d);
+                let tt = from_tangent(*tt, d);
                 let c = Cuboid::Bridge {
                     source: (Box::new(s), to_f64(sq), st),
                     target: (Box::new(t), to_f64(tq), tt),
@@ -122,15 +145,38 @@ impl Cuboid {
         }
     }
 
-    fn sliced(&self, x: R) -> Option<Self> {
+    fn sliced(&self, x: R, prim: &Prim, spheres: &mut Vec<(Prim, CoordR, R)>) -> Option<Self> {
         match self {
-            Cuboid::Point(_) => None,
+            Cuboid::Point(center) => {
+                let c = center.last().unwrap();
+                let d = *c - x;
+                let r = 16.0;
+                let r2 = r * r;
+                if d * d < r2 {
+                    let n = center.len() - 1;
+                    spheres.push((prim.clone(), center[..n].to_vec(), r2 - d * d));
+                }
+                None
+            }
             Cuboid::Bridge { source, target } => {
                 if x < source.1 || x > target.1 {
                     return None;
                 }
-                let t = (x - source.1) / (target.1 - source.1);
-                Some(Cuboid::lerp(&source.0, &target.0, t))
+                let t = inverse_bezier(
+                    source.1,
+                    *source.2.last().unwrap(),
+                    target.1,
+                    *target.2.last().unwrap(),
+                    x,
+                );
+                let u = bezier(
+                    0.0,
+                    *source.2.first().unwrap(),
+                    1.0,
+                    *target.2.first().unwrap(),
+                    t,
+                );
+                Some(Cuboid::lerp(&source.0, &target.0, u))
             }
         }
     }
@@ -147,22 +193,36 @@ impl RenderCell {
             }
             cubes.push(rcs);
         }
-        RenderCell { cubes }
+        let spheres = vec![];
+        RenderCell { cubes, spheres }
     }
 
     pub fn sliced(&self, x: R) -> Self {
         let mut css = vec![];
-        for cubes in self.cubes.iter() {
+        let mut spheres = vec![];
+        for (prim, center, r2) in &self.spheres {
+            let c = center.last().unwrap();
+            let d = *c - x;
+            let mut center = center.clone();
+            center.pop();
+            if d * d < *r2 {
+                spheres.push((prim.clone(), center, *r2 - d * d));
+            }
+        }
+        for cubes in &self.cubes {
             let cs = cubes
                 .iter()
                 .filter_map(|(prim, cube)| {
-                    let cube = cube.sliced(x)?;
+                    let cube = cube.sliced(x, prim, &mut spheres)?;
                     Some((prim.clone(), cube))
                 })
                 .collect();
             css.push(cs);
         }
         css.pop();
-        Self { cubes: css }
+        Self {
+            cubes: css,
+            spheres,
+        }
     }
 }

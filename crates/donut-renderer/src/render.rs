@@ -106,5 +106,19 @@ impl Renderer {
                 self.cube(prim, cube);
             }
         }
+
+        for (_, center, r2) in &cell.spheres {
+            assert_eq!(center.len(), 2);
+            let r = r2.sqrt();
+            let x = center[0];
+            let y = center[1];
+            self.context.begin_path();
+            self.context
+                .arc(x, y, r, 0.0, std::f64::consts::PI * 2.0)
+                .unwrap();
+            self.context.close_path();
+            self.context.set_fill_style_str("rgb(255 255 0)");
+            self.context.fill();
+        }
     }
 }

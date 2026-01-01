@@ -618,12 +618,38 @@ impl CellFactory for LayoutCellFactory {
             let s = children[i + 1].face(axis, Side::Source);
             if !t.is_convertible(&s) {
                 return Err(format!(
-                    "{:?}\n is not convertible to\n{:?}",
+                    "{}\n is not convertible to\n{}",
                     t.to_pure(),
                     s.to_pure()
                 ));
             }
             self.fuse(&t, &s);
+
+            // why needed ?
+            /* for (j, (a, b)) in children[i]
+                .1
+                .cube
+                .mins
+                .iter()
+                .zip(children[i + 1].1.cube.mins.iter())
+                .enumerate()
+            {
+                if j as Axis != axis {
+                    self.eq(a, b);
+                }
+            } */
+            for (j, (a, b)) in children[i]
+                .1
+                .cube
+                .maxs
+                .iter()
+                .zip(children[i + 1].1.cube.maxs.iter())
+                .enumerate()
+            {
+                if j as Axis != axis {
+                    self.eq(a, b);
+                }
+            }
         }
         let mins = children[0].1.cube.mins.clone();
         let maxs = children[n - 1].1.cube.maxs.clone();

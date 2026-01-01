@@ -1,3 +1,6 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use donut_core::cell::*;
 use donut_core::common::*;
 use donut_core::layout_cell::{LayoutCell, LayoutCellFactory};
@@ -20,11 +23,20 @@ pub fn assoc(f: &mut LayoutCellFactory) -> LayoutCell {
     let xii = f.id_c(&xi);
     let ax = f.comp_c(0, vec![&assoc, &xii]);
 
-    let interchange = {
+    let chl = {
         let mmx = f.comp_c(0, vec![&mm_r, &xi]);
         let xmx = f.comp_c(0, vec![&xi, &m, &xi]);
         let mmx2 = f.comp_c(1, vec![&xmx, &mx]);
         let ch = f.prim_c(Prim::new(4), &mmx, &mmx2);
+        let mi = f.id_c(&m);
+        f.comp_c(1, vec![&ch, &mi])
+    };
+
+    let chr = {
+        let xmm = f.comp_c(0, vec![&xi, &mm_l]);
+        let xmx = f.comp_c(0, vec![&xi, &m, &xi]);
+        let xmm2 = f.comp_c(1, vec![&xmx, &xm]);
+        let ch = f.prim_c(Prim::new(5), &xmm2, &xmm);
         let mi = f.id_c(&m);
         f.comp_c(1, vec![&ch, &mi])
     };
@@ -34,12 +46,52 @@ pub fn assoc(f: &mut LayoutCellFactory) -> LayoutCell {
     let xmx = f.comp_c(0, vec![&xi, &m, &xi]);
     let xmxi = f.id_c(&xmx);
     let ma = f.comp_c(1, vec![&xmxi, &assoc]);
-    f.comp_c(2, vec![&am, &interchange, &ma])
+
+    let xa = f.comp_c(0, vec![&xii, &assoc]);
+    let am2 = f.comp_c(1, vec![&xa, &mi]);
+
+    let aaa = f.comp_c(2, vec![&am, &chl, &ma, &chr, &am2]);
+
+    let mxx = f.comp_c(0, vec![&m, &xi, &xi]);
+    let mxxi = f.id_c(&mxx);
+    let oa = f.comp_c(1, vec![&mxxi, &assoc]);
+
+    let xxm = f.comp_c(0, vec![&xi, &xi, &m]);
+    let xxmi = f.id_c(&xxm);
+    let ao = f.comp_c(1, vec![&xxmi, &assoc]);
+
+    let chx = {
+        let vl = f.comp_c(1, vec![&mxx, &xm]);
+        let vx = f.comp_c(0, vec![&m, &m]);
+        let vr = f.comp_c(1, vec![&xxm, &mx]);
+        let ch0 = f.prim_c(Prim::new(6), &vl, &vx);
+        let ch1 = f.prim_c(Prim::new(7), &vx, &vr);
+        let cc = f.comp_c(2, vec![&ch0, &ch1]);
+        f.comp_c(1, vec![&cc, &mi])
+    };
+
+    let ichl = {
+        let k1 = f.comp_c(0, vec![&mm_l, &xi]);
+        let k2 = f.comp_c(1, vec![&mxx, &mx]);
+        let k = f.prim_c(Prim::new(8), &k1, &k2);
+        f.comp_c(1, vec![&k, &mi])
+    };
+    let ichr = {
+        let k1 = f.comp_c(0, vec![&xi, &mm_r]);
+        let k2 = f.comp_c(1, vec![&xxm, &xm]);
+        let k = f.prim_c(Prim::new(9), &k2, &k1);
+        f.comp_c(1, vec![&k, &mi])
+    };
+
+    let oao = f.comp_c(2, vec![&ichl, &oa, &chx, &ao, &ichr]);
+
+    f.prim_c(Prim::new(10), &aaa, &oao)
 }
 
 pub struct App {
     canvas: web_sys::HtmlCanvasElement,
     context: web_sys::CanvasRenderingContext2d,
+    mouse: Rc<RefCell<(f64, f64)>>,
     cell: RenderCell,
     t: R,
 }
@@ -48,6 +100,7 @@ impl App {
     pub fn new(
         canvas: web_sys::HtmlCanvasElement,
         context: web_sys::CanvasRenderingContext2d,
+        mouse: Rc<RefCell<(f64, f64)>>,
     ) -> Self {
         let mut f = LayoutCellFactory::new();
         let cell = assoc(&mut f);
@@ -59,6 +112,7 @@ impl App {
         Self {
             canvas,
             context,
+            mouse,
             cell,
             t: 0.0,
         }
@@ -69,7 +123,10 @@ impl App {
         let height = self.canvas.height() as f64;
         self.context.set_fill_style_str("rgb(40 40 40)");
         self.context.fill_rect(0.0, 0.0, width, height);
+        self.context.set_fill_style_str("rgb(50 50 50)");
+        self.context.fill_rect(100.0, 100.0, 600.0, 400.0);
 
+        /* self.context.begin_path();
         self.context
             .arc(
                 width / 2.0,
@@ -81,14 +138,18 @@ impl App {
             .unwrap();
         self.context.close_path();
         self.context.set_fill_style_str("rgb(255 255 255)"); // why flickers
-        self.context.fill();
+        self.context.fill(); */
 
+        let mouse = *self.mouse.borrow();
         self.context.save();
-        self.context.translate(100.0, 50.0).unwrap();
+        self.context.translate(200.0, 150.0).unwrap();
         let renderer = Renderer::new(self.context.clone());
-        let x = (self.t * 0.125).fract() * 300.0; // (self.t.sin() * 0.5 + 0.5) * 300.0;
-        let rc = self.cell.sliced(x);
-        // let rc = &self.cell;
+        // let x = (self.t * 0.125).fract() * 610.0; // (self.t.sin() * 0.5 + 0.5) * 300.0;
+        let x = (mouse.0 - 100.0).min(600.0).max(0.0);
+        let y = (mouse.1 - 100.0).min(400.0).max(0.0) / 4.0;
+        let rc = &self.cell;
+        let rc = rc.sliced(y);
+        let rc = rc.sliced(x);
         renderer.cell(&rc);
         self.context.restore();
 

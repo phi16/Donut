@@ -5,6 +5,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use wasm_bindgen::prelude::*;
 
+use donut_util::println;
+
 #[wasm_bindgen(start)]
 pub fn main_js() -> Result<(), JsValue> {
     #[cfg(debug_assertions)]
@@ -34,6 +36,22 @@ fn set_resize_callback(canvas: web_sys::HtmlCanvasElement) -> Option<()> {
     Some(())
 }
 
+fn set_mouse_callback(mouse: Rc<RefCell<(f64, f64)>>) -> Option<()> {
+    let window = web_sys::window()?;
+    let on_mouse_move: Closure<dyn Fn(web_sys::MouseEvent)> = {
+        Closure::new(move |event: web_sys::MouseEvent| {
+            let pos = (event.client_x() as f64, event.client_y() as f64);
+            println(&format!("Mouse move: {:?}", pos));
+            *mouse.borrow_mut() = pos;
+        })
+    };
+    window
+        .add_event_listener_with_callback("mousemove", on_mouse_move.as_ref().unchecked_ref())
+        .ok()?;
+    on_mouse_move.forget();
+    Some(())
+}
+
 fn request_animation_frame(f: &Closure<dyn FnMut()>) {
     web_sys::window()
         .unwrap()
@@ -49,12 +67,14 @@ pub fn start() -> Option<()> {
         .dyn_into::<web_sys::HtmlCanvasElement>()
         .ok()?;
     set_resize_callback(canvas.clone())?;
+    let mouse = Rc::new(RefCell::new((0.0, 0.0)));
+    set_mouse_callback(Rc::clone(&mouse))?;
     let context = canvas
         .get_context("2d")
         .ok()??
         .dyn_into::<web_sys::CanvasRenderingContext2d>()
         .ok()?;
-    let mut app = App::new(canvas, context);
+    let mut app = App::new(canvas, context, mouse);
 
     let step: Rc<RefCell<Option<Closure<dyn FnMut()>>>> = Rc::new(RefCell::new(None));
     let step_c = Rc::clone(&step);
