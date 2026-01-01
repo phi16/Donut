@@ -202,27 +202,19 @@ impl<'a> Cloner<'a> {
     }
 
     pub fn translate(&self, x: &X) -> Option<X> {
-        let mut updated = false;
         let mut new_factors = Vec::new();
         for factor in &x.0 {
             match factor {
                 Factor::Var(id) => match self.map.get(id) {
-                    Some(new_id) => {
-                        updated = true;
-                        new_factors.push(Factor::Var(new_id.clone()))
-                    }
-                    None => new_factors.push(Factor::Var(id.clone())),
+                    Some(new_id) => new_factors.push(Factor::Var(new_id.clone())),
+                    None => return None,
                 },
                 Factor::Const(n) => {
                     new_factors.push(Factor::Const(*n));
                 }
             }
         }
-        if updated {
-            Some(X(new_factors))
-        } else {
-            None
-        }
+        Some(X(new_factors))
     }
 
     pub fn drop(self) {

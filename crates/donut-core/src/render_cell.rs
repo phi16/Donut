@@ -47,13 +47,20 @@ impl Cuboid {
                 let max = maxs.last().unwrap();
                 let c = center.last().unwrap();
                 let n = center.len() - 1;
-                if shrink_q(&mut source.1, c, min, max) {
+                let source_shrink = shrink_q(&mut source.1, c, min, max);
+                let target_shrink = shrink_q(&mut target.1, c, min, max);
+                if source_shrink && target_shrink {
                     source.0.shrink(&center[..n], &mins[..n], &maxs[..n]);
-                    source.2 = Tangent::Shrink;
-                }
-                if shrink_q(&mut target.1, c, min, max) {
                     target.0.shrink(&center[..n], &mins[..n], &maxs[..n]);
-                    target.2 = Tangent::Shrink;
+                } else {
+                    if source_shrink {
+                        source.0.shrink(&center[..n], &mins[..n], &maxs[..n]);
+                        source.2 = Tangent::Shrink;
+                    }
+                    if target_shrink {
+                        target.0.shrink(&center[..n], &mins[..n], &maxs[..n]);
+                        target.2 = Tangent::Shrink;
+                    }
                 }
             }
         }

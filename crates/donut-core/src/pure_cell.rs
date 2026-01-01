@@ -81,17 +81,18 @@ impl CellFactory for PureCellFactory {
         PureCell::Prim(prim, Shape::Zero, Dim::new(0, 0))
     }
 
-    fn prim(&mut self, prim: Prim, source: Self::Cell, target: Self::Cell) -> Self::Cell {
+    fn prim(&mut self, prim: Prim, source: Self::Cell, target: Self::Cell) -> Result<Self::Cell> {
+        check_prim(&source, &target)?;
         let d = source.dim().in_space;
         assert_eq!(d, target.dim().in_space);
-        PureCell::Prim(
+        Ok(PureCell::Prim(
             prim,
             Shape::Succ {
                 source: Box::new(source),
                 target: Box::new(target),
             },
             Dim::new(d + 1, d + 1),
-        )
+        ))
     }
 
     fn id(&mut self, face: Self::Cell) -> Self::Cell {
@@ -105,10 +106,10 @@ impl CellFactory for PureCellFactory {
         }
     }
 
-    fn comp(&mut self, axis: Axis, children: Vec2<Self::Cell>) -> Option<Self::Cell> {
+    fn comp(&mut self, axis: Axis, children: Vec2<Self::Cell>) -> Result<Self::Cell> {
         let n = children.len();
         if n == 0 {
-            return None;
+            return Err("No elements".to_string());
         }
         assert!(n >= 1);
 
@@ -119,7 +120,7 @@ impl CellFactory for PureCellFactory {
             let t = target_face(&children[i], axis);
             let s = source_face(&children[i + 1], axis);
             if !t.is_convertible(&s) {
-                return None;
+                return Err(format!("{:?}\n is not convertible to\n{:?}", t, s));
             }
         }
 
@@ -143,7 +144,7 @@ impl CellFactory for PureCellFactory {
             }
         }
 
-        Some(match cs.len() {
+        Ok(match cs.len() {
             0 => {
                 assert!(first_source_face.is_convertible(&last_target_face));
                 self.id(first_source_face)

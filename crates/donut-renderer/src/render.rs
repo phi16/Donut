@@ -35,15 +35,15 @@ impl Renderer {
         self.context.set_line_width(6.0);
         self.context.stroke();
     }
-    pub fn region(&self, x0: (R, R), y0: R, t0: (R, (R, R)), x1: (R, R), y1: R, t1: (R, (R, R))) {
+    pub fn region(&self, x0: (R, R), y0: R, t0: &CoordR, x1: (R, R), y1: R, t1: &CoordR) {
         let x0s = x0.0;
         let x0t = x0.1;
         let x1s = x1.0;
         let x1t = x1.1;
-        let (x0st, y0st) = (lerp(x0s, x1s, t0.1 .0), lerp(y0, y1, t0.0));
-        let (x0tt, y0tt) = (lerp(x0t, x1t, t0.1 .1), lerp(y0, y1, t0.0));
-        let (x1st, y1st) = (lerp(x1s, x0s, t1.1 .0), lerp(y1, y0, t1.0));
-        let (x1tt, y1tt) = (lerp(x1t, x0t, t1.1 .1), lerp(y1, y0, t1.0));
+        let (x0st, y0st) = (lerp(x0s, x1s, t0[0]), lerp(y0, y1, t0[1]));
+        let (x0tt, y0tt) = (lerp(x0t, x1t, t0[0]), lerp(y0, y1, t0[1]));
+        let (x1st, y1st) = (lerp(x1s, x0s, t1[0]), lerp(y1, y0, t1[1]));
+        let (x1tt, y1tt) = (lerp(x1t, x0t, t1[0]), lerp(y1, y0, t1[1]));
         // (x0s, y0)      (x0t, y0)
         //     |              ^
         //     |              |
@@ -89,10 +89,10 @@ impl Renderer {
                     self.region(
                         (ss.1, st.1),
                         source.1,
-                        (source.2[0], (ss.2[0], st.2[0])),
+                        &source.2,
                         (ts.1, tt.1),
                         target.1,
-                        (target.2[0], (ts.2[0], tt.2[0])),
+                        &target.2,
                     );
                 }
                 _ => unreachable!(),

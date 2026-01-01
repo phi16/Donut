@@ -1,12 +1,15 @@
 use std::vec;
 
-use crate::cell::{CellFactory, CellLike};
+use crate::cell::{check_prim, CellFactory, CellLike};
 use crate::common::*;
 use crate::draw_cell;
 use crate::draw_cell::DrawCell;
-use crate::lins::{Cloner, Lins, Solution};
+use crate::lins;
+use crate::lins::{Cloner, Lins};
 use crate::pure_cell;
 use crate::pure_cell::PureCell;
+
+use donut_util::println;
 
 type X = crate::lins::X;
 
@@ -43,6 +46,8 @@ pub struct Layout {
 pub struct LayoutCell(Box<RawCell>, Layout);
 
 pub struct LayoutCellFactory(Lins);
+
+pub struct Solution(lins::Solution);
 
 impl Cube {
     fn zero() -> Self {
@@ -325,7 +330,7 @@ impl CellLike for LayoutCell {
                     let mut layout = self.1.clone();
                     let (cell, dim) = LayoutCell::comp_unchecked(*axis, children);
                     layout.dim = dim;
-                    layout.cube.sliced();
+                    layout.cube = layout.cube.sliced();
                     LayoutCell(cell, layout)
                 }
             }
@@ -358,7 +363,7 @@ impl CellLike for LayoutCell {
                     let mut layout = self.1.clone();
                     let (cell, dim) = LayoutCell::comp_unchecked(*axis, children);
                     layout.dim = dim;
-                    layout.cube.sliced();
+                    layout.cube = layout.cube.sliced();
                     LayoutCell(cell, layout)
                 }
             }
@@ -468,48 +473,7 @@ impl LayoutCellFactory {
         x
     }
 
-    fn convert(&self, cell: &LayoutCell, sol: &Solution) -> DrawCell {
-        fn convert_cube(cube: &Cube, sol: &Solution) -> draw_cell::Cube {
-            let mins = cube.mins.iter().map(|x| sol.eval(x)).collect();
-            let maxs = cube.maxs.iter().map(|x| sol.eval(x)).collect();
-            draw_cell::Cube { mins, maxs }
-        }
-        fn convert_cell(cell: &LayoutCell, sol: &Solution) -> DrawCell {
-            let layout = draw_cell::Layout {
-                dim: cell.1.dim,
-                cube: convert_cube(&cell.1.cube, sol),
-            };
-            let cell = match cell.0.as_ref() {
-                RawCell::Prim(prim, shape, cube) => {
-                    let draw_shape = match shape {
-                        Shape::Zero => draw_cell::Shape::Zero,
-                        Shape::Succ {
-                            source,
-                            center_doubled,
-                            target,
-                        } => draw_cell::Shape::Succ {
-                            source: (convert_cell(&source.0, sol), sol.eval(&source.1)),
-                            center: center_doubled.iter().map(|x| sol.eval(x) / 2).collect(),
-                            target: (convert_cell(&target.0, sol), sol.eval(&target.1)),
-                        },
-                    };
-                    let draw_cube = convert_cube(cube, sol);
-                    draw_cell::RawCell::Prim(prim.clone(), draw_shape, draw_cube)
-                }
-                RawCell::Comp(axis, children) => {
-                    let draw_children = children
-                        .iter()
-                        .map(|child| convert_cell(child, sol))
-                        .collect();
-                    draw_cell::RawCell::Comp(*axis, draw_children)
-                }
-            };
-            DrawCell(Box::new(cell), layout)
-        }
-        convert_cell(cell, sol)
-    }
-
-    pub fn solve(&mut self, cell: &LayoutCell) -> DrawCell {
+    pub fn solve(&mut self, cell: &LayoutCell) -> Solution {
         let d = cell.1.dim.in_space;
         let ws = (0..d)
             .map(|i| self.var(format!("Mw{}", i)))
@@ -525,9 +489,11 @@ impl LayoutCellFactory {
         let vars = self.collect_vars(cell);
         let mut lins = Lins::new();
         std::mem::swap(&mut self.0, &mut lins);
-        let sol = lins.solve(&vars).unwrap();
-
-        self.convert(cell, &sol)
+        let sol = match lins.solve(&vars) {
+            Some(s) => s,
+            None => panic!("infeasible"),
+        };
+        Solution(sol)
     }
 }
 
@@ -593,9 +559,14 @@ impl CellFactory for LayoutCellFactory {
         LayoutCell(Box::new(cell), Layout::zero())
     }
 
-    fn prim(&mut self, prim: Prim, source: Self::Cell, target: Self::Cell) -> Self::Cell {
-        self.fuse_layout(&source.1, &target.1);
+    fn prim(&mut self, prim: Prim, source: Self::Cell, target: Self::Cell) -> Result<Self::Cell> {
+        check_prim(&source, &target)?;
+        self.fuse_cube(&source.1.cube, &target.1.cube);
         let d = source.dim().in_space;
+        if d > 0 {
+            self.fuse(&source.s(), &target.s());
+            self.fuse(&source.t(), &target.t());
+        }
         let dim = Dim::new(d + 1, d + 1);
 
         // s |--u+w--> x <----> y <--v+w--| t
@@ -625,7 +596,7 @@ impl CellFactory for LayoutCellFactory {
         let cell = RawCell::Prim(prim, shape, Cube::zero());
         cube.shift(&s, &t);
         let vars = vec![s, u, v, w];
-        LayoutCell(Box::new(cell), Layout { dim, cube, vars })
+        Ok(LayoutCell(Box::new(cell), Layout { dim, cube, vars }))
     }
 
     fn id(&mut self, face: Self::Cell) -> Self::Cell {
@@ -640,18 +611,17 @@ impl CellFactory for LayoutCellFactory {
         cell
     }
 
-    fn comp(&mut self, axis: Axis, children: Vec2<Self::Cell>) -> Option<Self::Cell> {
+    fn comp(&mut self, axis: Axis, children: Vec2<Self::Cell>) -> Result<Self::Cell> {
         let n = children.len();
         for i in 0..n - 1 {
             let t = children[i].face(axis, Side::Target);
             let s = children[i + 1].face(axis, Side::Source);
             if !t.is_convertible(&s) {
-                eprintln!(
+                return Err(format!(
                     "{:?}\n is not convertible to\n{:?}",
                     t.to_pure(),
                     s.to_pure()
-                );
-                return None;
+                ));
             }
             self.fuse(&t, &s);
         }
@@ -664,7 +634,50 @@ impl CellFactory for LayoutCellFactory {
             cube,
             vars: vec![],
         };
-        Some(LayoutCell(cell, layout))
+        Ok(LayoutCell(cell, layout))
+    }
+}
+
+impl Solution {
+    pub fn convert(&self, cell: &LayoutCell) -> DrawCell {
+        fn convert_cube(cube: &Cube, sol: &lins::Solution) -> draw_cell::Cube {
+            let mins = cube.mins.iter().map(|x| sol.eval(x)).collect();
+            let maxs = cube.maxs.iter().map(|x| sol.eval(x)).collect();
+            draw_cell::Cube { mins, maxs }
+        }
+        fn convert_cell(cell: &LayoutCell, sol: &lins::Solution) -> DrawCell {
+            let layout = draw_cell::Layout {
+                dim: cell.1.dim,
+                cube: convert_cube(&cell.1.cube, sol),
+            };
+            let cell = match cell.0.as_ref() {
+                RawCell::Prim(prim, shape, cube) => {
+                    let draw_shape = match shape {
+                        Shape::Zero => draw_cell::Shape::Zero,
+                        Shape::Succ {
+                            source,
+                            center_doubled,
+                            target,
+                        } => draw_cell::Shape::Succ {
+                            source: (convert_cell(&source.0, sol), sol.eval(&source.1)),
+                            center: center_doubled.iter().map(|x| sol.eval(x) / 2).collect(),
+                            target: (convert_cell(&target.0, sol), sol.eval(&target.1)),
+                        },
+                    };
+                    let draw_cube = convert_cube(cube, sol);
+                    draw_cell::RawCell::Prim(prim.clone(), draw_shape, draw_cube)
+                }
+                RawCell::Comp(axis, children) => {
+                    let draw_children = children
+                        .iter()
+                        .map(|child| convert_cell(child, sol))
+                        .collect();
+                    draw_cell::RawCell::Comp(*axis, draw_children)
+                }
+            };
+            DrawCell(Box::new(cell), layout)
+        }
+        convert_cell(cell, &self.0)
     }
 }
 
@@ -674,11 +687,13 @@ mod tests {
 
     #[test]
     fn test_assoc_layout() {
-        use crate::cell::tests::assoc;
+        use crate::cell::tests::*;
         let mut cb = LayoutCellFactory::new();
-        let a = assoc(&mut cb);
-        let cell = cb.solve(&a);
-        eprintln!("assoc layout:\n{}", cell);
+        let a = assoc2(&mut cb);
+        let cell = a;
+        let sol = cb.solve(&cell);
+        let cell = sol.convert(&cell);
+        // eprintln!("assoc layout:\n{}", cell);
         assert!(false);
     }
 }

@@ -139,7 +139,7 @@ impl fmt::Display for DrawCell {
             )?;
             match cell.0.as_ref() {
                 RawCell::Prim(prim, shape, cube) => {
-                    write!(f, "Prim {:?} {}", prim.id, cube_to_string(cube))?;
+                    write!(f, "E {} -> Prim {:?}", cube_to_string(cube), prim.id)?;
                     match shape {
                         Shape::Zero => {}
                         Shape::Succ {

@@ -7,7 +7,7 @@ pub type CoordR = Vec<R>;
 fn to_f64(q: &Q) -> R {
     let numer = *q.numer() as f64;
     let denom = *q.denom() as f64;
-    numer / denom * 64.0 // TODO
+    numer / denom * 100.0 // TODO
 }
 
 fn lerp(a: R, b: R, t: R) -> R {
