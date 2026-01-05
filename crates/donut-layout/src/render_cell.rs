@@ -1,4 +1,4 @@
-use crate::common::*;
+use donut_core::common::*;
 
 fn shrink_q(v: &mut Q, center: &Q, min: &Q, max: &Q) -> bool {
     if v == min || v == max {

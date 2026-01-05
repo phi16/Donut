@@ -1,5 +1,5 @@
-use crate::common::*;
 use crate::render_cell::*;
+use donut_core::common::*;
 use donut_util::println;
 use std::fmt;
 
@@ -57,6 +57,8 @@ impl DrawCell {
                         let c = (s + t) / 2;
                         let mins = (source.0).1.cube.mins.clone();
                         let maxs = (target.0).1.cube.maxs.clone();
+                        assert_eq!(mins.len(), cur_d as usize - 1);
+                        assert_eq!(maxs.len(), cur_d as usize - 1);
                         let mut source = source.0.render();
                         let mut target = target.0.render();
 

@@ -1,4 +1,4 @@
-use crate::common::{N, Q};
+use donut_core::common::{N, Q};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -174,61 +174,6 @@ impl Lins {
                 })
                 .collect(),
         })
-    }
-}
-
-impl<'a> Cloner<'a> {
-    pub fn clone(&mut self, x: &X) -> X {
-        let mut new_factors = Vec::new();
-        for factor in &x.0 {
-            match factor {
-                Factor::Var(id) => {
-                    let new_id = if let Some(mapped_id) = self.map.get(id) {
-                        mapped_id.clone()
-                    } else {
-                        let name = self.lins.names.get(id).unwrap().clone();
-                        let fresh_id = self.lins.fresh_var(name);
-                        self.map.insert(id.clone(), fresh_id.clone());
-                        fresh_id
-                    };
-                    new_factors.push(Factor::Var(new_id));
-                }
-                Factor::Const(n) => {
-                    new_factors.push(Factor::Const(*n));
-                }
-            }
-        }
-        X(new_factors)
-    }
-
-    pub fn translate(&self, x: &X) -> Option<X> {
-        let mut new_factors = Vec::new();
-        for factor in &x.0 {
-            match factor {
-                Factor::Var(id) => match self.map.get(id) {
-                    Some(new_id) => new_factors.push(Factor::Var(new_id.clone())),
-                    None => return None,
-                },
-                Factor::Const(n) => {
-                    new_factors.push(Factor::Const(*n));
-                }
-            }
-        }
-        Some(X(new_factors))
-    }
-
-    pub fn drop(self) {
-        let mut new_constraints = vec![];
-        let n = self.lins.constraints.len();
-        for i in 0..n {
-            let (l, r) = &self.lins.constraints[i];
-            if let Some(l_new) = self.translate(l) {
-                if let Some(r_new) = self.translate(r) {
-                    new_constraints.push((l_new, r_new));
-                }
-            }
-        }
-        self.lins.constraints.append(&mut new_constraints);
     }
 }
 

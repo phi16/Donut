@@ -36,6 +36,7 @@ version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
  "donut-core",
+ "donut-layout",
  "donut-renderer",
  "donut-util",
  "wasm-bindgen",
@@ -47,9 +48,16 @@ dependencies = [
 name = "donut-core"
 version = "0.1.0"
 dependencies = [
+ "num-rational",
+]
+
+[[package]]
+name = "donut-layout"
+version = "0.1.0"
+dependencies = [
+ "donut-core",
  "donut-util",
  "microlp",
- "num-rational",
 ]
 
 [[package]]
@@ -57,6 +65,7 @@ name = "donut-renderer"
 version = "0.1.0"
 dependencies = [
  "donut-core",
+ "donut-layout",
  "donut-util",
  "num-rational",
  "web-sys",

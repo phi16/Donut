@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 donut-core = { path = "../donut-core" }
+donut-layout = { path = "../donut-layout" }
 donut-util = { path = "../donut-util" }
 num-rational = "0.4.2"
 

@@ -1,0 +1,9 @@
+[package]
+name = "donut-layout"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+donut-core = { path = "../donut-core" }
+donut-util = { path = "../donut-util" }
+microlp = "0.2.11"

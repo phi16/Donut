@@ -1,13 +1,13 @@
 pub type Level = u8;
 pub type Axis = u8;
+
 pub type N = u32;
-pub type CoordN = Vec<N>;
 pub type Q = num_rational::Rational32;
+pub type CoordN = Vec<N>;
 pub type CoordQ = Vec<Q>;
+
 pub type Vec1<T> = Vec<T>;
 pub type Vec2<T> = Vec<T>;
-
-pub const BORDER_WIDTH: N = 32;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Prim {

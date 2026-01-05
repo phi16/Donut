@@ -17,9 +17,7 @@ pub enum PureCell {
     Comp(Axis, Vec2<PureCell>, Dim),
 }
 
-pub struct PureCellFactory;
-
-impl CellLike for PureCell {
+impl Globular for PureCell {
     fn dim(&self) -> Dim {
         match self {
             PureCell::Prim(_, _, dim) => dim.clone(),
@@ -40,7 +38,7 @@ impl CellLike for PureCell {
                     children.first().unwrap().s()
                 } else {
                     let children = children.iter().map(|child| child.s()).collect::<Vec<_>>();
-                    PureCellFactory {}.comp(*axis, children).unwrap()
+                    PureCell::comp(*axis, children).unwrap()
                 }
             }
         }
@@ -60,29 +58,23 @@ impl CellLike for PureCell {
                     children.last().unwrap().t()
                 } else {
                     let children = children.iter().map(|child| child.t()).collect::<Vec<_>>();
-                    PureCellFactory {}.comp(*axis, children).unwrap()
+                    PureCell::comp(*axis, children).unwrap()
                 }
             }
         }
     }
 
-    fn is_convertible(&self, other: &Self) -> bool {
-        self == other
+    fn to_pure(&self) -> PureCell {
+        self.clone()
     }
 }
 
-impl CellFactory for PureCellFactory {
-    type Cell = PureCell;
-
-    fn clone(&mut self, cell: &Self::Cell) -> Self::Cell {
-        cell.clone()
-    }
-
-    fn zero(&mut self, prim: Prim) -> Self::Cell {
+impl Diagram for PureCell {
+    fn zero(prim: Prim) -> Self {
         PureCell::Prim(prim, Shape::Zero, Dim::new(0, 0))
     }
 
-    fn prim(&mut self, prim: Prim, source: Self::Cell, target: Self::Cell) -> Result<Self::Cell> {
+    fn prim(prim: Prim, source: Self, target: Self) -> Result<Self> {
         check_prim(&source, &target)?;
         let d = source.dim().in_space;
         assert_eq!(d, target.dim().in_space);
@@ -96,18 +88,18 @@ impl CellFactory for PureCellFactory {
         ))
     }
 
-    fn id(&mut self, face: Self::Cell) -> Self::Cell {
+    fn id(face: Self) -> Self {
         match face {
             PureCell::Prim(prim, shape, dim) => PureCell::Prim(prim, shape, dim.shifted()),
             PureCell::Comp(axis, children, dim) => PureCell::Comp(
                 axis,
-                children.into_iter().map(|child| self.id(child)).collect(),
+                children.into_iter().map(|child| Self::id(child)).collect(),
                 dim.shifted(),
             ),
         }
     }
 
-    fn comp(&mut self, axis: Axis, children: Vec2<Self::Cell>) -> Result<Self::Cell> {
+    fn comp(axis: Axis, children: Vec2<Self>) -> Result<Self> {
         let n = children.len();
         if n == 0 {
             return Err("No elements".to_string());
@@ -120,9 +112,7 @@ impl CellFactory for PureCellFactory {
         for i in 0..n - 1 {
             let t = target_face(&children[i], axis);
             let s = source_face(&children[i + 1], axis);
-            if !t.is_convertible(&s) {
-                return Err(format!("{:?}\n is not convertible to\n{:?}", t, s));
-            }
+            compatible(&t, &s)?;
         }
 
         let mut cs = vec![];
@@ -148,7 +138,7 @@ impl CellFactory for PureCellFactory {
         Ok(match cs.len() {
             0 => {
                 assert!(first_source_face.is_convertible(&last_target_face));
-                self.id(first_source_face)
+                Self::id(first_source_face)
             }
             1 => cs.into_iter().next().unwrap(),
             _ => PureCell::Comp(axis, cs, dim),
@@ -182,9 +172,11 @@ mod tests {
 
     #[test]
     fn pure_cell_assoc() {
-        let mut builder = PureCellFactory {};
-        let assoc = crate::cell::tests::assoc(&mut builder);
+        let assoc = crate::cell::tests::assoc::<PureCell>();
         assert_eq!(assoc.s().s(), assoc.t().s());
         assert_eq!(assoc.s().t(), assoc.t().t());
+        let pentagon = crate::cell::tests::pentagon::<PureCell>();
+        assert_eq!(pentagon.s().s(), pentagon.t().s());
+        assert_eq!(pentagon.s().t(), pentagon.t().t());
     }
 }

@@ -1,6 +1,6 @@
 use donut_core::common::*;
-use donut_core::render_cell as q;
-use donut_core::render_cell::Tangent;
+use donut_layout::render_cell as q;
+use donut_layout::render_cell::Tangent;
 
 pub type R = f64;
 pub type CoordR = Vec<R>;
@@ -180,6 +180,29 @@ impl Cuboid {
             }
         }
     }
+
+    fn squashed(&self) -> Self {
+        match self {
+            Cuboid::Point(center) => {
+                assert!(center.len() >= 1);
+                let center = center.iter().skip(1).cloned().collect::<Vec<_>>();
+                Cuboid::Point(center)
+            }
+            Cuboid::Bridge { source, target } => {
+                let source = (
+                    Box::new(source.0.squashed()),
+                    source.1,
+                    source.2.iter().skip(1).cloned().collect(),
+                );
+                let target = (
+                    Box::new(target.0.squashed()),
+                    target.1,
+                    target.2.iter().skip(1).cloned().collect(),
+                );
+                Cuboid::Bridge { source, target }
+            }
+        }
+    }
 }
 
 impl RenderCell {
@@ -220,6 +243,29 @@ impl RenderCell {
             css.push(cs);
         }
         css.pop();
+        Self {
+            cubes: css,
+            spheres,
+        }
+    }
+
+    pub fn squashed(&self) -> Self {
+        let mut css = vec![];
+        let mut spheres = vec![];
+        for (prim, center, r2) in &self.spheres {
+            let center = center.iter().skip(1).cloned().collect::<Vec<_>>();
+            spheres.push((prim.clone(), center, *r2));
+        }
+        for cubes in self.cubes.iter().skip(1) {
+            let cs = cubes
+                .iter()
+                .filter_map(|(prim, cube)| {
+                    let cube = cube.squashed();
+                    Some((prim.clone(), cube))
+                })
+                .collect();
+            css.push(cs);
+        }
         Self {
             cubes: css,
             spheres,

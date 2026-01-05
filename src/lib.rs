@@ -41,7 +41,6 @@ fn set_mouse_callback(mouse: Rc<RefCell<(f64, f64)>>) -> Option<()> {
     let on_mouse_move: Closure<dyn Fn(web_sys::MouseEvent)> = {
         Closure::new(move |event: web_sys::MouseEvent| {
             let pos = (event.client_x() as f64, event.client_y() as f64);
-            println(&format!("Mouse move: {:?}", pos));
             *mouse.borrow_mut() = pos;
         })
     };
