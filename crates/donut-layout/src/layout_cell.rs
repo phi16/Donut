@@ -114,9 +114,12 @@ impl LayoutCell {
                 } else {
                     match shape {
                         Shape::Zero => panic!("zero-cell has no faces"),
-                        Shape::Succ { source, target, .. } => {
+                        Shape::Succ { source, .. } => {
                             let mut face = source.0.face_at(a, side, s, t);
-                            face.shift(&source.1, &target.1);
+                            face.shift(
+                                &self.1.cube.mins[dim.effective as usize - 1],
+                                &self.1.cube.maxs[dim.effective as usize - 1],
+                            );
                             face
                         }
                     }
@@ -219,7 +222,7 @@ impl LayoutCell {
             let d = c.dim();
             assert_eq!(d.in_space, dim.in_space);
             dim.effective = dim.effective.max(d.effective);
-            if d.effective < axis {
+            if d.effective <= axis {
                 // id
                 match cs.last_mut() {
                     Some(l) => {
@@ -255,8 +258,9 @@ impl LayoutCell {
                 }
                 None => {
                     // id only case
-                    let zero_cylinder = first.face_at(axis, Side::Source, &first_x, &last_x);
-                    return (zero_cylinder.0, dim);
+                    let mut first = first;
+                    first.move_face_to(axis, Side::Target, &last_x);
+                    return (first.0, first.1.dim);
                 }
             }
         }

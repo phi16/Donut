@@ -1,6 +1,5 @@
 use donut_core::cell::*;
 use donut_core::common::*;
-use donut_core::free_cell::FreeCell;
 
 use crate::draw_cell;
 use crate::draw_cell::DrawCell;
@@ -155,9 +154,6 @@ impl DiagramMap for LayoutSolver {
         let x = s.add(&u.add(&w));
         let y = x.add(&X::one());
         let t = y.add(&v.add(&w));
-        // let x = s.clone();
-        // let y = x.add(&u).add(&X::one()).add(&v).add(&w).add(&w);
-        // let t = y.clone();
 
         let mut cube = source.1.cube.clone();
         let center_doubled = cube // TODO: this is not an appropriate center, maybe
@@ -198,32 +194,6 @@ impl DiagramMap for LayoutSolver {
             let s = children[i + 1].face(axis, Side::Source);
             assert!(t.is_convertible(&s));
             self.fuse(&t, &s);
-
-            // why needed ?
-            /* for (j, (a, b)) in children[i]
-                .1
-                .cube
-                .mins
-                .iter()
-                .zip(children[i + 1].1.cube.mins.iter())
-                .enumerate()
-            {
-                if j as Axis != axis {
-                    self.eq(a, b);
-                }
-            } */
-            /* for (j, (a, b)) in children[i]
-                .1
-                .cube
-                .maxs
-                .iter()
-                .zip(children[i + 1].1.cube.maxs.iter())
-                .enumerate()
-            {
-                if j as Axis != axis {
-                    self.eq(a, b);
-                }
-            } */
         }
         let mins = children[0].1.cube.mins.clone();
         let maxs = children[n - 1].1.cube.maxs.clone();
