@@ -152,8 +152,8 @@ impl LayoutCell {
 
     pub fn face(&self, axis: Axis, side: Side) -> Self {
         let x = match side {
-            Side::Source => self.1.cube.mins[axis as usize].clone(),
-            Side::Target => self.1.cube.maxs[axis as usize].clone(),
+            Side::Source => &self.1.cube.mins[axis as usize],
+            Side::Target => &self.1.cube.maxs[axis as usize],
         };
         let face = self.face_at(axis, side, &x, &x);
         assert_eq!(self.1.dim.in_space, face.1.dim.in_space);

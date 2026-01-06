@@ -124,7 +124,12 @@ impl Lins {
         use microlp::{ComparisonOp, LinearExpr, OptimizationDirection, Problem};
         let mut p = Problem::new(OptimizationDirection::Minimize);
         let vars = (0..self.next_id)
-            .map(|_| p.add_var(1.0, (0.0, f64::INFINITY)))
+            .map(|i| {
+                let name = self.names.get(&Id(i)).unwrap();
+                let is_absolute = name.chars().nth(name.len() - 2) == Some('s');
+                let weight = if is_absolute { 0.0 } else { 1.0 };
+                p.add_var(weight, (0.0, f64::INFINITY))
+            })
             .collect::<Vec<_>>();
         for (l, r) in &self.constraints {
             let mut lhs: HashMap<Id, i32> = HashMap::new();

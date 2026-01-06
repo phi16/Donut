@@ -61,8 +61,10 @@ impl LayoutSolver {
                         },
                     ) => {
                         self.fuse(&sa.0, &sb.0);
+                        self.eq(&sa.1, &sb.1);
                         self.eqs(&ca, &cb);
                         self.fuse(&ta.0, &tb.0);
+                        self.eq(&ta.1, &tb.1);
                     }
                     _ => unreachable!(),
                 }
@@ -198,13 +200,34 @@ impl DiagramMap for LayoutSolver {
         let mins = children[0].1.cube.mins.clone();
         let maxs = children[n - 1].1.cube.maxs.clone();
         let (cell, dim) = LayoutCell::comp_unchecked(axis, children);
+
         let cube = Cube { mins, maxs };
         let layout = Layout {
             dim,
             cube,
             vars: vec![],
         };
-        LayoutCell(cell, layout)
+        let mut c = LayoutCell(cell, layout);
+
+        // s |--u+w--> x <----> y <--v+w--| t
+
+        let s = self.var(format!("Cs{}", axis));
+        let u = self.var(format!("Cu{}", axis));
+        let v = self.var(format!("Cv{}", axis));
+        let w = self.var(format!("Cw{}", axis));
+
+        let x = s.add(&u.add(&w));
+        self.eq(&c.1.cube.mins[axis as usize], &x);
+        let y = c.1.cube.maxs[axis as usize].clone();
+        let t = y.add(&v.add(&w));
+
+        c.move_face_to(axis, Side::Source, &s);
+        c.move_face_to(axis, Side::Target, &t);
+        c.1.vars.push(s);
+        c.1.vars.push(u);
+        c.1.vars.push(v);
+        c.1.vars.push(w);
+        c
     }
 }
 

@@ -107,9 +107,9 @@ impl App {
         let cell = f.from_free(cell);
         let sol = f.solve(&cell);
         let cell = sol.convert(&cell);
+        // println(&format!("Cell: {}", cell));
         let cell = cell.render();
         let cell = RenderCell::from(&cell);
-        // println(&format!("Cell: {:?}", cell));
         Self {
             canvas,
             context,
