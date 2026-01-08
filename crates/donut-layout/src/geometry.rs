@@ -86,18 +86,18 @@ impl Cuboid {
 }
 
 #[derive(Debug, Clone)]
-pub struct RenderCell {
+pub struct Geometry {
     pub cubes: Vec<Vec<(Prim, Cuboid)>>,
 }
 
-impl RenderCell {
+impl Geometry {
     pub fn new(dim: Level) -> Self {
         Self {
             cubes: vec![vec![]; (dim + 1) as usize],
         }
     }
 
-    pub fn merge(&mut self, other: RenderCell) {
+    pub fn merge(&mut self, other: Geometry) {
         assert_eq!(self.cubes.len(), other.cubes.len());
         for (i, mut cs) in other.cubes.into_iter().enumerate() {
             self.cubes[i].append(&mut cs);

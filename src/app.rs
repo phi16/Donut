@@ -5,9 +5,8 @@ use donut_core::cell::*;
 use donut_core::common::*;
 use donut_core::free_cell::FreeCell;
 use donut_layout::layout_solver::LayoutSolver;
+use donut_renderer::geometry::{Geometry, R};
 use donut_renderer::render::Renderer;
-use donut_renderer::render_cell::{RenderCell, R};
-use donut_util::println;
 
 pub fn assoc<T: Diagram>() -> T {
     let a = T::zero(Prim::new(0));
@@ -92,7 +91,7 @@ pub struct App {
     canvas: web_sys::HtmlCanvasElement,
     context: web_sys::CanvasRenderingContext2d,
     mouse: Rc<RefCell<(f64, f64)>>,
-    cell: RenderCell,
+    cell: Geometry,
     t: R,
 }
 
@@ -107,9 +106,9 @@ impl App {
         let cell = f.from_free(cell);
         let sol = f.solve(&cell);
         let cell = sol.convert(&cell);
-        // println(&format!("Cell: {}", cell));
+        log::debug!("Cell: {}", cell);
         let cell = cell.render();
-        let cell = RenderCell::from(&cell);
+        let cell = Geometry::from(&cell);
         Self {
             canvas,
             context,

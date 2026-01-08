@@ -5,8 +5,6 @@ use donut_core::common::*;
 use donut_core::pure_cell;
 use donut_core::pure_cell::PureCell;
 
-use donut_util::println;
-
 pub type X = crate::lins::X;
 
 #[derive(Debug, Clone)]

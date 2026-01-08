@@ -1,15 +1,14 @@
-use crate::render_cell::*;
+use crate::geometry::*;
 use donut_core::common::*;
-use donut_util::println;
 use std::fmt;
 
 #[derive(Debug, Clone)]
 pub enum Shape {
     Zero,
     Succ {
-        source: (DrawCell, Q),
+        source: (VisualCell, Q),
         center: CoordQ,
-        target: (DrawCell, Q),
+        target: (VisualCell, Q),
     },
 }
 
@@ -22,7 +21,7 @@ pub struct Cube {
 #[derive(Debug, Clone)]
 pub enum RawCell {
     Prim(Prim, Shape, Cube),
-    Comp(Axis, Vec2<DrawCell>),
+    Comp(Axis, Vec2<VisualCell>),
 }
 
 #[derive(Debug, Clone)]
@@ -32,15 +31,15 @@ pub struct Layout {
 }
 
 #[derive(Debug, Clone)]
-pub struct DrawCell(pub Box<RawCell>, pub Layout);
+pub struct VisualCell(pub Box<RawCell>, pub Layout);
 
-impl DrawCell {
-    pub fn render(&self) -> RenderCell {
+impl VisualCell {
+    pub fn render(&self) -> Geometry {
         let d = self.1.dim.in_space;
         match self.0.as_ref() {
             RawCell::Prim(prim, shape, cube) => {
                 let cur_d = d - cube.mins.len() as Level;
-                let mut rc = RenderCell::new(cur_d);
+                let mut rc = Geometry::new(cur_d);
                 match shape {
                     Shape::Zero => {
                         rc.add_point(prim.clone(), vec![]);
@@ -89,7 +88,7 @@ impl DrawCell {
                 rc
             }
             RawCell::Comp(_, children) => {
-                let mut rc = RenderCell::new(d);
+                let mut rc = Geometry::new(d);
                 for child in children {
                     rc.merge(child.render());
                 }
@@ -99,7 +98,7 @@ impl DrawCell {
     }
 }
 
-impl fmt::Display for DrawCell {
+impl fmt::Display for VisualCell {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         fn q(q: &Q) -> String {
             let numer = *q.numer();
@@ -129,7 +128,7 @@ impl fmt::Display for DrawCell {
                 coord_to_string(&cube.maxs)
             )
         }
-        fn go(cell: &DrawCell, f: &mut fmt::Formatter, indent: usize) -> fmt::Result {
+        fn go(cell: &VisualCell, f: &mut fmt::Formatter, indent: usize) -> fmt::Result {
             let pad = " ".repeat(indent);
             write!(
                 f,

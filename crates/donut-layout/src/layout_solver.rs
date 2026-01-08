@@ -1,11 +1,11 @@
 use donut_core::cell::*;
 use donut_core::common::*;
 
-use crate::draw_cell;
-use crate::draw_cell::DrawCell;
 use crate::layout_cell::*;
 use crate::lins;
 use crate::lins::Lins;
+use crate::visual_cell;
+use crate::visual_cell::VisualCell;
 
 pub struct LayoutSolver(Lins);
 
@@ -232,43 +232,43 @@ impl DiagramMap for LayoutSolver {
 }
 
 impl Solution {
-    pub fn convert(&self, cell: &LayoutCell) -> DrawCell {
-        fn convert_cube(cube: &Cube, sol: &lins::Solution) -> draw_cell::Cube {
+    pub fn convert(&self, cell: &LayoutCell) -> VisualCell {
+        fn convert_cube(cube: &Cube, sol: &lins::Solution) -> visual_cell::Cube {
             let mins = cube.mins.iter().map(|x| sol.eval(x)).collect();
             let maxs = cube.maxs.iter().map(|x| sol.eval(x)).collect();
-            draw_cell::Cube { mins, maxs }
+            visual_cell::Cube { mins, maxs }
         }
-        fn convert_cell(cell: &LayoutCell, sol: &lins::Solution) -> DrawCell {
-            let layout = draw_cell::Layout {
+        fn convert_cell(cell: &LayoutCell, sol: &lins::Solution) -> VisualCell {
+            let layout = visual_cell::Layout {
                 dim: cell.1.dim,
                 cube: convert_cube(&cell.1.cube, sol),
             };
             let cell = match cell.0.as_ref() {
                 RawCell::Prim(prim, shape, cube) => {
                     let draw_shape = match shape {
-                        Shape::Zero => draw_cell::Shape::Zero,
+                        Shape::Zero => visual_cell::Shape::Zero,
                         Shape::Succ {
                             source,
                             center_doubled,
                             target,
-                        } => draw_cell::Shape::Succ {
+                        } => visual_cell::Shape::Succ {
                             source: (convert_cell(&source.0, sol), sol.eval(&source.1)),
                             center: center_doubled.iter().map(|x| sol.eval(x) / 2).collect(),
                             target: (convert_cell(&target.0, sol), sol.eval(&target.1)),
                         },
                     };
                     let draw_cube = convert_cube(cube, sol);
-                    draw_cell::RawCell::Prim(prim.clone(), draw_shape, draw_cube)
+                    visual_cell::RawCell::Prim(prim.clone(), draw_shape, draw_cube)
                 }
                 RawCell::Comp(axis, children) => {
                     let draw_children = children
                         .iter()
                         .map(|child| convert_cell(child, sol))
                         .collect();
-                    draw_cell::RawCell::Comp(*axis, draw_children)
+                    visual_cell::RawCell::Comp(*axis, draw_children)
                 }
             };
-            DrawCell(Box::new(cell), layout)
+            VisualCell(Box::new(cell), layout)
         }
         convert_cell(cell, &self.0)
     }

@@ -1,4 +1,4 @@
-use crate::render_cell::*;
+use crate::geometry::*;
 use donut_core::common::Prim;
 
 fn lerp(a: R, b: R, t: R) -> R {
@@ -100,7 +100,7 @@ impl Renderer {
         }
     }
 
-    pub fn cell(&self, cell: &RenderCell) {
+    pub fn cell(&self, cell: &Geometry) {
         for cubes in cell.cubes.iter() {
             for (prim, cube) in cubes {
                 self.cube(prim, cube);

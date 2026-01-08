@@ -1,6 +1,6 @@
 use donut_core::common::*;
-use donut_layout::render_cell as q;
-use donut_layout::render_cell::Tangent;
+use donut_layout::geometry as q;
+use donut_layout::geometry::Tangent;
 
 pub type R = f64;
 pub type CoordR = Vec<R>;
@@ -77,7 +77,7 @@ pub enum Cuboid {
 }
 
 #[derive(Debug, Clone)]
-pub struct RenderCell {
+pub struct Geometry {
     pub cubes: Vec<Vec<(Prim, Cuboid)>>,
     pub spheres: Vec<(Prim, CoordR, R)>,
 }
@@ -205,8 +205,8 @@ impl Cuboid {
     }
 }
 
-impl RenderCell {
-    pub fn from(cell: &q::RenderCell) -> Self {
+impl Geometry {
+    pub fn from(cell: &q::Geometry) -> Self {
         let mut cubes = vec![];
         for qcs in &cell.cubes {
             let mut rcs = vec![];
@@ -217,7 +217,7 @@ impl RenderCell {
             cubes.push(rcs);
         }
         let spheres = vec![];
-        RenderCell { cubes, spheres }
+        Geometry { cubes, spheres }
     }
 
     pub fn sliced(&self, x: R) -> Self {
