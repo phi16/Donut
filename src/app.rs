@@ -6,6 +6,7 @@ use donut_core::common::*;
 use donut_core::free_cell::FreeCell;
 use donut_layout::layout_solver::LayoutSolver;
 use donut_renderer::geometry::{Geometry, R};
+use donut_renderer::prim_table::PrimTable;
 use donut_renderer::render::Renderer;
 
 pub fn assoc<T: Diagram>() -> T {
@@ -92,6 +93,7 @@ pub struct App {
     context: web_sys::CanvasRenderingContext2d,
     mouse: Rc<RefCell<(f64, f64)>>,
     cell: Geometry,
+    table: PrimTable,
     t: R,
 }
 
@@ -106,14 +108,29 @@ impl App {
         let cell = f.from_free(cell);
         let sol = f.solve(&cell);
         let cell = sol.convert(&cell);
-        log::debug!("Cell: {}", cell);
+        // log::debug!("Cell: {}", cell);
         let cell = cell.render();
         let cell = Geometry::from(&cell);
+
+        let mut table = PrimTable::new();
+        table.insert(Prim::new(0), "a", 0, (40, 40, 40));
+        table.insert(Prim::new(1), "x", 1, (0, 100, 255));
+        table.insert(Prim::new(2), "m", 2, (255, 100, 0));
+        table.insert(Prim::new(3), "assoc", 3, (255, 255, 0));
+        table.insert(Prim::new(4), "chl", 3, (200, 200, 200));
+        table.insert(Prim::new(5), "chr", 3, (200, 200, 200));
+        table.insert(Prim::new(6), "x0", 3, (200, 200, 200));
+        table.insert(Prim::new(7), "x1", 3, (200, 200, 200));
+        table.insert(Prim::new(8), "kl", 3, (200, 200, 200));
+        table.insert(Prim::new(9), "kr", 3, (200, 200, 200));
+        table.insert(Prim::new(10), "pentagon", 4, (255, 255, 255));
+
         Self {
             canvas,
             context,
             mouse,
             cell,
+            table,
             t: 0.0,
         }
     }
@@ -151,12 +168,12 @@ impl App {
         let rc = &self.cell;
         let rc = rc.sliced(y);
         let rc = rc.sliced(x);
-        renderer.cell(&rc);
+        renderer.cell(&rc, &self.table);
         self.context.translate(-100.0, -125.0).unwrap();
         let rc = &self.cell;
         let rc = rc.squashed();
         let rc = rc.squashed();
-        renderer.cell(&rc);
+        renderer.cell(&rc, &self.table);
         self.context.restore();
 
         self.t += 0.03;

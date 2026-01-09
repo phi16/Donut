@@ -9,13 +9,15 @@ pub type CoordQ = Vec<Q>;
 pub type Vec1<T> = Vec<T>;
 pub type Vec2<T> = Vec<T>;
 
+pub type PrimId = u64;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Prim {
-    pub id: u64,
+    pub id: PrimId,
 }
 
 impl Prim {
-    pub fn new(id: u64) -> Self {
+    pub fn new(id: PrimId) -> Self {
         Prim { id }
     }
 }
