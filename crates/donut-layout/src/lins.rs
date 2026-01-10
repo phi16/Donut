@@ -19,11 +19,6 @@ pub struct Lins {
     constraints: Vec<(X, X)>,
 }
 
-pub struct Cloner<'a> {
-    lins: &'a mut Lins,
-    map: HashMap<Id, Id>,
-}
-
 pub struct Solution {
     pub map: std::collections::HashMap<Id, Q>,
 }
@@ -88,13 +83,6 @@ impl Lins {
 
     pub fn add_constraint(&mut self, a: &X, b: &X) {
         self.constraints.push((a.clone(), b.clone()));
-    }
-
-    pub fn cloner(&mut self) -> Cloner<'_> {
-        Cloner {
-            lins: self,
-            map: HashMap::new(),
-        }
     }
 
     fn show(&self, x: &X) -> String {
