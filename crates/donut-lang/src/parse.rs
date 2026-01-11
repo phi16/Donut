@@ -43,15 +43,35 @@ Whitespace handling strategy:
 // Helper functions
 // ============================================================================
 
+// Check if a character is valid inside an identifier (not at the start)
+fn is_ident_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_' || c == '-' || c == '.' || c == '\''
+}
+
+// Check if a character can start an identifier
+fn is_ident_start(c: char) -> bool {
+    c.is_alphabetic() || c == '_'
+}
+
 // Check if a string is a valid identifier
 fn is_valid_ident(s: &str) -> bool {
     if s.is_empty() {
         return false;
     }
     let first = s.chars().next().unwrap();
-    (first.is_alphabetic() || first == '_')
-        && s.chars()
-            .all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.' || c == '\'')
+    is_ident_start(first) && s.chars().all(is_ident_char)
+}
+
+// Validate identifier and return error if invalid
+fn validate_ident<'a>(name: &str, input: &'a str) -> IResult<&'a str, ()> {
+    if is_valid_ident(name) {
+        Ok((input, ()))
+    } else {
+        Err(nom::Err::Error(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::Alpha,
+        )))
+    }
 }
 
 // Helper: skip all whitespace (including newlines)
@@ -67,6 +87,11 @@ where
     }
 }
 
+// Check if input starts with a newline
+fn starts_with_newline(s: &str) -> bool {
+    s.starts_with('\n') || s.starts_with("\r\n")
+}
+
 // ============================================================================
 // Identifier parsers
 // ============================================================================
@@ -74,18 +99,8 @@ where
 // Parse identifier with all whitespace (including newlines)
 fn ident(input: &str) -> IResult<&str, Ident> {
     let (input, _) = multispace0(input)?;
-    let (input, name) = recognize(take_while1(|c: char| {
-        c.is_alphanumeric() || c == '_' || c == '-' || c == '.' || c == '\''
-    }))
-    .parse(input)?;
-
-    if !is_valid_ident(name) {
-        return Err(nom::Err::Error(nom::error::Error::new(
-            input,
-            nom::error::ErrorKind::Alpha,
-        )));
-    }
-
+    let (input, name) = recognize(take_while1(is_ident_char)).parse(input)?;
+    validate_ident(name, input)?;
     let (input, _) = multispace0(input)?;
     Ok((input, name.to_string()))
 }
@@ -94,18 +109,8 @@ fn ident(input: &str) -> IResult<&str, Ident> {
 // Used in cells and declarations where newlines are significant
 fn ident_hspace(input: &str) -> IResult<&str, Ident> {
     let (input, _) = space0(input)?;
-    let (input, name) = recognize(take_while1(|c: char| {
-        c.is_alphanumeric() || c == '_' || c == '-' || c == '.' || c == '\''
-    }))
-    .parse(input)?;
-
-    if !is_valid_ident(name) {
-        return Err(nom::Err::Error(nom::error::Error::new(
-            input,
-            nom::error::ErrorKind::Alpha,
-        )));
-    }
-
+    let (input, name) = recognize(take_while1(is_ident_char)).parse(input)?;
+    validate_ident(name, input)?;
     let (input, _) = space0(input)?;
     Ok((input, name.to_string()))
 }
@@ -113,18 +118,8 @@ fn ident_hspace(input: &str) -> IResult<&str, Ident> {
 // Parse identifier without any whitespace handling
 // Used in separated_list where the separator handles whitespace
 fn ident_raw(input: &str) -> IResult<&str, Ident> {
-    let (input, name) = recognize(take_while1(|c: char| {
-        c.is_alphanumeric() || c == '_' || c == '-' || c == '.' || c == '\''
-    }))
-    .parse(input)?;
-
-    if !is_valid_ident(name) {
-        return Err(nom::Err::Error(nom::error::Error::new(
-            input,
-            nom::error::ErrorKind::Alpha,
-        )));
-    }
-
+    let (input, name) = recognize(take_while1(is_ident_char)).parse(input)?;
+    validate_ident(name, input)?;
     Ok((input, name.to_string()))
 }
 
@@ -134,46 +129,40 @@ fn ident_raw(input: &str) -> IResult<&str, Ident> {
 
 // nat literal
 fn nat_lit(input: &str) -> IResult<&str, Lit> {
-    let (input, _) = multispace0(input)?;
-    let (input, n) = digit1(input)?;
-    let (input, _) = multispace0(input)?;
-    Ok((input, Lit::Nat(n.parse().unwrap())))
+    ws(map(digit1, |n: &str| Lit::Nat(n.parse().unwrap()))).parse(input)
 }
 
 // int literal (signed) - only matches if there's actually a minus sign
 fn int_lit(input: &str) -> IResult<&str, Lit> {
-    let (input, _) = multispace0(input)?;
-    let (input, _) = char('-')(input)?;
-    let (input, n) = digit1(input)?;
-    let (input, _) = multispace0(input)?;
-    let val = format!("-{}", n).parse().unwrap();
-    Ok((input, Lit::Int(val)))
+    ws(map(pair(char('-'), digit1), |(_, n): (char, &str)| {
+        Lit::Int(format!("-{}", n).parse().unwrap())
+    }))
+    .parse(input)
 }
 
 // rat literal (float)
 fn rat_lit(input: &str) -> IResult<&str, Lit> {
-    let (input, _) = multispace0(input)?;
-    let (input, sign) = opt(char('-')).parse(input)?;
-    let (input, int_part) = digit1(input)?;
-    let (input, _) = char('.')(input)?;
-    let (input, frac_part) = digit1(input)?;
-    let (input, _) = multispace0(input)?;
-    let s = if sign.is_some() {
-        format!("-{}.{}", int_part, frac_part)
-    } else {
-        format!("{}.{}", int_part, frac_part)
-    };
-    Ok((input, Lit::Rat(s.parse().unwrap())))
+    ws(map(
+        (opt(char('-')), digit1, char('.'), digit1),
+        |(sign, int_part, _, frac_part): (Option<char>, &str, char, &str)| {
+            let s = if sign.is_some() {
+                format!("-{}.{}", int_part, frac_part)
+            } else {
+                format!("{}.{}", int_part, frac_part)
+            };
+            Lit::Rat(s.parse().unwrap())
+        },
+    ))
+    .parse(input)
 }
 
 // str literal
 fn str_lit(input: &str) -> IResult<&str, Lit> {
-    let (input, _) = multispace0(input)?;
-    let (input, _) = char('"')(input)?;
-    let (input, s) = take_while(|c| c != '"')(input)?;
-    let (input, _) = char('"')(input)?;
-    let (input, _) = multispace0(input)?;
-    Ok((input, Lit::Str(s.to_string())))
+    ws(map(
+        delimited(char('"'), take_while(|c| c != '"'), char('"')),
+        |s: &str| Lit::Str(s.to_string()),
+    ))
+    .parse(input)
 }
 
 // lit
@@ -183,17 +172,17 @@ fn lit(input: &str) -> IResult<&str, Lit> {
 
 // lit-type
 fn lit_type(input: &str) -> IResult<&str, LitType> {
-    let (input, _) = multispace0(input)?;
-    let (input, name) = alt((tag("nat"), tag("int"), tag("rat"), tag("str"))).parse(input)?;
-    let (input, _) = multispace0(input)?;
-    let ty = match name {
-        "nat" => LitType::Nat,
-        "int" => LitType::Int,
-        "rat" => LitType::Rat,
-        "str" => LitType::Str,
-        _ => unreachable!(),
-    };
-    Ok((input, ty))
+    ws(map(
+        alt((tag("nat"), tag("int"), tag("rat"), tag("str"))),
+        |name: &str| match name {
+            "nat" => LitType::Nat,
+            "int" => LitType::Int,
+            "rat" => LitType::Rat,
+            "str" => LitType::Str,
+            _ => unreachable!(),
+        },
+    ))
+    .parse(input)
 }
 
 // ============================================================================
@@ -273,7 +262,7 @@ fn cell_with_precedence_inner(
                 // No explicit semicolon operator
                 // Check for space-separated composition (axis 0)
                 // Stop if we encounter a newline (declarations are separated by newlines)
-                if input.starts_with('\n') || input.starts_with("\r\n") {
+                if starts_with_newline(input) {
                     None
                 } else {
                     match cell_primary(input) {
@@ -369,7 +358,7 @@ fn decl_names(input: &str) -> IResult<&str, Vec<Ident>> {
 
     loop {
         // Stop at newline or special characters
-        if input.starts_with('\n') || input.starts_with("\r\n") {
+        if starts_with_newline(input) {
             break;
         }
 
@@ -377,7 +366,7 @@ fn decl_names(input: &str) -> IResult<&str, Vec<Ident>> {
         if rest.starts_with('[') || rest.starts_with(':') || rest.starts_with('=') {
             break;
         }
-        if rest.starts_with('\n') || rest.starts_with("\r\n") {
+        if starts_with_newline(rest) {
             break;
         }
 
@@ -402,8 +391,7 @@ fn simple_decl(input: &str) -> IResult<&str, Decl> {
     let (mut input, names) = decl_names(input)?;
 
     // Skip horizontal whitespace
-    let (rest, _) = space0(input)?;
-    input = rest;
+    input = space0(input)?.0;
 
     // Parse bracketed argument declarations (only valid for single-name decls)
     let (mut input, args) = if names.len() == 1 && input.starts_with('[') {
@@ -418,8 +406,7 @@ fn simple_decl(input: &str) -> IResult<&str, Decl> {
         (input, vec![])
     };
 
-    let (rest, _) = space0(input)?;
-    input = rest;
+    input = space0(input)?.0;
 
     // Parse type annotation
     let (mut input, ty) = if input.starts_with(':') {
@@ -429,8 +416,7 @@ fn simple_decl(input: &str) -> IResult<&str, Decl> {
         (input, None)
     };
 
-    let (rest, _) = space0(input)?;
-    input = rest;
+    input = space0(input)?.0;
 
     // Parse body (allow newlines after '=' for multi-line bodies)
     let (input, body) = if input.starts_with('=') {
