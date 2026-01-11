@@ -7,12 +7,13 @@ use nom::{
     branch::alt,
     bytes::complete::{tag, take_while, take_while1},
     character::complete::{char, digit1, multispace0, multispace1, space0},
-    combinator::{map, opt},
+    combinator::{map, opt, recognize},
     multi::{many0, many1, separated_list0, separated_list1},
     sequence::{delimited, pair, preceded, terminated},
 };
 
 /*
+Grammar:
 
 decl = name (name* | '[' arg-decls ']') (':' cell-type)? ('=' cell)?
      | '[' decorator % ',' ']' decl
@@ -21,19 +22,39 @@ cell-type = '*'
           | cell '→' cell
 lit-type = 'nat' | 'int' | 'rat' | 'str'
 lit = nat | int | rat | str
-arg-type = cell-type
-         | lit-type
-arg = cell
-    | lit
+arg-type = cell-type | lit-type
+arg = cell | lit
 cell = name ('[' (arg % ',') ']')?
      | cell (';'* | ';' nat ';') cell
      | '(' cell ')'
 decorator = name ('(' (arg % ',') ')')?
 program = decl*
 
+Whitespace handling strategy:
+- Declarations are delimited by newlines
+- Within cells, space-separated tokens form compositions (axis 0)
+- Newlines stop cell composition (to separate declarations)
+- After semicolon operators (;, ;;, etc.), newlines are allowed (for multi-line bodies)
+- After '=' in declarations, newlines are allowed (for multi-line bodies)
+- After ']' in cell arguments, newlines are NOT consumed (to preserve declaration boundaries)
 */
 
-// Helper: skip whitespace
+// ============================================================================
+// Helper functions
+// ============================================================================
+
+// Check if a string is a valid identifier
+fn is_valid_ident(s: &str) -> bool {
+    if s.is_empty() {
+        return false;
+    }
+    let first = s.chars().next().unwrap();
+    (first.is_alphabetic() || first == '_')
+        && s.chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.' || c == '\'')
+}
+
+// Helper: skip all whitespace (including newlines)
 fn ws<'a, F, O>(mut inner: F) -> impl FnMut(&'a str) -> IResult<&'a str, O>
 where
     F: Parser<&'a str, Output = O, Error = nom::error::Error<&'a str>>,
@@ -46,37 +67,70 @@ where
     }
 }
 
-// name (identifier) - skips all whitespace including newlines
+// ============================================================================
+// Identifier parsers
+// ============================================================================
+
+// Parse identifier with all whitespace (including newlines)
 fn ident(input: &str) -> IResult<&str, Ident> {
     let (input, _) = multispace0(input)?;
-    let (input, name) =
-        take_while1(|c: char| c.is_alphanumeric() || c == '_' || c == '-' || c == '.')(input)?;
-    // Identifiers must start with alphabetic or underscore
-    if !name.chars().next().unwrap().is_alphabetic() && name.chars().next().unwrap() != '_' {
+    let (input, name) = recognize(take_while1(|c: char| {
+        c.is_alphanumeric() || c == '_' || c == '-' || c == '.' || c == '\''
+    }))
+    .parse(input)?;
+
+    if !is_valid_ident(name) {
         return Err(nom::Err::Error(nom::error::Error::new(
             input,
             nom::error::ErrorKind::Alpha,
         )));
     }
+
     let (input, _) = multispace0(input)?;
     Ok((input, name.to_string()))
 }
 
-// name (identifier) for cell parsing - only skips horizontal whitespace, not newlines
-fn ident_for_cell(input: &str) -> IResult<&str, Ident> {
+// Parse identifier with horizontal whitespace only (not newlines)
+// Used in cells and declarations where newlines are significant
+fn ident_hspace(input: &str) -> IResult<&str, Ident> {
     let (input, _) = space0(input)?;
-    let (input, name) =
-        take_while1(|c: char| c.is_alphanumeric() || c == '_' || c == '-' || c == '.')(input)?;
-    // Identifiers must start with alphabetic or underscore
-    if !name.chars().next().unwrap().is_alphabetic() && name.chars().next().unwrap() != '_' {
+    let (input, name) = recognize(take_while1(|c: char| {
+        c.is_alphanumeric() || c == '_' || c == '-' || c == '.' || c == '\''
+    }))
+    .parse(input)?;
+
+    if !is_valid_ident(name) {
         return Err(nom::Err::Error(nom::error::Error::new(
             input,
             nom::error::ErrorKind::Alpha,
         )));
     }
+
     let (input, _) = space0(input)?;
     Ok((input, name.to_string()))
 }
+
+// Parse identifier without any whitespace handling
+// Used in separated_list where the separator handles whitespace
+fn ident_raw(input: &str) -> IResult<&str, Ident> {
+    let (input, name) = recognize(take_while1(|c: char| {
+        c.is_alphanumeric() || c == '_' || c == '-' || c == '.' || c == '\''
+    }))
+    .parse(input)?;
+
+    if !is_valid_ident(name) {
+        return Err(nom::Err::Error(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::Alpha,
+        )));
+    }
+
+    Ok((input, name.to_string()))
+}
+
+// ============================================================================
+// Literal parsers
+// ============================================================================
 
 // nat literal
 fn nat_lit(input: &str) -> IResult<&str, Lit> {
@@ -142,7 +196,10 @@ fn lit_type(input: &str) -> IResult<&str, LitType> {
     Ok((input, ty))
 }
 
-// cell (primary)
+// ============================================================================
+// Cell parsers
+// ============================================================================
+
 fn cell_primary(input: &str) -> IResult<&str, Cell> {
     alt((
         // '(' cell ')'
@@ -150,11 +207,12 @@ fn cell_primary(input: &str) -> IResult<&str, Cell> {
         // name ('[' (arg % ',') ']')?
         map(
             pair(
-                ident_for_cell,
+                ident_hspace,
                 opt(delimited(
                     ws(char('[')),
                     separated_list0(ws(char(',')), arg),
-                    preceded(multispace0, char(']')), // ']' の後の空白はスキップしない
+                    // Don't skip whitespace after ']' to preserve declaration boundaries
+                    preceded(multispace0, char(']')),
                 )),
             ),
             |(name, args)| Cell::Var(name, args.unwrap_or_default()),
@@ -163,25 +221,19 @@ fn cell_primary(input: &str) -> IResult<&str, Cell> {
     .parse(input)
 }
 
-// cell (with composition) - with operator precedence
-// Lower axis number = higher precedence (binds tighter)
 fn cell(input: &str) -> IResult<&str, Cell> {
     cell_with_precedence(input, 255)
 }
 
-// Parse semicolon operator (returns axis number)
+// Parse semicolon operator: ';', ';;', ';;;', ... or ';N;'
+// Returns the axis number (count of semicolons, or N for ;N; format)
 fn semicolon_operator(input: &str) -> IResult<&str, u8> {
-    // Skip leading horizontal whitespace only (not newlines)
-    let (input, _) = space0(input)?;
+    let (input, _) = space0(input)?; // Skip horizontal whitespace before
 
     let (input, axis) = alt((
-        // ;N; format (axis with explicit number)
+        // ;N; format (explicit axis number)
         map(
-            delimited(
-                char::<&str, nom::error::Error<&str>>(';'),
-                digit1,
-                char(';'),
-            ),
+            delimited(char(';'), digit1, char(';')),
             |n: &str| n.parse::<u8>().unwrap(),
         ),
         // ;;; format (count semicolons)
@@ -189,8 +241,8 @@ fn semicolon_operator(input: &str) -> IResult<&str, u8> {
     ))
     .parse(input)?;
 
-    // Skip trailing whitespace including newlines
-    // This allows multi-line expressions when using semicolons
+    // Skip all whitespace after (including newlines)
+    // This allows multi-line cell bodies
     let (input, _) = multispace0(input)?;
     Ok((input, axis))
 }
@@ -200,37 +252,32 @@ fn cell_with_precedence(input: &str, min_precedence: u8) -> IResult<&str, Cell> 
     cell_with_precedence_inner(input, left, min_precedence)
 }
 
+// Precedence climbing algorithm for cell composition
+// Lower axis number = higher precedence (binds tighter)
+// Right-associative: a ; b ; c parses as a ; (b ; c)
 fn cell_with_precedence_inner(
     mut input: &str,
     mut left: Cell,
     min_precedence: u8,
 ) -> IResult<&str, Cell> {
     loop {
-        // Save the input position before trying operators
-        let before_whitespace = input;
+        let before_op = input;
 
-        // Try to parse a semicolon-based operator first
+        // Try to find an operator (semicolon or space-separated)
         let axis = match semicolon_operator(input) {
             Ok((rest, axis)) => {
                 input = rest;
                 Some(axis)
             }
             Err(_) => {
-                // No semicolon operator
-                // Check if there's another cell_primary following (space-separated, no newline)
-                // Since ident skips trailing whitespace (including newlines), we need to check
-                // if there's a newline before the next token
-                // If current position starts with newline, don't treat as space-separated
+                // No explicit semicolon operator
+                // Check for space-separated composition (axis 0)
+                // Stop if we encounter a newline (declarations are separated by newlines)
                 if input.starts_with('\n') || input.starts_with("\r\n") {
                     None
                 } else {
-                    // Try to parse another cell_primary
                     match cell_primary(input) {
-                        Ok(_) => {
-                            // Successfully can parse next primary
-                            // This means there's a space-separated composition (axis 0)
-                            Some(0)
-                        }
+                        Ok(_) => Some(0), // Space-separated composition
                         Err(_) => None,
                     }
                 }
@@ -240,24 +287,19 @@ fn cell_with_precedence_inner(
         let axis = match axis {
             Some(a) => a,
             None => {
-                // No operator found
-                input = before_whitespace;
+                input = before_op;
                 break;
             }
         };
 
-        // Check if this operator has high enough precedence
-        // Lower axis number = higher precedence = lower min_precedence value needed
+        // Check precedence: lower axis = higher precedence
         if axis >= min_precedence {
-            // Precedence too low, restore position and stop here
-            input = before_whitespace;
+            input = before_op;
             break;
         }
 
-        // Parse the right side
-        // Using axis+1 gives right-associativity (groups tighter on right)
-        let next_min_prec = axis + 1;
-        let (rest, right) = cell_with_precedence(input, next_min_prec)?;
+        // Parse right side with right-associativity (axis + 1)
+        let (rest, right) = cell_with_precedence(input, axis + 1)?;
         input = rest;
         left = Cell::Comp(axis, vec![left, right]);
     }
@@ -265,17 +307,18 @@ fn cell_with_precedence_inner(
     Ok((input, left))
 }
 
-// arg
+// ============================================================================
+// Type and argument parsers
+// ============================================================================
+
 fn arg(input: &str) -> IResult<&str, Arg> {
     alt((map(lit, Arg::Lit), map(cell, Arg::Cell))).parse(input)
 }
 
-// arg-type
 fn arg_type(input: &str) -> IResult<&str, ArgType> {
     alt((map(lit_type, ArgType::Lit), map(cell_type, ArgType::Cell))).parse(input)
 }
 
-// cell-type
 fn cell_type(input: &str) -> IResult<&str, CellType> {
     alt((
         map(ws(char('*')), |_| CellType::Star),
@@ -286,7 +329,17 @@ fn cell_type(input: &str) -> IResult<&str, CellType> {
     .parse(input)
 }
 
-// decorator
+fn arg_decl(input: &str) -> IResult<&str, ArgDecl> {
+    let (input, names) = separated_list1(multispace1, ident_raw).parse(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, ty) = opt(preceded(ws(char(':')), arg_type)).parse(input)?;
+    Ok((input, ArgDecl { names, ty }))
+}
+
+fn arg_decls(input: &str) -> IResult<&str, Vec<ArgDecl>> {
+    separated_list0(ws(char(',')), arg_decl).parse(input)
+}
+
 fn decorator(input: &str) -> IResult<&str, Decorator> {
     let (input, name) = ident(input)?;
     let (input, args) = opt(delimited(
@@ -304,87 +357,35 @@ fn decorator(input: &str) -> IResult<&str, Decorator> {
     ))
 }
 
-// ident without trailing whitespace skip (for use in separated lists)
-fn ident_raw(input: &str) -> IResult<&str, Ident> {
-    let (input, name) =
-        take_while1(|c: char| c.is_alphanumeric() || c == '_' || c == '-' || c == '.')(input)?;
-    // Identifiers must start with alphabetic or underscore
-    if !name.chars().next().unwrap().is_alphabetic() && name.chars().next().unwrap() != '_' {
-        return Err(nom::Err::Error(nom::error::Error::new(
-            input,
-            nom::error::ErrorKind::Alpha,
-        )));
-    }
-    Ok((input, name.to_string()))
-}
+// ============================================================================
+// Declaration parsers
+// ============================================================================
 
-// arg-decls
-fn arg_decl(input: &str) -> IResult<&str, ArgDecl> {
-    let (input, names) = separated_list1(multispace1, ident_raw).parse(input)?;
-    let (input, _) = multispace0(input)?;
-    let (input, ty) = opt(preceded(ws(char(':')), arg_type)).parse(input)?;
-    Ok((input, ArgDecl { names, ty }))
-}
-
-fn arg_decls(input: &str) -> IResult<&str, Vec<ArgDecl>> {
-    separated_list0(ws(char(',')), arg_decl).parse(input)
-}
-
-// Parse ident, only skipping horizontal whitespace (not newlines)
-fn ident_no_newline(input: &str) -> IResult<&str, Ident> {
-    let (input, _) = space0(input)?;
-    let (input, name) =
-        take_while1(|c: char| c.is_alphanumeric() || c == '_' || c == '-' || c == '.')(input)?;
-    // Identifiers must start with alphabetic or underscore
-    if !name.chars().next().unwrap().is_alphabetic() && name.chars().next().unwrap() != '_' {
-        return Err(nom::Err::Error(nom::error::Error::new(
-            input,
-            nom::error::ErrorKind::Alpha,
-        )));
-    }
-    let (input, _) = space0(input)?;
-    Ok((input, name.to_string()))
-}
-
-// Parse names until we see '[', ':', '=' or newline
-fn names_until_special(input: &str) -> IResult<&str, Vec<Ident>> {
-    let (mut input, first) = ident_no_newline(input)?;
+// Parse declaration names until '[', ':', '=', or newline
+// Returns a list of names (for multi-name declarations like "foo x y = ...")
+fn decl_names(input: &str) -> IResult<&str, Vec<Ident>> {
+    let (mut input, first) = ident_hspace(input)?;
     let mut names = vec![first];
 
     loop {
-        // Check if there's a newline before next token
+        // Stop at newline or special characters
         if input.starts_with('\n') || input.starts_with("\r\n") {
             break;
         }
 
-        // Check if next token (after horizontal whitespace) is '[', ':', or '='
-        match space0::<&str, nom::error::Error<&str>>(input) {
-            Ok((rest, _)) => {
-                if rest.starts_with('[') || rest.starts_with(':') || rest.starts_with('=') {
-                    break;
-                }
-                if rest.starts_with('\n') || rest.starts_with("\r\n") {
-                    break;
-                }
-                // Try to parse another ident (without skipping newlines)
-                // We need to parse just the identifier without multispace0
-                match take_while1::<_, &str, nom::error::Error<&str>>(|c: char| {
-                    c.is_alphanumeric() || c == '_' || c == '-' || c == '.'
-                })(rest)
-                {
-                    Ok((rest2, name)) => {
-                        // Check if starts with alphabetic or underscore
-                        if name.chars().next().unwrap().is_alphabetic()
-                            || name.chars().next().unwrap() == '_'
-                        {
-                            input = rest2;
-                            names.push(name.to_string());
-                        } else {
-                            break;
-                        }
-                    }
-                    Err(_) => break,
-                }
+        let (rest, _) = space0(input)?;
+        if rest.starts_with('[') || rest.starts_with(':') || rest.starts_with('=') {
+            break;
+        }
+        if rest.starts_with('\n') || rest.starts_with("\r\n") {
+            break;
+        }
+
+        // Try to parse another identifier
+        match ident_raw(rest) {
+            Ok((rest2, name)) => {
+                input = rest2;
+                names.push(name);
             }
             Err(_) => break,
         }
@@ -393,15 +394,18 @@ fn names_until_special(input: &str) -> IResult<&str, Vec<Ident>> {
     Ok((input, names))
 }
 
-// Simple declaration parser (without decorators)
+// Parse a declaration without decorators
+// Handles both forms:
+//   foo x y = ...         (multiple names, no brackets)
+//   foo [x y: nat] = ...  (single name with bracketed args)
 fn simple_decl(input: &str) -> IResult<&str, Decl> {
-    let (mut input, names) = names_until_special(input)?;
+    let (mut input, names) = decl_names(input)?;
 
-    // Skip horizontal whitespace only (not newlines)
+    // Skip horizontal whitespace
     let (rest, _) = space0(input)?;
     input = rest;
 
-    // Check for brackets (only if we have exactly one name)
+    // Parse bracketed argument declarations (only valid for single-name decls)
     let (mut input, args) = if names.len() == 1 && input.starts_with('[') {
         let (input, args) = delimited(
             char('['),
@@ -414,11 +418,10 @@ fn simple_decl(input: &str) -> IResult<&str, Decl> {
         (input, vec![])
     };
 
-    // Skip horizontal whitespace
     let (rest, _) = space0(input)?;
     input = rest;
 
-    // Check for type annotation
+    // Parse type annotation
     let (mut input, ty) = if input.starts_with(':') {
         let (input, ty) = preceded(char(':'), preceded(space0, cell_type)).parse(input)?;
         (input, Some(ty))
@@ -426,13 +429,11 @@ fn simple_decl(input: &str) -> IResult<&str, Decl> {
         (input, None)
     };
 
-    // Skip horizontal whitespace
     let (rest, _) = space0(input)?;
     input = rest;
 
-    // Check for body
+    // Parse body (allow newlines after '=' for multi-line bodies)
     let (input, body) = if input.starts_with('=') {
-        // Use multispace0 to allow body to start on the next line
         let (input, body) = preceded(char('='), preceded(multispace0, cell)).parse(input)?;
         (input, Some(body))
     } else {
@@ -451,9 +452,8 @@ fn simple_decl(input: &str) -> IResult<&str, Decl> {
     ))
 }
 
-// decl
+// Parse a declaration (with optional decorators)
 fn decl(input: &str) -> IResult<&str, Decl> {
-    // '[' decorator % ',' ']' decl
     let with_decorators = map(
         (
             delimited(
@@ -461,9 +461,10 @@ fn decl(input: &str) -> IResult<&str, Decl> {
                 separated_list1(ws(char(',')), decorator),
                 ws(char(']')),
             ),
-            decl,
+            decl, // Recursive: decorators can nest
         ),
         |(mut decos, mut d)| {
+            // Prepend new decorators to existing ones
             decos.append(&mut d.decos);
             d.decos = decos;
             d
@@ -473,20 +474,37 @@ fn decl(input: &str) -> IResult<&str, Decl> {
     alt((with_decorators, simple_decl)).parse(input)
 }
 
-// program
+// ============================================================================
+// Program parser
+// ============================================================================
+
 fn program(input: &str) -> IResult<&str, Vec<Decl>> {
     let (input, _) = multispace0(input)?;
     let (input, decls) = many0(terminated(decl, multispace0)).parse(input)?;
     Ok((input, decls))
 }
 
+/// Public interface for parsing a complete program
+/// Returns an error if the input is not fully consumed
 pub fn parse_program(input: &str) -> std::result::Result<Vec<Decl>, String> {
-    let result = program(input).map_err(|e| e.to_string())?;
-    if !result.0.is_empty() {
-        return Err(format!("input remaining: {}", result.0));
+    match program(input) {
+        Ok((remaining, decls)) => {
+            if !remaining.is_empty() {
+                Err(format!(
+                    "Parse error: unexpected input remaining: {:?}",
+                    &remaining[..remaining.len().min(50)]
+                ))
+            } else {
+                Ok(decls)
+            }
+        }
+        Err(e) => Err(format!("Parse error: {}", e)),
     }
-    Ok(result.1)
 }
+
+// ============================================================================
+// Tests
+// ============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -831,6 +849,22 @@ mod tests {
     }
 
     #[test]
+    fn test_ident_with_apostrophe() {
+        let result = ident("foo'");
+        assert!(result.is_ok());
+        let (_, name) = result.unwrap();
+        assert_eq!(name, "foo'");
+    }
+
+    #[test]
+    fn test_ident_with_multiple_apostrophes() {
+        let result = ident("f''");
+        assert!(result.is_ok());
+        let (_, name) = result.unwrap();
+        assert_eq!(name, "f''");
+    }
+
+    #[test]
     fn test_precedence_simple() {
         // a ; b ;; c should parse as (a ; b) ;; c
         let result = cell("a ; b ;; c");
@@ -1084,6 +1118,499 @@ mod tests {
             eprintln!("Error: {}", e);
         }
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_simple_arrow() {
+        // Simple arrow type (multi-arrows are complex to parse with current grammar)
+        let input = "f: a → b";
+        let result = parse_program(input);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_long_composition() {
+        // Many terms in space-separated composition
+        let input = "f = a b c d e f g h i j";
+        let result = parse_program(input);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_mixed_axes() {
+        // Mix different axis numbers
+        let input = "f = a ; b ;; c ;;; d ;4; e";
+        let result = parse_program(input);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_deeply_nested_parens() {
+        // Deeply nested parentheses
+        let input = "f = ((((a b) c) d) e)";
+        let result = parse_program(input);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_complex_args_in_cell() {
+        // Complex arguments with compositions
+        let input = "f = g[a ; b, c d, (e f)]";
+        let result = parse_program(input);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_multiline_with_deep_indent() {
+        // Multi-line body with various indentation
+        let input = r#"
+            f =
+                a ;;
+                    b ;;
+                        c ;;
+                    d ;;
+                e
+        "#;
+        let result = parse_program(input);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_decorator_with_complex_args() {
+        // Decorators with complex cell arguments
+        let input = "[transform(f ; g, h[x y])] foo = bar";
+        let result = parse_program(input);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_many_decorators() {
+        // Many decorator brackets
+        let input = "[a][b][c][d][e][f] foo = bar";
+        let result = parse_program(input);
+        assert!(result.is_ok());
+        if let Ok(decls) = result {
+            assert_eq!(decls[0].decos.len(), 6);
+        }
+    }
+
+    #[test]
+    fn test_type_only_decl() {
+        // Declaration with only type, no body
+        let input = "f: *";
+        let result = parse_program(input);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_multiple_names_with_type() {
+        // Multiple names with type annotation
+        let input = "f g h: *";
+        let result = parse_program(input);
+        assert!(result.is_ok());
+        if let Ok(decls) = result {
+            assert_eq!(decls[0].names.len(), 3);
+        }
+    }
+
+    #[test]
+    fn test_zero_axis_with_other_axes() {
+        // Space-separated (axis 0) mixed with explicit semicolons
+        let input = "f = a b ; c d ; e f";
+        let result = parse_program(input);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_very_long_identifier() {
+        // Long identifier with various allowed characters
+        let input = "very-long_identifier.with.dots-and_underscores = x";
+        let result = parse_program(input);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_mathematical_notation_with_primes() {
+        // Common mathematical notation with primes (f', f'', etc.)
+        let input = r#"
+            f: *
+            f' [x: *] : * = f[x]
+            f'' [x: *] : * = f'[x]
+            compose_with_derivative = f ; f' ; f''
+        "#;
+        let result = parse_program(input);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_string_literals_in_args() {
+        // String literals as arguments
+        let input = r#"f = g["hello", "world", "test"]"#;
+        let result = parse_program(input);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_numeric_literals_in_composition() {
+        // Using numeric literals in compositions
+        let input = "f = g[1, -2, 3.14, -9.8]";
+        let result = parse_program(input);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_composition_in_type() {
+        // Composition on both sides of arrow in type
+        let input = "f: a b c → d e f";
+        let result = parse_program(input);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_empty_brackets() {
+        // Empty argument lists
+        let input = "f[] = x";
+        let result = parse_program(input);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_many_arg_decls() {
+        // Many argument declarations
+        let input = "f [a b: nat, c d: int, e: rat, f g h: str] = x";
+        let result = parse_program(input);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_simple_type_decls() {
+        // Simple type declarations
+        let input = r#"
+            nat: *
+            compose_nat [α β: *] : *
+        "#;
+        let result = parse_program(input);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_functor_composition() {
+        // Functor composition with mixed operators
+        let input = r#"
+            comp = f ; g
+            comp2 = f g
+            comp3 = f ;; g
+            mixed = (f g) ; (h i) ;; j
+        "#;
+        let result = parse_program(input);
+        assert!(result.is_ok());
+        if let Ok(decls) = result {
+            assert_eq!(decls.len(), 4);
+        }
+    }
+
+    #[test]
+    fn test_monoidal_unit() {
+        // Monoidal category with unit and tensor (simplified without parens in types)
+        let input = r#"
+            unit: *
+            tensor [a b: *] : *
+            assoc [a b c: *] : *
+            left_unit [a: *] : *
+            right_unit [a: *] : *
+        "#;
+        let result = parse_program(input);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_unicode_arrow() {
+        // Make sure → (Unicode arrow) works properly with spaces
+        let input = "f: a → b";
+        let result = parse_program(input);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_explicit_axis_zero() {
+        // Explicit ;0; should be same as space
+        let input = "f = a ;0; b ;0; c";
+        let result = parse_program(input);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_high_axis_numbers() {
+        // High axis numbers (single digits work, multi-digit may need more complex parsing)
+        let input = "f = a ;9; b";
+        let result = parse_program(input);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_whitespace_variations() {
+        // Various whitespace patterns
+        let input = "f = a ; b\ng   =   c   ;;   d\nh = e";
+        let result = parse_program(input);
+        assert!(result.is_ok());
+        if let Ok(decls) = result {
+            assert_eq!(decls.len(), 3);
+        }
+    }
+
+    #[test]
+    fn test_parentheses_with_semicolons() {
+        // Parentheses changing precedence with semicolons
+        let input = "f = (a ; b) ;; (c ; d)";
+        let result = parse_program(input);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_complex_decorator_nesting() {
+        // Nested decorators with various argument types
+        let input = r#"
+            [optimize(3)]
+            [inline]
+            [pure(1, "mode")]
+            [debug(f[x y])]
+            foo [x: nat] : * = bar[x]
+        "#;
+        let result = parse_program(input);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_adjacent_operators() {
+        // Testing that operators can be adjacent without spaces
+        let input = "f=a;b;;c;;;d;4;e";
+        let result = parse_program(input);
+        assert!(result.is_ok());
+    }
+
+    // ============================================================================
+    // Negative tests - these should fail
+    // ============================================================================
+
+    #[test]
+    fn test_invalid_ident_starts_with_number() {
+        // Identifiers cannot start with a number
+        let input = "123abc = x";
+        let result = parse_program(input);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_invalid_ident_starts_with_hyphen() {
+        // Identifiers cannot start with a hyphen
+        let input = "-foo = x";
+        let result = parse_program(input);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_invalid_ident_starts_with_dot() {
+        // Identifiers cannot start with a dot
+        let input = ".foo = x";
+        let result = parse_program(input);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_invalid_ident_starts_with_apostrophe() {
+        // Identifiers cannot start with an apostrophe
+        let input = "'foo = x";
+        let result = parse_program(input);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_unmatched_open_paren() {
+        // Unmatched opening parenthesis
+        let input = "f = (a b";
+        let result = parse_program(input);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_unmatched_close_paren() {
+        // Unmatched closing parenthesis
+        let input = "f = a b)";
+        let result = parse_program(input);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_unmatched_open_bracket() {
+        // Unmatched opening bracket in args
+        let input = "f = g[a b";
+        let result = parse_program(input);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_unmatched_close_bracket() {
+        // Unmatched closing bracket
+        let input = "f = g a]";
+        let result = parse_program(input);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_incomplete_decorator() {
+        // Decorator without closing bracket
+        let input = "[inline foo = bar";
+        let result = parse_program(input);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_incomplete_semicolon_operator() {
+        // ;N; format missing closing semicolon
+        let input = "f = a ;3 b";
+        let result = parse_program(input);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_invalid_literal_float_format() {
+        // Invalid float format (two dots)
+        let input = "f = g[1.2.3]";
+        let result = parse_program(input);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_unterminated_string() {
+        // String literal without closing quote
+        let input = r#"f = g["hello]"#;
+        let result = parse_program(input);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_empty_input_is_ok() {
+        // Empty input should be valid (zero declarations)
+        let input = "";
+        let result = parse_program(input);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_only_whitespace_is_ok() {
+        // Only whitespace should be valid
+        let input = "   \n\n\t  \n  ";
+        let result = parse_program(input);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_declaration_without_equals_or_type() {
+        // Declaration with just a name (no type, no body)
+        let input = "foo";
+        let result = parse_program(input);
+        // This should actually succeed - it's a valid type-less, body-less declaration
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_multiple_equals() {
+        // Multiple equals signs
+        let input = "f = a = b";
+        let result = parse_program(input);
+        // This might actually parse as "f = a" with "= b" remaining
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_bracket_in_wrong_position() {
+        // Brackets for args when there are multiple names
+        let input = "f g [x: nat] = h";
+        let result = parse_program(input);
+        // Multiple names cannot have bracketed args
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_arrow_without_sides() {
+        // Arrow operator without both sides
+        let input = "f: → x";
+        let result = parse_program(input);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_semicolon_without_operands() {
+        // Semicolon at the start
+        let input = "f = ; a";
+        let result = parse_program(input);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_trailing_semicolon() {
+        // Semicolon at the end with no right operand
+        let input = "f = a ;";
+        let result = parse_program(input);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_invalid_char_in_identifier() {
+        // Special characters not allowed in identifiers
+        let input = "foo@bar = x";
+        let result = parse_program(input);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_comma_outside_list() {
+        // Comma used outside of argument list
+        let input = "f = a, b";
+        let result = parse_program(input);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_mismatched_nested_parens() {
+        // Mismatched nested parentheses
+        let input = "f = ((a b) c";
+        let result = parse_program(input);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_decorator_with_unclosed_args() {
+        // Decorator with unclosed argument list
+        let input = "[transform(f g] foo = bar";
+        let result = parse_program(input);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_partial_arrow() {
+        // Just an arrow without context
+        let input = "→";
+        let result = parse_program(input);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_double_colon() {
+        // Double colon (not supported)
+        let input = "f:: x";
+        let result = parse_program(input);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_negative_without_number() {
+        // Minus sign without a number following
+        let input = "f = g[-]";
+        let result = parse_program(input);
+        assert!(result.is_err());
     }
 
     #[test]
