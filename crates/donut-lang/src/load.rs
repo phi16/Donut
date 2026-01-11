@@ -265,6 +265,6 @@ mod tests {
         "#;
         let table = load(input).unwrap();
         eprintln!("{:#?}", table);
-        assert!(false);
+        // assert!(false);
     }
 }

@@ -1036,7 +1036,41 @@ mod tests {
             lm = m x; m
             assoc2: rm → lm
         "#;
-        let result = program(input);
+        let result = parse_program(input);
+        eprintln!("Result: {:?}", result);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_pentagon() {
+        let input = r#"
+            u: *
+            x: u → u
+            m: x x → x
+            a: m x; m → x m; m
+            chl: (x m; m) x → x m x; m x
+            chr: x m x; x m → x (m x; m)
+            aaa =
+                a x; m ;;
+                chl; m ;;
+                x m x; a ;;
+                chr; m ;;
+                x a; m
+            ch0: m x x; x m → m m
+            ch1: m m → x x m; m x
+
+            kl: (m x; m) x → m x x; m x
+            kr: x x m; x m → x (x m; m)
+            oao =
+                kl; m ;;
+                m x x; a ;;
+                (ch0 ;; ch1); m ;;
+                x x m; a ;;
+                kr; m
+
+            pentagon: aaa → oao
+        "#;
+        let result = parse_program(input);
         eprintln!("Result: {:?}", result);
         assert!(result.is_ok());
     }
