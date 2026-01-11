@@ -112,6 +112,36 @@ impl App {
         let cell = cell.render();
         let cell = Geometry::from(&cell);
 
+        let input = r#"
+            u: *
+            x: u → u
+            m: x x → x
+            a: m x; m → x m; m
+            chl: (x m; m) x → x m x; m x
+            chr: x m x; x m → x (m x; m)
+            aaa =
+                a x; m ;;
+                chl; m ;;
+                x m x; a ;;
+                chr; m ;;
+                x a; m
+            ch0: m x x; x m → m m
+            ch1: m m → x x m; m x
+
+            kl: (m x; m) x → m x x; m x
+            kr: x x m; x m → x (x m; m)
+            oao =
+                kl; m ;;
+                m x x; a ;;
+                (ch0 ;; ch1); m ;;
+                x x m; a ;;
+                kr; m
+
+            pentagon: aaa → oao
+        "#;
+        let table = donut_lang::load::load(input).unwrap();
+        log::debug!("PrimTable: {:#?}", table);
+
         let mut table = PrimTable::new();
         table.insert(Prim::new(0), "a", 0, (40, 40, 40));
         table.insert(Prim::new(1), "x", 1, (0, 100, 255));

@@ -4,3 +4,5 @@ target/
 *.pdb
 
 node_modules/
+
+.claude/

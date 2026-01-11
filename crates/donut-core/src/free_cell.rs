@@ -56,3 +56,32 @@ impl fmt::Display for FreeCell {
         write!(f, "{}", self.pure)
     }
 }
+
+impl FreeCell {
+    pub fn from_pure(pure: &PureCell) -> Self {
+        match pure {
+            PureCell::Prim(prim, shape, dim) => {
+                let cell = match shape {
+                    Shape::Zero => FreeCell::zero(prim.clone()),
+                    Shape::Succ { source, target } => {
+                        let source = FreeCell::from_pure(source);
+                        let target = FreeCell::from_pure(target);
+                        FreeCell::prim(prim.clone(), source, target).unwrap()
+                    }
+                };
+                let mut cell = cell;
+                for _ in dim.effective..dim.in_space {
+                    cell = FreeCell::id(cell);
+                }
+                cell
+            }
+            PureCell::Comp(axis, children, _) => {
+                let children = children
+                    .iter()
+                    .map(|child| FreeCell::from_pure(child))
+                    .collect::<Vec<_>>();
+                FreeCell::comp(*axis, children).unwrap()
+            }
+        }
+    }
+}
