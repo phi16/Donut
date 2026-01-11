@@ -170,8 +170,6 @@ fn cell(input: &str) -> IResult<&str, Cell> {
 }
 
 // Parse semicolon operator (returns axis number)
-// IMPORTANT: Only skips horizontal whitespace, not newlines, so that
-// newlines can properly delimit declarations
 fn semicolon_operator(input: &str) -> IResult<&str, u8> {
     // Skip leading horizontal whitespace only (not newlines)
     let (input, _) = space0(input)?;
@@ -191,8 +189,9 @@ fn semicolon_operator(input: &str) -> IResult<&str, u8> {
     ))
     .parse(input)?;
 
-    // Skip trailing horizontal whitespace only (not newlines)
-    let (input, _) = space0(input)?;
+    // Skip trailing whitespace including newlines
+    // This allows multi-line expressions when using semicolons
+    let (input, _) = multispace0(input)?;
     Ok((input, axis))
 }
 
@@ -433,7 +432,8 @@ fn simple_decl(input: &str) -> IResult<&str, Decl> {
 
     // Check for body
     let (input, body) = if input.starts_with('=') {
-        let (input, body) = preceded(char('='), preceded(space0, cell)).parse(input)?;
+        // Use multispace0 to allow body to start on the next line
+        let (input, body) = preceded(char('='), preceded(multispace0, cell)).parse(input)?;
         (input, Some(body))
     } else {
         (input, None)
@@ -1038,6 +1038,51 @@ mod tests {
         "#;
         let result = parse_program(input);
         eprintln!("Result: {:?}", result);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_type_with_composition() {
+        // Test that cell_type can handle compositions on both sides of →
+        let input = "f: x y → a b";
+        let result = parse_program(input);
+        eprintln!("Result: {:?}", result);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_type_with_semicolon() {
+        // Test that cell_type can handle semicolon operators
+        let input = "f: x; y → a; b";
+        let result = parse_program(input);
+        eprintln!("Result: {:?}", result);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_type_with_parens() {
+        // Test the actual problematic line from pentagon
+        let input = "chl: (x m; m) x → x m x; m x";
+        let result = parse_program(input);
+        eprintln!("Result: {:?}", result);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_pentagon_first_few() {
+        let input = r#"
+            u: *
+            x: u → u
+            m: x x → x
+            a: m x; m → x m; m
+            chl: (x m; m) x → x m x; m x
+            chr: x m x; x m → x (m x; m)
+        "#;
+        let result = parse_program(input);
+        eprintln!("Result: {:?}", result);
+        if let Err(e) = &result {
+            eprintln!("Error: {}", e);
+        }
         assert!(result.is_ok());
     }
 
