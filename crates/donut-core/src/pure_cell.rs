@@ -121,7 +121,7 @@ impl Diagram for PureCell {
             let d = c.dim();
             assert_eq!(d.in_space, dim.in_space);
             dim.effective = dim.effective.max(d.effective);
-            if d.effective < axis {
+            if d.effective <= axis {
                 // do nothing
             } else {
                 match c {

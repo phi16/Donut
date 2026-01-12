@@ -57,6 +57,26 @@ fn request_animation_frame(f: &Closure<dyn FnMut()>) {
         .unwrap();
 }
 
+fn show_notification(notification: &web_sys::HtmlElement, message: &str) {
+    notification.set_inner_text(message);
+    let _ = notification.class_list().add_1("show");
+
+    let notification_clone = notification.clone();
+    let hide_notification = Closure::once(move || {
+        let _ = notification_clone.class_list().remove_1("show");
+    });
+
+    web_sys::window()
+        .unwrap()
+        .set_timeout_with_callback_and_timeout_and_arguments_0(
+            hide_notification.as_ref().unchecked_ref(),
+            3000,
+        )
+        .unwrap();
+
+    hide_notification.forget();
+}
+
 pub fn start() -> Option<()> {
     let window = web_sys::window()?;
     let document = window.document()?;
@@ -72,12 +92,63 @@ pub fn start() -> Option<()> {
         .ok()??
         .dyn_into::<web_sys::CanvasRenderingContext2d>()
         .ok()?;
-    let mut app = App::new(canvas, context, mouse);
+    let app = Rc::new(RefCell::new(App::new(canvas, context, mouse)));
 
+    // Set up button click handler
+    let button = document
+        .get_element_by_id("update-button")?
+        .dyn_into::<web_sys::HtmlElement>()
+        .ok()?;
+    let textarea = document
+        .get_element_by_id("code-input")?
+        .dyn_into::<web_sys::HtmlTextAreaElement>()
+        .ok()?;
+
+    let notification = document
+        .get_element_by_id("notification")?
+        .dyn_into::<web_sys::HtmlElement>()
+        .ok()?;
+
+    let app_clone = Rc::clone(&app);
+    let textarea_clone = textarea.clone();
+    let notification_clone = notification.clone();
+    let on_click: Closure<dyn FnMut()> = Closure::new(move || {
+        let code = textarea_clone.value();
+        if let Err(e) = app_clone.borrow_mut().update_code(&code) {
+            log::error!("Failed to update code: {}", e);
+            show_notification(&notification_clone, &e);
+        }
+    });
+    button
+        .add_event_listener_with_callback("click", on_click.as_ref().unchecked_ref())
+        .ok()?;
+    on_click.forget();
+
+    // Set up Ctrl+Enter shortcut
+    let app_clone = Rc::clone(&app);
+    let textarea_clone = textarea.clone();
+    let on_keydown: Closure<dyn FnMut(web_sys::KeyboardEvent)> =
+        Closure::new(move |event: web_sys::KeyboardEvent| {
+            if event.key() == "Enter" && event.ctrl_key() {
+                event.prevent_default();
+                let code = textarea_clone.value();
+                if let Err(e) = app_clone.borrow_mut().update_code(&code) {
+                    log::error!("Failed to update code: {}", e);
+                    show_notification(&notification, &e);
+                }
+            }
+        });
+    textarea
+        .add_event_listener_with_callback("keydown", on_keydown.as_ref().unchecked_ref())
+        .ok()?;
+    on_keydown.forget();
+
+    // Animation loop
     let step: Rc<RefCell<Option<Closure<dyn FnMut()>>>> = Rc::new(RefCell::new(None));
     let step_c = Rc::clone(&step);
+    let app_clone = Rc::clone(&app);
     *step_c.borrow_mut() = Some(Closure::new(move || {
-        app.step();
+        app_clone.borrow_mut().step();
         request_animation_frame(step.borrow().as_ref().unwrap());
     }));
     request_animation_frame(step_c.borrow().as_ref().unwrap());

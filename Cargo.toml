@@ -22,4 +22,4 @@ log = "0.4.29"
 
 [dependencies.web-sys]
 version = "0.3.82"
-features = ["console", "CanvasRenderingContext2d", "Document", "Window", "HtmlCanvasElement", "MouseEvent", "KeyboardEvent"]
+features = ["console", "CanvasRenderingContext2d", "Document", "Window", "HtmlCanvasElement", "MouseEvent", "KeyboardEvent", "DomTokenList"]

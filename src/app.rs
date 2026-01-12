@@ -25,7 +25,7 @@ impl App {
         mouse: Rc<RefCell<(f64, f64)>>,
     ) -> Self {
         let input = r#"
-            [gray(40)]
+            [gray(80)]
             u: *
             [hsv(0.6, 1, 1)]
             x: u → u
@@ -94,17 +94,46 @@ impl App {
         }
     }
 
+    pub fn update_code(&mut self, code: &str) -> Result<()> {
+        let symbol_table =
+            donut_lang::load::load(code).map_err(|e| format!("Parse error: {:?}", e))?;
+
+        let mut table = PrimTable::new();
+        for (i, e) in symbol_table.elements.iter().enumerate() {
+            let prim = Prim::new(i as PrimId);
+            table.insert(prim, &e.name, e.cell.pure.dim().in_space, e.color);
+        }
+
+        let cell = symbol_table.elements.last().unwrap().cell.clone();
+        let mut f = LayoutSolver::new();
+        let cell = f.from_free(cell);
+        let sol = f.solve(&cell);
+        let cell = sol.convert(&cell);
+        let mut cell = cell.render();
+        while cell.max.len() < 4 {
+            cell.shift(&Q::from(0), &Q::from(1));
+        }
+        let cell = Geometry::from(&cell);
+
+        self.cell = cell;
+        self.table = table;
+        Ok(())
+    }
+
     pub fn step(&mut self) {
         let width = self.canvas.width() as f64;
         let height = self.canvas.height() as f64;
         self.context.set_fill_style_str("rgb(40 40 40)");
         self.context.fill_rect(0.0, 0.0, width, height);
         self.context.set_fill_style_str("rgb(50 50 50)");
-        self.context.fill_rect(50.0, 50.0, 500.0, 400.0);
+        // self.context.fill_rect(50.0, 50.0, 500.0, 400.0);
 
         let size = self.cell.size.clone();
         let slicer_x = size[0] + 200.0;
         let slicer_y = 100.0;
+
+        self.context
+            .fill_rect(50.0, 50.0, size[0] + 100.0, size[1] + 100.0);
 
         let mouse = *self.mouse.borrow();
         self.context.save();

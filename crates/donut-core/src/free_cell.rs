@@ -24,7 +24,7 @@ pub struct FreeCell {
 impl Diagram for FreeCell {
     fn zero(prim: Prim) -> Self {
         let cell = Cell(Rc::new(CellF::Zero(prim.clone())));
-        let pure = PureCell::Prim(prim, Shape::Zero, Dim::new(0, 0));
+        let pure = PureCell::zero(prim);
         FreeCell { cell, pure }
     }
 

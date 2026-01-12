@@ -68,6 +68,23 @@ impl Table {
         match a {
             Arg::Lit(Lit::Rat(r)) => Ok(*r),
             Arg::Lit(Lit::Nat(n)) => Ok(*n as f64),
+            Arg::Lit(Lit::Str(s)) => match &**s {
+                "1-" => Ok(0.01),
+                "1" => Ok(0.05),
+                "1+" => Ok(0.09),
+                "2+" => Ok(0.52),
+                "2" => Ok(0.56),
+                "2-" => Ok(0.60),
+
+                "orange" => Ok(0.1),
+                "yellow" => Ok(0.16),
+                "green" => Ok(0.33),
+                "cyan" => Ok(0.5),
+                "blue" => Ok(0.6),
+                "purple" => Ok(0.75),
+                "pink" => Ok(0.9),
+                _ => Err(format!("unknown rational string literal: {}", s)),
+            },
             _ => Err("expected rational literal".to_string()),
         }
     }
@@ -104,12 +121,20 @@ impl Table {
                 let b = self.nat(&deco.args[2])? as u8;
                 color = Some((r, g, b));
             } else if deco.name == "hsv" {
-                if deco.args.len() != 3 {
-                    return Err("hsv decorator requires three arguments".to_string());
+                if deco.args.len() == 0 {
+                    return Err("hsv decorator requires at least one argument".to_string());
                 }
                 let h = self.rat(&deco.args[0])? as f64;
-                let s = self.rat(&deco.args[1])? as f64;
-                let v = self.rat(&deco.args[2])? as f64;
+                let s = if deco.args.len() >= 2 {
+                    self.rat(&deco.args[1])? as f64
+                } else {
+                    1.0
+                };
+                let v = if deco.args.len() >= 3 {
+                    self.rat(&deco.args[2])? as f64
+                } else {
+                    1.0
+                };
                 fn hsv2rgb(h: f64, s: f64, v: f64) -> (u8, u8, u8) {
                     let r = (((h + 3.0 / 3.0).fract() * 6.0 - 3.0).abs() - 1.0).clamp(0.0, 1.0);
                     let g = (((h + 2.0 / 3.0).fract() * 6.0 - 3.0).abs() - 1.0).clamp(0.0, 1.0);

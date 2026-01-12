@@ -68,22 +68,34 @@ impl Renderer {
         self.context.close_path();
         self.context.set_fill_style_str(color);
         self.context.fill();
-        self.context.set_stroke_style_str("rgba(255 255 255 0.1)");
-        self.context.set_line_width(1.0);
-        self.context.stroke();
+        // self.context.set_stroke_style_str("rgba(255 255 255 0.1)");
+        // self.context.set_line_width(1.0);
+        // self.context.stroke();
     }
 
-    pub fn cube(&self, cube: &Cuboid, color: &str) {
+    fn color(&self, color: (u8, u8, u8)) -> String {
+        format!("rgb({} {} {})", color.0, color.1, color.2)
+    }
+
+    pub fn cube(&self, cube: &Cuboid, color: (u8, u8, u8)) {
         match cube {
             Cuboid::Point(p) => {
                 assert_eq!(p.len(), 2);
-                self.circle(p[0], p[1], color);
+                self.circle(p[0], p[1], &self.color(color));
             }
             Cuboid::Bridge { source, target } => match (source.0.as_ref(), target.0.as_ref()) {
                 (Cuboid::Point(s), Cuboid::Point(t)) => {
                     assert_eq!(s.len(), 1);
                     assert_eq!(t.len(), 1);
-                    self.path(s[0], source.1, &source.2, t[0], target.1, &target.2, color);
+                    self.path(
+                        s[0],
+                        source.1,
+                        &source.2,
+                        t[0],
+                        target.1,
+                        &target.2,
+                        &self.color(color),
+                    );
                 }
                 (
                     Cuboid::Bridge {
@@ -102,7 +114,7 @@ impl Renderer {
                         (ts.1, tt.1),
                         target.1,
                         &target.2,
-                        color,
+                        &self.color((color.0 / 2, color.1 / 2, color.2 / 2)),
                     );
                 }
                 _ => unreachable!(),
@@ -114,8 +126,7 @@ impl Renderer {
         for cubes in cell.cubes.iter() {
             for (prim, cube) in cubes {
                 let entry = table.get(prim).unwrap();
-                let str = format!("rgb({} {} {})", entry.color.0, entry.color.1, entry.color.2);
-                self.cube(cube, &str);
+                self.cube(cube, entry.color);
             }
         }
 
