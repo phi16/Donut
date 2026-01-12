@@ -88,12 +88,16 @@ impl Cuboid {
 #[derive(Debug, Clone)]
 pub struct Geometry {
     pub cubes: Vec<Vec<(Prim, Cuboid)>>,
+    pub min: CoordQ,
+    pub max: CoordQ,
 }
 
 impl Geometry {
     pub fn new(dim: Level) -> Self {
         Self {
             cubes: vec![vec![]; (dim + 1) as usize],
+            min: vec![Q::from(0); dim as usize],
+            max: vec![Q::from(0); dim as usize],
         }
     }
 
@@ -102,9 +106,17 @@ impl Geometry {
         for (i, mut cs) in other.cubes.into_iter().enumerate() {
             self.cubes[i].append(&mut cs);
         }
+        for i in 0..self.min.len() {
+            self.min[i] = self.min[i].min(other.min[i]);
+            self.max[i] = self.max[i].max(other.max[i]);
+        }
     }
 
     pub fn add_point(&mut self, prim: Prim, p: CoordQ) {
+        for i in 0..self.min.len() {
+            self.min[i] = self.min[i].min(p[i].clone());
+            self.max[i] = self.max[i].max(p[i].clone());
+        }
         self.cubes
             .last_mut()
             .unwrap()
@@ -118,6 +130,8 @@ impl Geometry {
             }
         }
         self.cubes.push(vec![]);
+        self.min.push(s.clone());
+        self.max.push(t.clone());
     }
 
     pub fn shifted(&self, s: &Q, t: &Q) -> Self {

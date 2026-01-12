@@ -80,6 +80,7 @@ pub enum Cuboid {
 pub struct Geometry {
     pub cubes: Vec<Vec<(Prim, Cuboid)>>,
     pub spheres: Vec<(Prim, CoordR, R)>,
+    pub size: CoordR,
 }
 
 impl Cuboid {
@@ -217,7 +218,12 @@ impl Geometry {
             cubes.push(rcs);
         }
         let spheres = vec![];
-        Geometry { cubes, spheres }
+        let size = cell.max.iter().map(to_f64).collect::<Vec<_>>();
+        Geometry {
+            cubes,
+            spheres,
+            size,
+        }
     }
 
     pub fn sliced(&self, x: R) -> Self {
@@ -243,9 +249,12 @@ impl Geometry {
             css.push(cs);
         }
         css.pop();
+        let mut size = self.size.clone();
+        size.pop();
         Self {
             cubes: css,
             spheres,
+            size,
         }
     }
 
@@ -266,9 +275,12 @@ impl Geometry {
                 .collect();
             css.push(cs);
         }
+        let mut size = self.size.clone();
+        size.remove(0);
         Self {
             cubes: css,
             spheres,
+            size,
         }
     }
 }

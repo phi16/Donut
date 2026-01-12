@@ -192,7 +192,15 @@ fn lit_type(input: &str) -> IResult<&str, LitType> {
 fn cell_primary(input: &str) -> IResult<&str, Cell> {
     alt((
         // '(' cell ')'
-        delimited(ws(char('(')), cell, ws(char(')'))),
+        // Don't skip whitespace after ')' to preserve declaration boundaries
+        map(
+            delimited(
+                preceded(multispace0, char('(')),
+                preceded(multispace0, cell),
+                preceded(multispace0, char(')')),
+            ),
+            |c| c,
+        ),
         // name ('[' (arg % ',') ']')?
         map(
             pair(
@@ -499,7 +507,6 @@ mod tests {
     #[test]
     fn test_simple_ident() {
         let result = ident("foo");
-        assert!(result.is_ok());
         let (rest, name) = result.unwrap();
         assert_eq!(rest, "");
         assert_eq!(name, "foo");
@@ -508,7 +515,6 @@ mod tests {
     #[test]
     fn test_ident_with_dash() {
         let result = ident("foo-bar");
-        assert!(result.is_ok());
         let (_, name) = result.unwrap();
         assert_eq!(name, "foo-bar");
     }
@@ -516,7 +522,6 @@ mod tests {
     #[test]
     fn test_nat_literal() {
         let result = nat_lit("123");
-        assert!(result.is_ok());
         let (_, lit) = result.unwrap();
         assert!(matches!(lit, Lit::Nat(123)));
     }
@@ -524,7 +529,6 @@ mod tests {
     #[test]
     fn test_int_literal() {
         let result = int_lit("-42");
-        assert!(result.is_ok());
         let (_, lit) = result.unwrap();
         assert!(matches!(lit, Lit::Int(-42)));
     }
@@ -532,7 +536,6 @@ mod tests {
     #[test]
     fn test_rat_literal() {
         let result = rat_lit("3.14");
-        assert!(result.is_ok());
         let (_, lit) = result.unwrap();
         if let Lit::Rat(val) = lit {
             assert!((val - 3.14).abs() < 0.001);
@@ -544,7 +547,6 @@ mod tests {
     #[test]
     fn test_str_literal() {
         let result = str_lit("\"hello world\"");
-        assert!(result.is_ok());
         let (_, lit) = result.unwrap();
         assert!(matches!(lit, Lit::Str(s) if s == "hello world"));
     }
@@ -552,7 +554,6 @@ mod tests {
     #[test]
     fn test_simple_cell() {
         let result = cell("foo");
-        assert!(result.is_ok());
         let (_, c) = result.unwrap();
         assert_eq!(c, Cell::Var("foo".to_string(), vec![]));
     }
@@ -560,7 +561,6 @@ mod tests {
     #[test]
     fn test_cell_with_args() {
         let result = cell("foo[1, 2]");
-        assert!(result.is_ok());
         let (_, c) = result.unwrap();
         assert_eq!(
             c,
@@ -574,7 +574,6 @@ mod tests {
     #[test]
     fn test_cell_composition_simple() {
         let result = cell("a ; b");
-        assert!(result.is_ok());
         let (_, c) = result.unwrap();
         assert_eq!(
             c,
@@ -591,132 +590,235 @@ mod tests {
     #[test]
     fn test_cell_composition_multiple_semicolons() {
         let result = cell("a ;; b");
-        assert!(result.is_ok());
         let (_, c) = result.unwrap();
-        assert!(matches!(c, Cell::Comp(2, _)));
+        let expected = Cell::Comp(
+            2,
+            vec![Cell::Var("a".to_string(), vec![]), Cell::Var("b".to_string(), vec![])],
+        );
+        assert_eq!(c, expected);
     }
 
     #[test]
     fn test_cell_composition_with_axis() {
         let result = cell("a ;3; b");
-        assert!(result.is_ok());
         let (_, c) = result.unwrap();
-        assert!(matches!(c, Cell::Comp(3, _)));
+        let expected = Cell::Comp(
+            3,
+            vec![Cell::Var("a".to_string(), vec![]), Cell::Var("b".to_string(), vec![])],
+        );
+        assert_eq!(c, expected);
     }
 
     #[test]
     fn test_cell_composition_complex() {
         let result = cell("a ; b ;; c");
-        assert!(result.is_ok());
         let (_, c) = result.unwrap();
-        // Should be: Comp(1, [a, b]) ; Comp(2, [..., c])
-        // Due to left-to-right folding
-        if let Cell::Comp(axis, cells) = c {
-            assert_eq!(axis, 2);
-            assert_eq!(cells.len(), 2);
-        } else {
-            panic!("Expected Cell::Comp");
-        }
+        // Should be: (a ; b) ;; c
+        // Because ; has higher precedence than ;;
+        let expected = Cell::Comp(
+            2,
+            vec![
+                Cell::Comp(
+                    1,
+                    vec![Cell::Var("a".to_string(), vec![]), Cell::Var("b".to_string(), vec![])],
+                ),
+                Cell::Var("c".to_string(), vec![]),
+            ],
+        );
+        assert_eq!(c, expected);
     }
 
     #[test]
     fn test_cell_with_parens() {
         let result = cell("(foo)");
-        assert!(result.is_ok());
         let (_, c) = result.unwrap();
-        assert!(matches!(c, Cell::Var(name, _) if name == "foo"));
+        let expected = Cell::Var("foo".to_string(), vec![]);
+        assert_eq!(c, expected);
     }
 
     #[test]
     fn test_simple_decl() {
         let result = decl("foo x y = bar");
-        assert!(result.is_ok());
         let (_, d) = result.unwrap();
-        assert_eq!(d.names, vec!["foo", "x", "y"]);
-        assert!(d.body.is_some());
+        let expected = Decl {
+            decos: vec![],
+            names: vec!["foo".to_string(), "x".to_string(), "y".to_string()],
+            args: vec![],
+            ty: None,
+            body: Some(Cell::Var("bar".to_string(), vec![])),
+        };
+        assert_eq!(d, expected);
     }
 
     #[test]
     fn test_arg_decls_simple() {
         let result = arg_decls("x y: nat, z: int");
-        assert!(result.is_ok());
         let (_, args) = result.unwrap();
-        assert_eq!(args.len(), 2);
+        let expected = vec![
+            ArgDecl {
+                names: vec!["x".to_string(), "y".to_string()],
+                ty: Some(ArgType::Lit(LitType::Nat)),
+            },
+            ArgDecl {
+                names: vec!["z".to_string()],
+                ty: Some(ArgType::Lit(LitType::Int)),
+            },
+        ];
+        assert_eq!(args, expected);
     }
 
     #[test]
     fn test_decl_with_brackets() {
         let result = decl("foo [x y: nat, z: int] = bar");
-        assert!(result.is_ok());
         let (_, d) = result.unwrap();
-        assert_eq!(d.names, vec!["foo"]);
-        assert_eq!(d.args.len(), 2);
-        assert_eq!(d.args[0].names, vec!["x", "y"]);
-        assert_eq!(d.args[1].names, vec!["z"]);
+        let expected = Decl {
+            decos: vec![],
+            names: vec!["foo".to_string()],
+            args: vec![
+                ArgDecl {
+                    names: vec!["x".to_string(), "y".to_string()],
+                    ty: Some(ArgType::Lit(LitType::Nat)),
+                },
+                ArgDecl {
+                    names: vec!["z".to_string()],
+                    ty: Some(ArgType::Lit(LitType::Int)),
+                },
+            ],
+            ty: None,
+            body: Some(Cell::Var("bar".to_string(), vec![])),
+        };
+        assert_eq!(d, expected);
     }
 
     #[test]
     fn test_decl_with_type() {
         let result = decl("foo : * = bar");
-        assert!(result.is_ok());
         let (_, d) = result.unwrap();
-        assert!(d.ty.is_some());
-        assert!(matches!(d.ty.unwrap(), CellType::Star));
+        let expected = Decl {
+            decos: vec![],
+            names: vec!["foo".to_string()],
+            args: vec![],
+            ty: Some(CellType::Star),
+            body: Some(Cell::Var("bar".to_string(), vec![])),
+        };
+        assert_eq!(d, expected);
     }
 
     #[test]
     fn test_decl_with_decorator() {
         let result = decl("[inline] foo = bar");
-        assert!(result.is_ok());
         let (_, d) = result.unwrap();
-        assert_eq!(d.decos.len(), 1);
-        assert_eq!(d.decos[0].name, "inline");
+        let expected = Decl {
+            decos: vec![Decorator {
+                name: "inline".to_string(),
+                args: vec![],
+            }],
+            names: vec!["foo".to_string()],
+            args: vec![],
+            ty: None,
+            body: Some(Cell::Var("bar".to_string(), vec![])),
+        };
+        assert_eq!(d, expected);
     }
 
     #[test]
     fn test_decl_with_multiple_decorators() {
         let result = decl("[inline, pure] foo = bar");
-        assert!(result.is_ok());
         let (_, d) = result.unwrap();
-        assert_eq!(d.decos.len(), 2);
-        assert_eq!(d.decos[0].name, "inline");
-        assert_eq!(d.decos[1].name, "pure");
+        let expected = Decl {
+            decos: vec![
+                Decorator {
+                    name: "inline".to_string(),
+                    args: vec![],
+                },
+                Decorator {
+                    name: "pure".to_string(),
+                    args: vec![],
+                },
+            ],
+            names: vec!["foo".to_string()],
+            args: vec![],
+            ty: None,
+            body: Some(Cell::Var("bar".to_string(), vec![])),
+        };
+        assert_eq!(d, expected);
     }
 
     #[test]
     fn test_decl_with_multiple_decorator_brackets() {
         let result = decl("[inline] [pure] foo = bar");
-        assert!(result.is_ok());
         let (_, d) = result.unwrap();
-        assert_eq!(d.decos.len(), 2);
-        assert_eq!(d.decos[0].name, "inline");
-        assert_eq!(d.decos[1].name, "pure");
+        let expected = Decl {
+            decos: vec![
+                Decorator {
+                    name: "inline".to_string(),
+                    args: vec![],
+                },
+                Decorator {
+                    name: "pure".to_string(),
+                    args: vec![],
+                },
+            ],
+            names: vec!["foo".to_string()],
+            args: vec![],
+            ty: None,
+            body: Some(Cell::Var("bar".to_string(), vec![])),
+        };
+        assert_eq!(d, expected);
     }
 
     #[test]
     fn test_decorator_with_args() {
         let result = decl("[optimize(3)] foo = bar");
-        assert!(result.is_ok());
         let (_, d) = result.unwrap();
-        assert_eq!(d.decos.len(), 1);
-        assert_eq!(d.decos[0].name, "optimize");
-        assert_eq!(d.decos[0].args.len(), 1);
+        let expected = Decl {
+            decos: vec![Decorator {
+                name: "optimize".to_string(),
+                args: vec![Arg::Lit(Lit::Nat(3))],
+            }],
+            names: vec!["foo".to_string()],
+            args: vec![],
+            ty: None,
+            body: Some(Cell::Var("bar".to_string(), vec![])),
+        };
+        assert_eq!(d, expected);
     }
 
     #[test]
     fn test_program_single_decl() {
         let result = program("foo = bar");
-        assert!(result.is_ok());
         let (_, decls) = result.unwrap();
-        assert_eq!(decls.len(), 1);
+        let expected = vec![Decl {
+            decos: vec![],
+            names: vec!["foo".to_string()],
+            args: vec![],
+            ty: None,
+            body: Some(Cell::Var("bar".to_string(), vec![])),
+        }];
+        assert_eq!(decls, expected);
     }
 
     #[test]
     fn test_program_multiple_decls() {
         let result = program("foo = bar\nbaz = qux");
-        assert!(result.is_ok());
         let (_, decls) = result.unwrap();
-        assert_eq!(decls.len(), 2);
+        let expected = vec![
+            Decl {
+                decos: vec![],
+                names: vec!["foo".to_string()],
+                args: vec![],
+                ty: None,
+                body: Some(Cell::Var("bar".to_string(), vec![])),
+            },
+            Decl {
+                decos: vec![],
+                names: vec!["baz".to_string()],
+                args: vec![],
+                ty: None,
+                body: Some(Cell::Var("qux".to_string(), vec![])),
+            },
+        ];
+        assert_eq!(decls, expected);
     }
 
     #[test]
@@ -732,13 +834,7 @@ mod tests {
         "#;
 
         let result = program(input);
-        assert!(result.is_ok());
         let (_, decls) = result.unwrap();
-
-        eprintln!("Decls count: {}", decls.len());
-        for (i, d) in decls.iter().enumerate() {
-            eprintln!("decl[{}]: names={:?}", i, d.names);
-        }
 
         assert_eq!(decls.len(), 3);
 
@@ -756,80 +852,99 @@ mod tests {
     #[test]
     fn test_nested_composition() {
         let result = cell("(a ; b) ;; (c ; d)");
-        assert!(result.is_ok());
         let (_, c) = result.unwrap();
-        if let Cell::Comp(axis, cells) = c {
-            assert_eq!(axis, 2);
-            assert_eq!(cells.len(), 2);
-            assert!(matches!(cells[0], Cell::Comp(1, _)));
-            assert!(matches!(cells[1], Cell::Comp(1, _)));
-        } else {
-            panic!("Expected Cell::Comp");
-        }
+        let expected = Cell::Comp(
+            2,
+            vec![
+                Cell::Comp(
+                    1,
+                    vec![Cell::Var("a".to_string(), vec![]), Cell::Var("b".to_string(), vec![])],
+                ),
+                Cell::Comp(
+                    1,
+                    vec![Cell::Var("c".to_string(), vec![]), Cell::Var("d".to_string(), vec![])],
+                ),
+            ],
+        );
+        assert_eq!(c, expected);
     }
 
     #[test]
     fn test_cell_with_complex_args() {
         let result = cell("foo[a ; b, \"hello\", 42]");
-        assert!(result.is_ok());
         let (_, c) = result.unwrap();
-        if let Cell::Var(name, args) = c {
-            assert_eq!(name, "foo");
-            assert_eq!(args.len(), 3);
-            assert!(matches!(args[0], Arg::Cell(_)));
-            assert!(matches!(args[1], Arg::Lit(Lit::Str(_))));
-            assert!(matches!(args[2], Arg::Lit(Lit::Nat(42))));
-        } else {
-            panic!("Expected Cell::Var");
-        }
+        let expected = Cell::Var(
+            "foo".to_string(),
+            vec![
+                Arg::Cell(Cell::Comp(
+                    1,
+                    vec![Cell::Var("a".to_string(), vec![]), Cell::Var("b".to_string(), vec![])],
+                )),
+                Arg::Lit(Lit::Str("hello".to_string())),
+                Arg::Lit(Lit::Nat(42)),
+            ],
+        );
+        assert_eq!(c, expected);
     }
 
     #[test]
     fn test_arrow_type() {
         let result = cell_type("a → b");
-        assert!(result.is_ok());
         let (_, ty) = result.unwrap();
-        assert!(matches!(ty, CellType::Arr(_, _)));
+        let expected = CellType::Arr(
+            Cell::Var("a".to_string(), vec![]),
+            Cell::Var("b".to_string(), vec![]),
+        );
+        assert_eq!(ty, expected);
     }
 
     #[test]
     fn test_empty_program() {
         let result = program("");
-        assert!(result.is_ok());
         let (_, decls) = result.unwrap();
-        assert_eq!(decls.len(), 0);
+        let expected: Vec<Decl> = vec![];
+        assert_eq!(decls, expected);
     }
 
     #[test]
     fn test_decl_no_body() {
         let result = decl("foo x y : *");
-        assert!(result.is_ok());
         let (_, d) = result.unwrap();
-        assert_eq!(d.names, vec!["foo", "x", "y"]);
-        assert!(d.body.is_none());
-        assert!(d.ty.is_some());
+        let expected = Decl {
+            decos: vec![],
+            names: vec!["foo".to_string(), "x".to_string(), "y".to_string()],
+            args: vec![],
+            ty: Some(CellType::Star),
+            body: None,
+        };
+        assert_eq!(d, expected);
     }
 
     #[test]
     fn test_semicolon_without_spaces() {
         let result = cell("a;b");
-        assert!(result.is_ok());
         let (_, c) = result.unwrap();
-        assert!(matches!(c, Cell::Comp(1, _)));
+        let expected = Cell::Comp(
+            1,
+            vec![Cell::Var("a".to_string(), vec![]), Cell::Var("b".to_string(), vec![])],
+        );
+        assert_eq!(c, expected);
     }
 
     #[test]
     fn test_semicolon_with_spaces() {
         let result = cell("a ; b");
-        assert!(result.is_ok());
         let (_, c) = result.unwrap();
-        assert!(matches!(c, Cell::Comp(1, _)));
+        let expected = Cell::Comp(
+            1,
+            vec![Cell::Var("a".to_string(), vec![]), Cell::Var("b".to_string(), vec![])],
+        );
+        assert_eq!(c, expected);
     }
 
     #[test]
     fn test_ident_with_dot() {
         let result = ident("foo.bar");
-        assert!(result.is_ok());
         let (_, name) = result.unwrap();
         assert_eq!(name, "foo.bar");
     }
@@ -837,7 +952,6 @@ mod tests {
     #[test]
     fn test_ident_with_apostrophe() {
         let result = ident("foo'");
-        assert!(result.is_ok());
         let (_, name) = result.unwrap();
         assert_eq!(name, "foo'");
     }
@@ -845,7 +959,6 @@ mod tests {
     #[test]
     fn test_ident_with_multiple_apostrophes() {
         let result = ident("f''");
-        assert!(result.is_ok());
         let (_, name) = result.unwrap();
         assert_eq!(name, "f''");
     }
@@ -854,7 +967,6 @@ mod tests {
     fn test_precedence_simple() {
         // a ; b ;; c should parse as (a ; b) ;; c
         let result = cell("a ; b ;; c");
-        assert!(result.is_ok());
         let (_, c) = result.unwrap();
         assert_eq!(
             c,
@@ -878,7 +990,6 @@ mod tests {
     fn test_precedence_reversed() {
         // a ;; b ; c should parse as a ;; (b ; c)
         let result = cell("a ;; b ; c");
-        assert!(result.is_ok());
         let (_, c) = result.unwrap();
         assert_eq!(
             c,
@@ -977,48 +1088,92 @@ mod tests {
     #[test]
     fn test_parse_map_2d_decl() {
         let result = decl("map-2d f arr = row-map[f]");
-        eprintln!("Result: {:?}", result);
         assert!(result.is_ok());
         let (_, d) = result.unwrap();
-        assert_eq!(d.names[0], "map-2d");
+        let expected = Decl {
+            decos: vec![],
+            names: vec!["map-2d".to_string(), "f".to_string(), "arr".to_string()],
+            args: vec![],
+            ty: None,
+            body: Some(Cell::Var("row-map".to_string(), vec![Arg::Cell(Cell::Var("f".to_string(), vec![]))])),
+        };
+        assert_eq!(d, expected);
     }
 
     #[test]
     fn test_simple_three_decls() {
         let input = "a = b\nc = d\ne = f";
         let result = program(input);
-        eprintln!("Result: {:?}", result);
         assert!(result.is_ok());
         let (_, decls) = result.unwrap();
-        eprintln!("Decls: {}", decls.len());
-        assert_eq!(decls.len(), 3);
+        let expected = vec![
+            Decl {
+                decos: vec![],
+                names: vec!["a".to_string()],
+                args: vec![],
+                ty: None,
+                body: Some(Cell::Var("b".to_string(), vec![])),
+            },
+            Decl {
+                decos: vec![],
+                names: vec!["c".to_string()],
+                args: vec![],
+                ty: None,
+                body: Some(Cell::Var("d".to_string(), vec![])),
+            },
+            Decl {
+                decos: vec![],
+                names: vec!["e".to_string()],
+                args: vec![],
+                ty: None,
+                body: Some(Cell::Var("f".to_string(), vec![])),
+            },
+        ];
+        assert_eq!(decls, expected);
     }
 
     #[test]
     fn test_map_2d_standalone() {
         let input = "map-2d f arr = row-map[f]";
         let result = decl(input);
-        eprintln!("Result: {:?}", result);
         assert!(result.is_ok());
         let (_, d) = result.unwrap();
-        assert_eq!(d.names, vec!["map-2d", "f", "arr"]);
+        let expected = Decl {
+            decos: vec![],
+            names: vec!["map-2d".to_string(), "f".to_string(), "arr".to_string()],
+            args: vec![],
+            ty: None,
+            body: Some(Cell::Var("row-map".to_string(), vec![Arg::Cell(Cell::Var("f".to_string(), vec![]))])),
+        };
+        assert_eq!(d, expected);
     }
 
     #[test]
     fn test_two_decls_simple() {
         let input = "compose [f g] = f[g]\n\nmap-2d f arr = row-map[f]";
         let result = program(input);
-        eprintln!("Result OK: {}", result.is_ok());
-        if let Ok((rest, decls)) = &result {
-            eprintln!("Rest: {:?}", rest);
-            eprintln!("Decls: {}", decls.len());
-            for (i, d) in decls.iter().enumerate() {
-                eprintln!("  decl[{}]: {:?}", i, d.names);
-            }
-        }
         assert!(result.is_ok());
         let (_, decls) = result.unwrap();
-        assert_eq!(decls.len(), 2);
+        let expected = vec![
+            Decl {
+                decos: vec![],
+                names: vec!["compose".to_string()],
+                args: vec![ArgDecl {
+                    names: vec!["f".to_string(), "g".to_string()],
+                    ty: None,
+                }],
+                ty: None,
+                body: Some(Cell::Var("f".to_string(), vec![Arg::Cell(Cell::Var("g".to_string(), vec![]))])),
+            },
+            Decl {
+                decos: vec![],
+                names: vec!["map-2d".to_string(), "f".to_string(), "arr".to_string()],
+                args: vec![],
+                ty: None,
+                body: Some(Cell::Var("row-map".to_string(), vec![Arg::Cell(Cell::Var("f".to_string(), vec![]))])),
+            },
+        ];
+        assert_eq!(decls, expected);
     }
 
     #[test]
@@ -1112,22 +1267,84 @@ mod tests {
         let input = "f: a → b";
         let result = parse_program(input);
         assert!(result.is_ok());
+        let decls = result.unwrap();
+        let expected = vec![Decl {
+            decos: vec![],
+            names: vec!["f".to_string()],
+            args: vec![],
+            ty: Some(CellType::Arr(
+                Cell::Var("a".to_string(), vec![]),
+                Cell::Var("b".to_string(), vec![]),
+            )),
+            body: None,
+        }];
+        assert_eq!(decls, expected);
     }
 
     #[test]
     fn test_long_composition() {
-        // Many terms in space-separated composition
-        let input = "f = a b c d e f g h i j";
+        // Many terms in space-separated composition - right associative
+        // a b c d = a (b (c d))
+        let input = "f = a b c d";
         let result = parse_program(input);
         assert!(result.is_ok());
+        let decls = result.unwrap();
+        let expected_body = Cell::Comp(
+            0,
+            vec![
+                Cell::Var("a".to_string(), vec![]),
+                Cell::Comp(
+                    0,
+                    vec![
+                        Cell::Var("b".to_string(), vec![]),
+                        Cell::Comp(
+                            0,
+                            vec![
+                                Cell::Var("c".to_string(), vec![]),
+                                Cell::Var("d".to_string(), vec![]),
+                            ],
+                        ),
+                    ],
+                ),
+            ],
+        );
+        assert_eq!(decls[0].body, Some(expected_body));
     }
 
     #[test]
     fn test_mixed_axes() {
         // Mix different axis numbers
+        // Lower axis binds tighter: ((a ; b) ;; c) ;;; d) ;4; e
         let input = "f = a ; b ;; c ;;; d ;4; e";
         let result = parse_program(input);
         assert!(result.is_ok());
+        let decls = result.unwrap();
+        let expected_body = Cell::Comp(
+            4,
+            vec![
+                Cell::Comp(
+                    3,
+                    vec![
+                        Cell::Comp(
+                            2,
+                            vec![
+                                Cell::Comp(
+                                    1,
+                                    vec![
+                                        Cell::Var("a".to_string(), vec![]),
+                                        Cell::Var("b".to_string(), vec![]),
+                                    ],
+                                ),
+                                Cell::Var("c".to_string(), vec![]),
+                            ],
+                        ),
+                        Cell::Var("d".to_string(), vec![]),
+                    ],
+                ),
+                Cell::Var("e".to_string(), vec![]),
+            ],
+        );
+        assert_eq!(decls[0].body, Some(expected_body));
     }
 
     #[test]
@@ -1186,6 +1403,15 @@ mod tests {
         let input = "f: *";
         let result = parse_program(input);
         assert!(result.is_ok());
+        let decls = result.unwrap();
+        let expected = vec![Decl {
+            decos: vec![],
+            names: vec!["f".to_string()],
+            args: vec![],
+            ty: Some(CellType::Star),
+            body: None,
+        }];
+        assert_eq!(decls, expected);
     }
 
     #[test]
@@ -1499,6 +1725,15 @@ mod tests {
         let result = parse_program(input);
         // This should actually succeed - it's a valid type-less, body-less declaration
         assert!(result.is_ok());
+        let decls = result.unwrap();
+        let expected = vec![Decl {
+            decos: vec![],
+            names: vec!["foo".to_string()],
+            args: vec![],
+            ty: None,
+            body: None,
+        }];
+        assert_eq!(decls, expected);
     }
 
     #[test]
@@ -1600,6 +1835,51 @@ mod tests {
     }
 
     #[test]
+    fn test_chr_type_parsing() {
+        // Debug: parse just the chr type declaration
+        let input = "chr: x m x; x m → x (x m; m)";
+        let result = decl(input);
+        assert!(result.is_ok());
+        let (remaining, d) = result.unwrap();
+        eprintln!("Remaining input: {:?}", remaining);
+        eprintln!("Parsed decl: names={:?}, has_body={}", d.names, d.body.is_some());
+        assert_eq!(d.names, vec!["chr"]);
+        assert!(d.body.is_none());
+        assert_eq!(remaining, "");
+    }
+
+    #[test]
+    fn test_chr_type_with_newline() {
+        // Debug: parse chr type with newline after
+        let input = "chr: x m x; x m → x (x m; m)\n";
+        let result = decl(input);
+        assert!(result.is_ok());
+        let (remaining, d) = result.unwrap();
+        eprintln!("Remaining input: {:?}", remaining);
+        eprintln!("Parsed decl: names={:?}, has_body={}, body={:?}", d.names, d.body.is_some(), d.body);
+        assert_eq!(d.names, vec!["chr"]);
+        assert!(d.body.is_none());
+    }
+
+    #[test]
+    fn test_chr_followed_by_decl() {
+        // This is the problematic case from pentagon
+        let input = "chr: x m x; x m → x (x m; m)\naaa = test";
+        let result = parse_program(input);
+        assert!(result.is_ok());
+        let decls = result.unwrap();
+        eprintln!("Parsed {} declarations", decls.len());
+        for (i, decl) in decls.iter().enumerate() {
+            eprintln!("  decl[{}]: names={:?}, has_body={}", i, decl.names, decl.body.is_some());
+        }
+        assert_eq!(decls.len(), 2);
+        assert_eq!(decls[0].names, vec!["chr"]);
+        assert!(decls[0].body.is_none()); // chr should NOT have a body
+        assert_eq!(decls[1].names, vec!["aaa"]);
+        assert!(decls[1].body.is_some()); // aaa should have a body
+    }
+
+    #[test]
     fn test_pentagon() {
         let input = r#"
             u: *
@@ -1629,7 +1909,367 @@ mod tests {
             pentagon: aaa → oao
         "#;
         let result = parse_program(input);
-        eprintln!("Result: {:?}", result);
         assert!(result.is_ok());
+        let decls = result.unwrap();
+
+        // Structure check
+        assert_eq!(decls.len(), 13);
+
+        // u: *
+        assert_eq!(decls[0], Decl {
+            decos: vec![],
+            names: vec!["u".to_string()],
+            args: vec![],
+            ty: Some(CellType::Star),
+            body: None,
+        });
+
+        // x: u → u
+        assert_eq!(decls[1], Decl {
+            decos: vec![],
+            names: vec!["x".to_string()],
+            args: vec![],
+            ty: Some(CellType::Arr(
+                Cell::Var("u".to_string(), vec![]),
+                Cell::Var("u".to_string(), vec![]),
+            )),
+            body: None,
+        });
+
+        // m: x x → x
+        assert_eq!(decls[2], Decl {
+            decos: vec![],
+            names: vec!["m".to_string()],
+            args: vec![],
+            ty: Some(CellType::Arr(
+                Cell::Comp(0, vec![
+                    Cell::Var("x".to_string(), vec![]),
+                    Cell::Var("x".to_string(), vec![]),
+                ]),
+                Cell::Var("x".to_string(), vec![]),
+            )),
+            body: None,
+        });
+
+        // a: m x; m → x m; m
+        assert_eq!(decls[3], Decl {
+            decos: vec![],
+            names: vec!["a".to_string()],
+            args: vec![],
+            ty: Some(CellType::Arr(
+                Cell::Comp(1, vec![
+                    Cell::Comp(0, vec![
+                        Cell::Var("m".to_string(), vec![]),
+                        Cell::Var("x".to_string(), vec![]),
+                    ]),
+                    Cell::Var("m".to_string(), vec![]),
+                ]),
+                Cell::Comp(1, vec![
+                    Cell::Comp(0, vec![
+                        Cell::Var("x".to_string(), vec![]),
+                        Cell::Var("m".to_string(), vec![]),
+                    ]),
+                    Cell::Var("m".to_string(), vec![]),
+                ]),
+            )),
+            body: None,
+        });
+
+        // chl: (x m; m) x → x m x; m x
+        assert_eq!(decls[4], Decl {
+            decos: vec![],
+            names: vec!["chl".to_string()],
+            args: vec![],
+            ty: Some(CellType::Arr(
+                Cell::Comp(0, vec![
+                    Cell::Comp(1, vec![
+                        Cell::Comp(0, vec![
+                            Cell::Var("x".to_string(), vec![]),
+                            Cell::Var("m".to_string(), vec![]),
+                        ]),
+                        Cell::Var("m".to_string(), vec![]),
+                    ]),
+                    Cell::Var("x".to_string(), vec![]),
+                ]),
+                Cell::Comp(1, vec![
+                    Cell::Comp(0, vec![
+                        Cell::Var("x".to_string(), vec![]),
+                        Cell::Comp(0, vec![
+                            Cell::Var("m".to_string(), vec![]),
+                            Cell::Var("x".to_string(), vec![]),
+                        ]),
+                    ]),
+                    Cell::Comp(0, vec![
+                        Cell::Var("m".to_string(), vec![]),
+                        Cell::Var("x".to_string(), vec![]),
+                    ]),
+                ]),
+            )),
+            body: None,
+        });
+
+        // chr: x m x; x m → x (m x; m)
+        assert_eq!(decls[5], Decl {
+            decos: vec![],
+            names: vec!["chr".to_string()],
+            args: vec![],
+            ty: Some(CellType::Arr(
+                Cell::Comp(1, vec![
+                    Cell::Comp(0, vec![
+                        Cell::Var("x".to_string(), vec![]),
+                        Cell::Comp(0, vec![
+                            Cell::Var("m".to_string(), vec![]),
+                            Cell::Var("x".to_string(), vec![]),
+                        ]),
+                    ]),
+                    Cell::Comp(0, vec![
+                        Cell::Var("x".to_string(), vec![]),
+                        Cell::Var("m".to_string(), vec![]),
+                    ]),
+                ]),
+                Cell::Comp(0, vec![
+                    Cell::Var("x".to_string(), vec![]),
+                    Cell::Comp(1, vec![
+                        Cell::Comp(0, vec![
+                            Cell::Var("m".to_string(), vec![]),
+                            Cell::Var("x".to_string(), vec![]),
+                        ]),
+                        Cell::Var("m".to_string(), vec![]),
+                    ]),
+                ]),
+            )),
+            body: None,
+        });
+
+        // aaa = a x; m ;; chl; m ;; x m x; a ;; chr; m ;; x a; m
+        assert_eq!(decls[6], Decl {
+            decos: vec![],
+            names: vec!["aaa".to_string()],
+            args: vec![],
+            ty: None,
+            body: Some(Cell::Comp(2, vec![
+                Cell::Comp(1, vec![
+                    Cell::Comp(0, vec![
+                        Cell::Var("a".to_string(), vec![]),
+                        Cell::Var("x".to_string(), vec![]),
+                    ]),
+                    Cell::Var("m".to_string(), vec![]),
+                ]),
+                Cell::Comp(2, vec![
+                    Cell::Comp(1, vec![
+                        Cell::Var("chl".to_string(), vec![]),
+                        Cell::Var("m".to_string(), vec![]),
+                    ]),
+                    Cell::Comp(2, vec![
+                        Cell::Comp(1, vec![
+                            Cell::Comp(0, vec![
+                                Cell::Var("x".to_string(), vec![]),
+                                Cell::Comp(0, vec![
+                                    Cell::Var("m".to_string(), vec![]),
+                                    Cell::Var("x".to_string(), vec![]),
+                                ]),
+                            ]),
+                            Cell::Var("a".to_string(), vec![]),
+                        ]),
+                        Cell::Comp(2, vec![
+                            Cell::Comp(1, vec![
+                                Cell::Var("chr".to_string(), vec![]),
+                                Cell::Var("m".to_string(), vec![]),
+                            ]),
+                            Cell::Comp(1, vec![
+                                Cell::Comp(0, vec![
+                                    Cell::Var("x".to_string(), vec![]),
+                                    Cell::Var("a".to_string(), vec![]),
+                                ]),
+                                Cell::Var("m".to_string(), vec![]),
+                            ]),
+                        ]),
+                    ]),
+                ]),
+            ])),
+        });
+
+        // ch0: m x x; x m → m m
+        assert_eq!(decls[7], Decl {
+            decos: vec![],
+            names: vec!["ch0".to_string()],
+            args: vec![],
+            ty: Some(CellType::Arr(
+                Cell::Comp(1, vec![
+                    Cell::Comp(0, vec![
+                        Cell::Var("m".to_string(), vec![]),
+                        Cell::Comp(0, vec![
+                            Cell::Var("x".to_string(), vec![]),
+                            Cell::Var("x".to_string(), vec![]),
+                        ]),
+                    ]),
+                    Cell::Comp(0, vec![
+                        Cell::Var("x".to_string(), vec![]),
+                        Cell::Var("m".to_string(), vec![]),
+                    ]),
+                ]),
+                Cell::Comp(0, vec![
+                    Cell::Var("m".to_string(), vec![]),
+                    Cell::Var("m".to_string(), vec![]),
+                ]),
+            )),
+            body: None,
+        });
+
+        // ch1: m m → x x m; m x
+        assert_eq!(decls[8], Decl {
+            decos: vec![],
+            names: vec!["ch1".to_string()],
+            args: vec![],
+            ty: Some(CellType::Arr(
+                Cell::Comp(0, vec![
+                    Cell::Var("m".to_string(), vec![]),
+                    Cell::Var("m".to_string(), vec![]),
+                ]),
+                Cell::Comp(1, vec![
+                    Cell::Comp(0, vec![
+                        Cell::Var("x".to_string(), vec![]),
+                        Cell::Comp(0, vec![
+                            Cell::Var("x".to_string(), vec![]),
+                            Cell::Var("m".to_string(), vec![]),
+                        ]),
+                    ]),
+                    Cell::Comp(0, vec![
+                        Cell::Var("m".to_string(), vec![]),
+                        Cell::Var("x".to_string(), vec![]),
+                    ]),
+                ]),
+            )),
+            body: None,
+        });
+
+        // kl: (m x; m) x → m x x; m x
+        assert_eq!(decls[9], Decl {
+            decos: vec![],
+            names: vec!["kl".to_string()],
+            args: vec![],
+            ty: Some(CellType::Arr(
+                Cell::Comp(0, vec![
+                    Cell::Comp(1, vec![
+                        Cell::Comp(0, vec![
+                            Cell::Var("m".to_string(), vec![]),
+                            Cell::Var("x".to_string(), vec![]),
+                        ]),
+                        Cell::Var("m".to_string(), vec![]),
+                    ]),
+                    Cell::Var("x".to_string(), vec![]),
+                ]),
+                Cell::Comp(1, vec![
+                    Cell::Comp(0, vec![
+                        Cell::Var("m".to_string(), vec![]),
+                        Cell::Comp(0, vec![
+                            Cell::Var("x".to_string(), vec![]),
+                            Cell::Var("x".to_string(), vec![]),
+                        ]),
+                    ]),
+                    Cell::Comp(0, vec![
+                        Cell::Var("m".to_string(), vec![]),
+                        Cell::Var("x".to_string(), vec![]),
+                    ]),
+                ]),
+            )),
+            body: None,
+        });
+
+        // kr: x x m; x m → x (x m; m)
+        assert_eq!(decls[10], Decl {
+            decos: vec![],
+            names: vec!["kr".to_string()],
+            args: vec![],
+            ty: Some(CellType::Arr(
+                Cell::Comp(1, vec![
+                    Cell::Comp(0, vec![
+                        Cell::Var("x".to_string(), vec![]),
+                        Cell::Comp(0, vec![
+                            Cell::Var("x".to_string(), vec![]),
+                            Cell::Var("m".to_string(), vec![]),
+                        ]),
+                    ]),
+                    Cell::Comp(0, vec![
+                        Cell::Var("x".to_string(), vec![]),
+                        Cell::Var("m".to_string(), vec![]),
+                    ]),
+                ]),
+                Cell::Comp(0, vec![
+                    Cell::Var("x".to_string(), vec![]),
+                    Cell::Comp(1, vec![
+                        Cell::Comp(0, vec![
+                            Cell::Var("x".to_string(), vec![]),
+                            Cell::Var("m".to_string(), vec![]),
+                        ]),
+                        Cell::Var("m".to_string(), vec![]),
+                    ]),
+                ]),
+            )),
+            body: None,
+        });
+
+        // oao = kl; m ;; m x x; a ;; (ch0 ;; ch1); m ;; x x m; a ;; kr; m
+        assert_eq!(decls[11], Decl {
+            decos: vec![],
+            names: vec!["oao".to_string()],
+            args: vec![],
+            ty: None,
+            body: Some(Cell::Comp(2, vec![
+                Cell::Comp(1, vec![
+                    Cell::Var("kl".to_string(), vec![]),
+                    Cell::Var("m".to_string(), vec![]),
+                ]),
+                Cell::Comp(2, vec![
+                    Cell::Comp(1, vec![
+                        Cell::Comp(0, vec![
+                            Cell::Var("m".to_string(), vec![]),
+                            Cell::Comp(0, vec![
+                                Cell::Var("x".to_string(), vec![]),
+                                Cell::Var("x".to_string(), vec![]),
+                            ]),
+                        ]),
+                        Cell::Var("a".to_string(), vec![]),
+                    ]),
+                    Cell::Comp(2, vec![
+                        Cell::Comp(1, vec![
+                            Cell::Comp(2, vec![
+                                Cell::Var("ch0".to_string(), vec![]),
+                                Cell::Var("ch1".to_string(), vec![]),
+                            ]),
+                            Cell::Var("m".to_string(), vec![]),
+                        ]),
+                        Cell::Comp(2, vec![
+                            Cell::Comp(1, vec![
+                                Cell::Comp(0, vec![
+                                    Cell::Var("x".to_string(), vec![]),
+                                    Cell::Comp(0, vec![
+                                        Cell::Var("x".to_string(), vec![]),
+                                        Cell::Var("m".to_string(), vec![]),
+                                    ]),
+                                ]),
+                                Cell::Var("a".to_string(), vec![]),
+                            ]),
+                            Cell::Comp(1, vec![
+                                Cell::Var("kr".to_string(), vec![]),
+                                Cell::Var("m".to_string(), vec![]),
+                            ]),
+                        ]),
+                    ]),
+                ]),
+            ])),
+        });
+
+        // pentagon: aaa → oao
+        assert_eq!(decls[12], Decl {
+            decos: vec![],
+            names: vec!["pentagon".to_string()],
+            args: vec![],
+            ty: Some(CellType::Arr(
+                Cell::Var("aaa".to_string(), vec![]),
+                Cell::Var("oao".to_string(), vec![]),
+            )),
+            body: None,
+        });
     }
 }
