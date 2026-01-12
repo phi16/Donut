@@ -15,10 +15,9 @@ pub enum Ty {
 
 #[derive(Debug, Clone)]
 pub struct Element {
-    pub color: (u8, u8, u8),
     pub name: String,
-    pub level: u8,
-    pub ty: Ty,
+    pub color: (u8, u8, u8),
+    pub cell: FreeCell,
 }
 
 #[derive(Debug, Clone)]
@@ -65,6 +64,14 @@ impl Table {
         }
     }
 
+    fn rat(&self, a: &Arg) -> Result<f64> {
+        match a {
+            Arg::Lit(Lit::Rat(r)) => Ok(*r),
+            Arg::Lit(Lit::Nat(n)) => Ok(*n as f64),
+            _ => Err("expected rational literal".to_string()),
+        }
+    }
+
     fn match_ty(&self, x: &Ty, y: &Ty) -> Result<()> {
         match (x, y) {
             (Ty::Zero, Ty::Zero) => Ok(()),
@@ -88,18 +95,40 @@ impl Table {
         }
         let mut color = None;
         for deco in &d.decos {
-            if deco.name == "color" {
-                if color.is_some() {
-                    // return Err("duplicate color decorator".to_string());
-                }
+            if deco.name == "rgb" {
                 if deco.args.len() != 3 {
-                    return Err("color decorator requires three arguments".to_string());
+                    return Err("rgb decorator requires three arguments".to_string());
                 }
                 let r = self.nat(&deco.args[0])? as u8;
                 let g = self.nat(&deco.args[1])? as u8;
                 let b = self.nat(&deco.args[2])? as u8;
                 color = Some((r, g, b));
-            }
+            } else if deco.name == "hsv" {
+                if deco.args.len() != 3 {
+                    return Err("hsv decorator requires three arguments".to_string());
+                }
+                let h = self.rat(&deco.args[0])? as f64;
+                let s = self.rat(&deco.args[1])? as f64;
+                let v = self.rat(&deco.args[2])? as f64;
+                fn hsv2rgb(h: f64, s: f64, v: f64) -> (u8, u8, u8) {
+                    let r = (((h + 3.0 / 3.0).fract() * 6.0 - 3.0).abs() - 1.0).clamp(0.0, 1.0);
+                    let g = (((h + 2.0 / 3.0).fract() * 6.0 - 3.0).abs() - 1.0).clamp(0.0, 1.0);
+                    let b = (((h + 1.0 / 3.0).fract() * 6.0 - 3.0).abs() - 1.0).clamp(0.0, 1.0);
+                    let r = (r * s + (1.0 - s)) * v;
+                    let g = (g * s + (1.0 - s)) * v;
+                    let b = (b * s + (1.0 - s)) * v;
+                    ((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8)
+                }
+                color = Some(hsv2rgb(h, s, v));
+            } else if deco.name == "gray" {
+                if deco.args.len() != 1 {
+                    return Err("gray decorator requires one argument".to_string());
+                }
+                let g = self.nat(&deco.args[0])? as u8;
+                color = Some((g, g, g));
+            } /* else {
+            return Err(format!("unknown decorator: {}", deco.name));
+            } */
         }
         let ty = d.ty.as_ref().map(|c| self.ty(c)).transpose()?;
         let body = d.body.as_ref().map(|c| self.cell(c)).transpose()?;
@@ -109,15 +138,14 @@ impl Table {
             }
             (Some((dim, ty)), None) => {
                 for name in names {
-                    let color = color
-                        .clone()
-                        .unwrap_or_else(|| self.color(self.elements.len(), dim));
-                    self.add(Element {
-                        color,
-                        name,
-                        level: dim,
-                        ty: ty.clone(),
-                    });
+                    let index = self.elements.len();
+                    let color = color.clone().unwrap_or_else(|| self.color(index, dim));
+                    let prim = Prim::new(index as PrimId);
+                    let cell = match &ty {
+                        Ty::Zero => FreeCell::zero(prim),
+                        Ty::Succ(s, t) => FreeCell::prim(prim, s.clone(), t.clone())?,
+                    };
+                    self.add(Element { name, color, cell });
                 }
             }
             (dim_ty, Some(body)) => {
@@ -147,22 +175,10 @@ impl Table {
                 };
 
                 let color = color.unwrap_or_else(|| self.color(self.elements.len(), dim));
-                let def_name = format!("{}.def", name);
-                let prim = self.add(Element {
-                    color,
-                    name,
-                    level: dim,
-                    ty: ty.clone(),
-                });
-                let c = match &ty {
-                    Ty::Zero => FreeCell::zero(prim),
-                    Ty::Succ(s, t) => FreeCell::prim(prim, s.clone(), t.clone()).unwrap(),
-                };
                 self.add(Element {
+                    name,
                     color,
-                    name: def_name,
-                    level: dim + 1,
-                    ty: Ty::Succ(c, body),
+                    cell: body,
                 });
             }
         }
@@ -208,11 +224,7 @@ impl Table {
                     }
                 };
                 let e = &self.elements[index];
-                let prim = Prim::new(index as PrimId);
-                match &e.ty {
-                    Ty::Zero => Ok(FreeCell::zero(prim)),
-                    Ty::Succ(s, t) => Ok(FreeCell::prim(prim, s.clone(), t.clone())?),
-                }
+                Ok(e.cell.clone())
             }
             Cell::Comp(axis, children) => {
                 let mut children = children

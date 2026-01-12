@@ -25,12 +25,17 @@ impl App {
         mouse: Rc<RefCell<(f64, f64)>>,
     ) -> Self {
         let input = r#"
-            [color(30, 30, 30)]
+            [gray(40)]
             u: *
+            [hsv(0.6, 1, 1)]
             x: u → u
+            [hsv(0.1, 1.0, 1)]
             m: x x → x
+            [hsv(0.2, 1.0, 1)]
             a: m x; m → x m; m
+            [gray(200)]
             chl: (x m; m) x → x m x; m x
+            [gray(200)]
             chr: x m x; x m → x (m x; m)
             aaa =
                 a x; m ;;
@@ -38,10 +43,14 @@ impl App {
                 x m x; a ;;
                 chr; m ;;
                 x a; m
+            [gray(200)]
             ch0: m x x; x m → m m
+            [gray(200)]
             ch1: m m → x x m; m x
 
+            [gray(200)]
             kl: (m x; m) x → m x x; m x
+            [gray(200)]
             kr: x x m; x m → x (x m; m)
             oao =
                 kl; m ;;
@@ -50,44 +59,28 @@ impl App {
                 x x m; a ;;
                 kr; m
 
+            [gray(255)]
             pentagon: aaa → oao
+            result = pentagon
         "#;
         let symbol_table = donut_lang::load::load(input).unwrap();
 
         let mut table = PrimTable::new();
         for (i, e) in symbol_table.elements.iter().enumerate() {
             let prim = Prim::new(i as PrimId);
-            table.insert(prim, &e.name, e.level, e.color);
+            table.insert(prim, &e.name, e.cell.pure.dim().in_space, e.color);
         }
 
-        /*
-        table.insert(Prim::new(0), "a", 0, (40, 40, 40));
-        table.insert(Prim::new(1), "x", 1, (0, 100, 255));
-        table.insert(Prim::new(2), "m", 2, (255, 100, 0));
-        table.insert(Prim::new(3), "assoc", 3, (255, 255, 0));
-        table.insert(Prim::new(4), "chl", 3, (200, 200, 200));
-        table.insert(Prim::new(5), "chr", 3, (200, 200, 200));
-        table.insert(Prim::new(6), "x0", 3, (200, 200, 200));
-        table.insert(Prim::new(7), "x1", 3, (200, 200, 200));
-        table.insert(Prim::new(8), "kl", 3, (200, 200, 200));
-        table.insert(Prim::new(9), "kr", 3, (200, 200, 200));
-        table.insert(Prim::new(10), "pentagon", 4, (255, 255, 255));
-        */
-
-        let last_prim = Prim::new(symbol_table.elements.len() as PrimId - 1);
-        let cell_ty = &symbol_table.elements.last().unwrap().ty;
-        let cell = match cell_ty {
-            donut_lang::load::Ty::Zero => FreeCell::zero(last_prim),
-            donut_lang::load::Ty::Succ(s, t) => {
-                FreeCell::prim(last_prim, s.clone(), t.clone()).unwrap()
-            }
-        };
+        let cell = symbol_table.elements.last().unwrap().cell.clone();
         let mut f = LayoutSolver::new();
         let cell = f.from_free(cell);
         let sol = f.solve(&cell);
         let cell = sol.convert(&cell);
         // log::debug!("Cell: {}", cell);
-        let cell = cell.render();
+        let mut cell = cell.render();
+        while cell.max.len() < 4 {
+            cell.shift(&Q::from(0), &Q::from(1));
+        }
         let cell = Geometry::from(&cell);
         log::debug!("Geometry: {:?}", cell.size);
 
