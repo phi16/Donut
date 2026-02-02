@@ -63,7 +63,7 @@ impl App {
             pentagon: aaa → oao
             result = pentagon
         "#;
-        let symbol_table = donut_lang::load::load(input).unwrap();
+        let symbol_table = donut_lang_proto::load::load(input).unwrap();
 
         let mut table = PrimTable::new();
         for (i, e) in symbol_table.elements.iter().enumerate() {
@@ -96,7 +96,7 @@ impl App {
 
     pub fn update_code(&mut self, code: &str) -> Result<()> {
         let symbol_table =
-            donut_lang::load::load(code).map_err(|e| format!("Parse error: {:?}", e))?;
+            donut_lang_proto::load::load(code).map_err(|e| format!("Parse error: {:?}", e))?;
 
         let mut table = PrimTable::new();
         for (i, e) in symbol_table.elements.iter().enumerate() {

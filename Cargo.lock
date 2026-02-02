@@ -36,7 +36,7 @@ version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
  "donut-core",
- "donut-lang",
+ "donut-lang-proto",
  "donut-layout",
  "donut-renderer",
  "log",
@@ -55,7 +55,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "donut-lang"
+name = "donut-lang-proto"
 version = "0.1.0"
 dependencies = [
  "donut-core",
