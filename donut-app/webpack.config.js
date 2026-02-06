@@ -35,7 +35,7 @@ module.exports = {
     new WasmPackPlugin({
       crateDirectory: __dirname,
       watchDirectories: [
-        path.resolve(__dirname, "crates"),
+        path.resolve(__dirname, "../crates"),
       ],
     }),
   ],
