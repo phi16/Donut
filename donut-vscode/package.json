@@ -1,0 +1,42 @@
+{
+  "name": "donut-vscode",
+  "version": "0.0.1",
+  "author": "phi16",
+  "license": "MIT",
+  "description": "donut-ls support for Visual Studio Code",
+  "engines": {
+    "vscode": "^1.97.0"
+  },
+  "main": "./extension.js",
+  "activationEvents": [
+    "onLanguage:donut"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "donut",
+        "extensions": [".donut"]
+      }
+    ],
+    "commands": [
+      {
+        "command": "donut-vscode.restartServer",
+        "title": "donut-ls: Restart server"
+      },
+      {
+        "command": "donut-vscode.startServer",
+        "title": "donut-ls: Start server"
+      },
+      {
+        "command": "donut-vscode.stopServer",
+        "title": "donut-ls: Stop server"
+      }
+    ]
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "private": true
+}
+
+

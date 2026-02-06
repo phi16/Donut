@@ -1,0 +1,25 @@
+{
+  "multiCommand.commands": [
+    {
+      "command": "multiCommand.donutReinstall",
+      "interval": 3500,
+      "sequence": [
+        {
+          "command": "extension.multiCommand.execute",
+          "args": { "command": "multiCommand.donutStopInstall" }
+        },
+        "donut-vscode.startServer"
+      ]
+    },
+    {
+      "command": "multiCommand.donutStopInstall",
+      "sequence": [
+        "donut-vscode.stopServer",
+        {
+          "command": "workbench.action.tasks.runTask",
+          "args": "Install donut-ls"
+        },
+      ]
+    }
+  ]
+}

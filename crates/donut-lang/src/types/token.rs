@@ -9,7 +9,7 @@ pub enum TokenTy {
     Whitespace,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TokenIx(usize);
 
 impl TokenIx {

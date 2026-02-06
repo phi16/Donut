@@ -1,0 +1,10 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Install donut-ls",
+      "type": "shell",
+      "command": "cargo install --path ~/source/repos/Donut/crates/donut-ls",
+    }
+  ]
+}
