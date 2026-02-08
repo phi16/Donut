@@ -106,7 +106,7 @@ pub fn tokenize_example(code: &str) -> (Vec<TokenData>, Vec<Diagnostic>) {
                 0,
                 match t.ty {
                     types::token::TokenTy::Ident => match t.str {
-                        "with" | "where" => TokenType::Keyword,
+                        "with" | "where" | "import" => TokenType::Keyword,
                         _ => TokenType::Unknown,
                     },
                     types::token::TokenTy::Number => TokenType::Number,

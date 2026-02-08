@@ -2,7 +2,14 @@ use std::iter::Peekable;
 
 use crate::types::token::*;
 
-fn is_reserved(c: char) -> bool {
+fn is_keyword(s: &str) -> bool {
+    match s {
+        "with" | "where" | "import" => true,
+        _ => false,
+    }
+}
+
+fn is_separator(c: char) -> bool {
     match c {
         '.' | ',' | ':' | ';' | '(' | ')' | '{' | '}' | '[' | ']' => true,
         _ => false,
@@ -22,7 +29,6 @@ type LocChar<'a> = (Loc<'a>, char);
 struct Tokenizer<'a, I: Iterator<Item = LocChar<'a>>> {
     iter: Peekable<I>,
     errors: Vec<Error>,
-    token_index: usize,
 }
 
 impl<'a, I: Iterator<Item = LocChar<'a>>> Tokenizer<'a, I> {
@@ -30,7 +36,6 @@ impl<'a, I: Iterator<Item = LocChar<'a>>> Tokenizer<'a, I> {
         Tokenizer {
             iter: iter.peekable(),
             errors: vec![],
-            token_index: 0,
         }
     }
 
@@ -43,6 +48,11 @@ impl<'a, I: Iterator<Item = LocChar<'a>>> Tokenizer<'a, I> {
             Some((l, _)) if l0.ln == l.ln => &l0.str[l0.col_bytes..l.col_bytes],
             _ => &l0.str[l0.col_bytes..],
         };
+        let ty = if ty == TokenTy::Name && is_keyword(str) {
+            TokenTy::Keyword
+        } else {
+            ty
+        };
         let pos = TokenPos {
             line: l0.ln,
             col: l0.col_chars,
@@ -51,9 +61,7 @@ impl<'a, I: Iterator<Item = LocChar<'a>>> Tokenizer<'a, I> {
         if let Some(err) = err {
             self.add_error(pos.clone(), err);
         }
-        let ix = TokenIx::new(self.token_index);
-        self.token_index += 1;
-        Token { str, ty, ix, pos }
+        Token { str, ty, pos }
     }
 
     fn make_token(&mut self, l0: &Loc<'a>, ty: TokenTy) -> Token<'a> {
@@ -66,11 +74,9 @@ impl<'a, I: Iterator<Item = LocChar<'a>>> Tokenizer<'a, I> {
 
     fn string_literal(&mut self) -> Token<'a> {
         let (l0, c0) = self.iter.next().unwrap();
-        let (ty, err) = if c0 == '\'' {
-            (TokenTy::Char, "unterminated character literal")
-        } else {
-            (TokenTy::String, "unterminated string literal")
-        };
+        assert_eq!(c0, '"');
+        let ty = TokenTy::String;
+        let err = "unterminated string literal";
         while let Some((l, c)) = self.iter.peek() {
             if l0.ln != l.ln {
                 return self.make_token_with_error(&l0, ty, err);
@@ -124,22 +130,22 @@ impl<'a, I: Iterator<Item = LocChar<'a>>> Iterator for Tokenizer<'a, I> {
                 }
             }
             Some(self.make_token(&l0, TokenTy::Whitespace))
-        } else if is_reserved(c0) {
-            // reserved symbol
+        } else if is_separator(c0) {
+            // separator symbol
             self.iter.next();
-            Some(self.make_token(&l0, TokenTy::Reserved))
-        } else if c0 == '\'' || c0 == '"' {
+            Some(self.make_token(&l0, TokenTy::Symbol))
+        } else if c0 == '"' {
             // char or string
             Some(self.string_literal())
         } else {
             // name
             while let Some((l, c)) = self.iter.peek() {
-                if l0.ln != l.ln || c.is_whitespace() || is_reserved(*c) {
+                if l0.ln != l.ln || c.is_whitespace() || is_separator(*c) {
                     break;
                 }
                 self.iter.next();
             }
-            Some(self.make_token(&l0, TokenTy::Ident))
+            Some(self.make_token(&l0, TokenTy::Name))
         }
     }
 }
@@ -206,6 +212,5 @@ mod tests {
         "#;
         let res = tokenize(str);
         eprintln!("{:#?}", res);
-        assert!(false);
     }
 }

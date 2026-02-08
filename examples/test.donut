@@ -5,7 +5,7 @@ x: A → B = f where
 x: A → B = f where {
   f = g
 }
-  
+
 [style(...)]
 y: *
 
@@ -152,3 +152,22 @@ k: Fx' Fx'; Fl (x Fa x; m; f) Fr; Fx → n; g =
   Fx' Fx'; xch; Fx ;;
   Fx' Fx'; Fl x Fa x Fr; Fl m Fr; Fxx'; Fl f Fr; Fx ;;
   Fm; Ff
+
+
+invertible[C, D]: C → D with {
+  inv: D → C,
+  c: f <?> inv → D // 書く方法がない (`;5;` 記法が使えるか？)
+    // ↑ `;[n];` みたいにして　変数を突っ込めるみたいなの　どう
+    // もはやマイナスで数えたほうがいいのかなあこれ
+    // ↑ それだと id つけたときに意味が変わっちゃう
+    // または Level だけスコープが違う ← でも混乱の元になりそう
+  c' = invertible[f, inv, c]
+}
+
+C: *
+scope C → C {
+  x: * // ← これは C → C の意味！
+}
+scope Id[C] → Id[C] {
+  x: * // ← これは Id[C] → Id[C] の意味！
+}
