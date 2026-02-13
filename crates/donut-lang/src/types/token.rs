@@ -1,8 +1,9 @@
 #[derive(Debug, PartialEq, Eq)]
 pub enum TokenTy {
     Name,
-    Keyword,
-    Symbol,
+    Keyword,  // with, where, import, ...
+    Operator, // =, :=, +=, →, ~, ~>, ;, ;;, ;...;
+    Symbol,   // .,:(){}[]
     Number,
     String,
     Whitespace,

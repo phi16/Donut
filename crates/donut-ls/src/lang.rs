@@ -1,13 +1,14 @@
-use donut_lang::types::{self, token::TokenIx};
+use donut_lang::types;
 use std::cell::RefCell;
 
 #[derive(Debug, Clone)]
 pub enum TokenType {
-    Keyword,
     Unknown,
+    Keyword,
+    Operator,
+    Symbol,
     Number,
     String,
-    Symbol,
     Comment,
 }
 
@@ -44,8 +45,8 @@ impl Context {
         (t.line, t.column, t.length)
     }
 
-    fn mark_as(&mut self, ix: &TokenIx, offset: i32, t: TokenType) {
-        let index = ix.clone().into_inner() as i32 + offset;
+    fn mark_as(&mut self, ix: &usize, offset: i32, t: TokenType) {
+        let index = *ix as i32 + offset;
         let d = match self.tokens.get_mut(index as usize) {
             Some(token) => token,
             None => return,
@@ -102,18 +103,15 @@ pub fn tokenize_example(code: &str) -> (Vec<TokenData>, Vec<Diagnostic>) {
         let mut x = x.borrow_mut();
         tokens.iter().enumerate().for_each(|(ix, t)| {
             x.mark_as(
-                &TokenIx::new(ix),
+                &ix,
                 0,
                 match t.ty {
-                    types::token::TokenTy::Ident => match t.str {
-                        "with" | "where" | "import" => TokenType::Keyword,
-                        _ => TokenType::Unknown,
-                    },
+                    types::token::TokenTy::Name => TokenType::Unknown,
+                    types::token::TokenTy::Keyword => TokenType::Keyword,
+                    types::token::TokenTy::Operator => TokenType::Operator,
+                    types::token::TokenTy::Symbol => TokenType::Symbol,
                     types::token::TokenTy::Number => TokenType::Number,
-                    types::token::TokenTy::Char => TokenType::String,
                     types::token::TokenTy::String => TokenType::String,
-                    types::token::TokenTy::Reserved => TokenType::Symbol,
-                    types::token::TokenTy::Comment => TokenType::Comment,
                     types::token::TokenTy::Whitespace => TokenType::Unknown,
                 },
             );

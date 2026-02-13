@@ -46,11 +46,12 @@ pub fn token_modifiers_list() -> Vec<SemanticTokenModifier> {
 fn from_token_type(t: TokenType) -> Option<(u32, u32)> {
     type Sig = TokenTypeSignature;
     let res = match t {
-        TokenType::Keyword => (Sig::KEYWORD, 0),
         TokenType::Unknown => (Sig::VARIABLE, 0), // return None,
+        TokenType::Keyword => (Sig::KEYWORD, 0),
+        TokenType::Operator => (Sig::OPERATOR, 0),
+        TokenType::Symbol => (Sig::OPERATOR, 0),
         TokenType::Number => (Sig::NUMBER, 0),
         TokenType::String => (Sig::STRING, 0),
-        TokenType::Symbol => (Sig::OPERATOR, 0),
         TokenType::Comment => (Sig::COMMENT, 0),
     };
     Some((res.0 .0, res.1))

@@ -9,6 +9,13 @@ fn is_keyword(s: &str) -> bool {
     }
 }
 
+fn is_operator(s: &str) -> bool {
+    match s {
+        "=" | ":=" | "+=" | "→" | "~" | "~>" => true,
+        _ => false,
+    }
+}
+
 fn is_separator(c: char) -> bool {
     match c {
         '.' | ',' | ':' | ';' | '(' | ')' | '{' | '}' | '[' | ']' => true,
@@ -48,10 +55,14 @@ impl<'a, I: Iterator<Item = LocChar<'a>>> Tokenizer<'a, I> {
             Some((l, _)) if l0.ln == l.ln => &l0.str[l0.col_bytes..l.col_bytes],
             _ => &l0.str[l0.col_bytes..],
         };
-        let ty = if ty == TokenTy::Name && is_keyword(str) {
-            TokenTy::Keyword
-        } else {
+        let ty = if ty != TokenTy::Name {
             ty
+        } else if is_keyword(str) {
+            TokenTy::Keyword
+        } else if is_operator(str) {
+            TokenTy::Operator
+        } else {
+            TokenTy::Name
         };
         let pos = TokenPos {
             line: l0.ln,
@@ -133,6 +144,31 @@ impl<'a, I: Iterator<Item = LocChar<'a>>> Iterator for Tokenizer<'a, I> {
         } else if is_separator(c0) {
             // separator symbol
             self.iter.next();
+            if c0 == ':' {
+                if let Some((l, '=')) = self.iter.peek() {
+                    if l0.ln == l.ln {
+                        self.iter.next();
+                        return Some(self.make_token(&l0, TokenTy::Operator));
+                    }
+                }
+            } else if c0 == '.' || c0 == ';' {
+                // ....., ;...;
+                loop {
+                    if let Some((l, c)) = self.iter.peek() {
+                        if l0.ln == l.ln && c0 == *c {
+                            self.iter.next();
+                            continue;
+                        }
+                    }
+                    break;
+                }
+                let ty = if c0 == '.' {
+                    TokenTy::Keyword
+                } else {
+                    TokenTy::Operator
+                };
+                return Some(self.make_token(&l0, ty));
+            }
             Some(self.make_token(&l0, TokenTy::Symbol))
         } else if c0 == '"' {
             // char or string
@@ -197,8 +233,20 @@ pub fn tokenize<'a>(code: &'a str) -> (Vec<Token<'a>>, Vec<TokenPos>, Vec<Error>
 mod tests {
     use super::*;
 
+    fn test(input: &str) -> Vec<TokenTy> {
+        let (tokens, _, errors) = tokenize(input);
+        assert!(errors.is_empty());
+        tokens.into_iter().map(|t| t.ty).collect()
+    }
+
+    macro_rules! tys {
+        ($($name:ident),* $(,)?) => {
+            vec![$(TokenTy::$name),*]
+        };
+    }
+
     #[test]
-    fn tokenize_test() {
+    fn full_test() {
         // todo: separate...
         let str = r#"
             x d 1.23 'a' "aa"
@@ -212,5 +260,18 @@ mod tests {
         "#;
         let res = tokenize(str);
         eprintln!("{:#?}", res);
+    }
+
+    #[test]
+    fn tokenize_test() {
+        let v = test("a:=b,c;;;d..e+=f += g ==h := i");
+        assert_eq!(
+            v,
+            tys![
+                Name, Operator, Name, Symbol, Name, Operator, Name, Keyword, // a:=b,c;;;d..
+                Name, Whitespace, Operator, Whitespace, Name, Whitespace, // e+=f += g
+                Name, Whitespace, Operator, Whitespace, Name // ==h := i
+            ]
+        );
     }
 }

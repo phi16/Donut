@@ -182,6 +182,7 @@ impl Prettyable for Val {
     fn pretty(&self, pp: &mut Pretty) {
         match self {
             Val::Ref(r) => r.pretty(pp),
+            Val::Dots(n) => pp.str(".".repeat(*n as usize).as_str()),
             Val::Lit(l) => l.pretty(pp),
             Val::Op(l, o, r) => {
                 l.pretty(pp);

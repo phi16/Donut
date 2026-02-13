@@ -13,6 +13,7 @@ use crate::types::tree::*;
 //     | '[' (val %0 ',') ']'
 //     | '{' (((name | str-lit) ':' val) %0 ',') '}'
 // val = ref-name
+//     | '...'
 //     | lit
 //     | val ('→' | '~' | '~>') val
 //     | val (';'* | ';' param-pack) val
@@ -112,16 +113,16 @@ impl<'a> Tracker<'a> {
         }
     }
 
-    pub fn peek_is(&self, ty: TokenTy) -> bool {
+    pub fn peek_is(&self, ty: TokenTy) -> Option<&'a str> {
         let mut p = self.pos;
         while let Some(t) = self.tokens.get(p) {
             if t.ty == TokenTy::Whitespace {
                 p += 1;
                 continue;
             }
-            return t.ty == ty;
+            return if t.ty == ty { Some(t.str) } else { None };
         }
-        false
+        None
     }
 
     pub fn eoi(&mut self) -> Option<()> {
@@ -307,18 +308,14 @@ impl<'a> Tracker<'a> {
 
     pub fn lit(&mut self) -> Option<A<Lit>> {
         let u = self.begin();
-        let lit = if self.peek_is(TokenTy::Number) {
+        let lit = if let Some(str) = self.peek_is(TokenTy::Number) {
             // number
-            let t = self.peek().unwrap();
-            let num_str = t.str.to_string();
             self.next();
-            Lit::Number(num_str)
-        } else if self.peek_is(TokenTy::String) {
+            Lit::Number(str.to_string())
+        } else if let Some(str) = self.peek_is(TokenTy::String) {
             // string
-            let t = self.peek().unwrap();
-            let str_lit = t.str.to_string();
             self.next();
-            Lit::String(str_lit)
+            Lit::String(str.to_string())
         } else if self.symbol("[").is_some() {
             // array
             unimplemented!()
@@ -333,6 +330,8 @@ impl<'a> Tracker<'a> {
 
     pub fn val(&mut self) -> Option<A<Val>> {
         let u = self.begin();
+
+        // TODO: handling '...' case
 
         let v = if let Some(lit) = self.lit() {
             Val::Lit(lit)
@@ -405,7 +404,7 @@ impl<'a> Tracker<'a> {
         let mut names = vec![];
         names.push(self.ref_name()?);
 
-        while self.peek_is(TokenTy::Name) {
+        while self.peek_is(TokenTy::Name).is_some() {
             let n = self.ref_name().unwrap_or_else(|| {
                 self.add_error("expected name reference in declaration");
                 A::Error()
@@ -537,65 +536,36 @@ mod tests {
     use crate::pretty::pretty;
     use crate::tokenize::tokenize;
 
-    #[test]
-    fn parse_simple() {
-        let code = "x: *";
-        let (tokens, _, tok_errors) = tokenize(code);
-        assert!(tok_errors.is_empty());
+    fn test(code: &str) {
+        let (tokens, _, errors) = tokenize(code);
+        assert!(errors.is_empty());
 
         let (result, errors) = parse(&tokens);
         eprintln!("{}", pretty(&result));
-        eprintln!("Errors: {:#?}", errors);
-        assert!(false);
+        // eprintln!("Errors: {:#?}", errors);
     }
 
     #[test]
-    fn parse_arrow() {
-        let code = "x: A → B";
-        let (tokens, _, tok_errors) = tokenize(code);
-        assert!(tok_errors.is_empty());
-
-        let (result, errors) = parse(&tokens);
-        eprintln!("{}", pretty(&result));
-        eprintln!("Errors: {:#?}", errors);
-        assert!(false);
-    }
-
-    #[test]
-    fn parse_with_clause() {
-        let code = r#"x: A → B = f where {
+    fn parse_test() {
+        test("a += a");
+        test("a = \"x\"");
+        test("a: A = \"x\"");
+        test("x: A");
+        test("x: A = B");
+        test("x = B");
+        test("x: A → B");
+        test("x: A → B = f where { f = g }");
+        test(
+            r#"
+        x: A → B = f where {
             f = g
-        }"#;
-        let (tokens, _, tok_errors) = tokenize(code);
-        assert!(tok_errors.is_empty());
-
-        let (result, errors) = parse(&tokens);
-        eprintln!("{}", pretty(&result));
-        eprintln!("Errors: {:#?}", errors);
-        assert!(false);
-    }
-
-    #[test]
-    fn parse_with_multiple_decl() {
-        let code = r#"a b c: d = e"#;
-        let (tokens, _, tok_errors) = tokenize(code);
-        assert!(tok_errors.is_empty());
-
-        let (result, errors) = parse(&tokens);
-        eprintln!("{}", pretty(&result));
-        eprintln!("Errors: {:#?}", errors);
-        assert!(false);
-    }
-
-    #[test]
-    fn parse_attribute() {
-        let code = "[style[...]] y: *";
-        let (tokens, _, tok_errors) = tokenize(code);
-        assert!(tok_errors.is_empty());
-
-        let (result, errors) = parse(&tokens);
-        eprintln!("{}", pretty(&result));
-        eprintln!("Errors: {:#?}", errors);
+        }"#,
+        );
+        test("a b c: d = e");
+        test("import \"module.donut\"");
+        test("a = \"a\"");
+        test("x = 1");
+        test("[style[...]] y: *");
         assert!(false);
     }
 }

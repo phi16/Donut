@@ -6,6 +6,13 @@ x: A → B = f where {
   f = g
 }
 
+x += a
+x :=b
+x +=a
+x =C
+y=c
+y = c .......
+
 [style(...)]
 y: *
 

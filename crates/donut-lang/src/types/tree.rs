@@ -61,6 +61,7 @@ pub enum Op {
 #[derive(Debug)]
 pub enum Val {
     Ref(Box<A<RefName>>),
+    Dots(u8),
     Lit(A<Lit>),
     Op(Box<A<Val>>, A<Op>, Box<A<Val>>),
     Paren(Box<A<Val>>),
