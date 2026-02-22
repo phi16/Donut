@@ -1,4 +1,4 @@
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TokenTy {
     Name,
     Keyword,  // with, where, import, ...
@@ -21,6 +21,8 @@ pub struct Token<'a> {
     pub str: &'a str,
     pub ty: TokenTy,
     pub pos: TokenPos,
+    pub connected: bool,
+    pub is_head: bool,
 }
 
 pub type Error = (TokenPos, String);

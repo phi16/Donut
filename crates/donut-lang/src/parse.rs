@@ -4,27 +4,33 @@ use crate::types::tree::*;
 // num-lit = ...
 // str-lit = ...
 // name = ...
+// head-of-line = ...
 // param = (name+ (':' | '='))? val
 // param-pack = '[' (param %0 ',') ']'
-// app-name = name param-pack?
-// ref-name = (app-name %1 '.') (## '(' val ')')?
+// local-ref = name param-pack?
+// ref = (local-ref %1 '.') (## '(' val ')')?
 // lit = num-lit
 //     | str-lit
 //     | '[' (val %0 ',') ']'
 //     | '{' (((name | str-lit) ':' val) %0 ',') '}'
-// val = ref-name
-//     | '...'
-//     | lit
-//     | val ('→' | '~' | '~>') val
-//     | val (';'* | ';' param-pack) val
-//     | '(' val ')'
+// val0 = ref
+//      | lit
+//      | '...'
+//      | '(' val ')'
+// valN = val0
+//      | valN (';'* | ';' ## num-lit | ';*' | '+') param-pack? valN
+// val = valN
+//     | valN ('->' | '→' | '~' | '~>') param-pack? valN
 // assign-op = '=' | ':=' | '+='
-// mod = '{' decl* '}'
-//     | 'import' str-lit
-// unit-decl = ref-name+ (':' val)? (assign-op (val | mod))?
+// mod = '{' decls '}'
+//     | 'import' lit
+// decl-unit = ref+ (':' val)? (assign-op (val | mod))?
+// decorator = param-pack
+// decl-main = decl-unit | mod
 // clause = ('with' | 'where') mod
-// decl = param-pack* (unit-decl | mod) clause*
-// program = decl* eoi
+// decl = head-of-line decorator* decl-main clause*
+// decls = decl*
+// program = decls eoi
 
 struct Tracker<'a> {
     tokens: &'a [Token<'a>],
@@ -98,38 +104,15 @@ impl<'a> Tracker<'a> {
         self.pos += 1;
     }
 
-    pub fn next_is(&self, ty: TokenTy) -> bool {
-        if let Some(t) = self.peek() {
-            if t.ty == ty {
-                return true;
-            }
-        }
-        false
-    }
-
-    pub fn skip_whitespaces(&mut self) {
-        while self.next_is(TokenTy::Whitespace) {
-            self.next();
-        }
-    }
-
     pub fn peek_is(&self, ty: TokenTy) -> Option<&'a str> {
-        let mut p = self.pos;
-        while let Some(t) = self.tokens.get(p) {
-            if t.ty == TokenTy::Whitespace {
-                p += 1;
-                continue;
-            }
+        if let Some(t) = self.peek() {
             return if t.ty == ty { Some(t.str) } else { None };
         }
         None
     }
 
-    pub fn eoi(&mut self) -> Option<()> {
-        let u = self.begin();
-        self.skip_whitespaces();
+    pub fn eoi(&self) -> Option<()> {
         if self.peek().is_some() {
-            self.rollback(u);
             return None;
         }
         Some(())
@@ -137,7 +120,6 @@ impl<'a> Tracker<'a> {
 
     pub fn name(&mut self) -> Option<A<Name>> {
         let u = self.begin();
-        self.skip_whitespaces();
         if let Some(t) = self.peek() {
             if t.ty == TokenTy::Name {
                 let name = Name(t.str.to_string());
@@ -145,50 +127,24 @@ impl<'a> Tracker<'a> {
                 return Some(self.end(u, name));
             }
         }
-        self.rollback(u);
         None
     }
-
     pub fn symbol(&mut self, s: &'static str) -> Option<()> {
-        let u = self.begin();
-        self.skip_whitespaces();
-        if self.symbol_no_skip(s).is_some() {
-            Some(())
-        } else {
-            self.rollback(u);
-            None
-        }
-    }
-
-    pub fn symbol_no_skip(&mut self, s: &'static str) -> Option<()> {
-        let u = self.begin();
-        let mut s = s;
-        while !s.is_empty() {
-            if let Some(t) = self.peek() {
-                if t.ty == TokenTy::Name || t.ty == TokenTy::Symbol {
-                    if s.starts_with(t.str) {
-                        self.next();
-                        s = &s[t.str.len()..];
-                        continue;
-                    }
-                }
+        if let Some(t) = self.peek() {
+            if t.ty == TokenTy::Symbol && t.str == s {
+                self.next();
+                return Some(());
             }
-            self.rollback(u);
-            return None;
         }
-        Some(())
+        None
     }
-
     pub fn keyword(&mut self, s: &'static str) -> Option<()> {
-        let u = self.begin();
-        self.skip_whitespaces();
         if let Some(t) = self.peek() {
             if t.ty == TokenTy::Keyword && t.str == s {
                 self.next();
                 return Some(());
             }
         }
-        self.rollback(u);
         None
     }
 
@@ -263,13 +219,13 @@ impl<'a> Tracker<'a> {
         Some(self.end(u, ParamPack(params)))
     }
 
-    pub fn app_name(&mut self) -> Option<A<AppName>> {
+    pub fn local_ref_name(&mut self) -> Option<A<LocalRefName>> {
         let u = self.begin();
 
         let name = self.name()?;
         let param_pack = self.param_pack();
 
-        let app_name = AppName(name, param_pack);
+        let app_name = LocalRefName(name, param_pack);
         Some(self.end(u, app_name))
     }
 
@@ -277,16 +233,16 @@ impl<'a> Tracker<'a> {
         let u = self.begin();
 
         let mut names = vec![];
-        names.push(self.app_name()?);
+        names.push(self.local_ref_name()?);
         while self.symbol(".").is_some() {
-            let n = self.app_name().unwrap_or_else(|| {
+            let n = self.local_ref_name().unwrap_or_else(|| {
                 self.add_error("expected applicand name after '.' in name reference");
                 A::Error()
             });
             names.push(n);
         }
 
-        let val = if self.symbol_no_skip("(").is_some() {
+        let val = if self.symbol("(").is_some() {
             let v = self.val().unwrap_or_else(|| {
                 self.add_error("expected value in functor application");
                 A::Error()
@@ -328,15 +284,15 @@ impl<'a> Tracker<'a> {
         Some(self.end(u, lit))
     }
 
-    pub fn val(&mut self) -> Option<A<Val>> {
+    pub fn val0(&mut self) -> Option<A<Val0>> {
         let u = self.begin();
 
-        // TODO: handling '...' case
+        // TODO?
 
         let v = if let Some(lit) = self.lit() {
-            Val::Lit(lit)
+            Val0::Lit(lit)
         } else if let Some(rn) = self.ref_name() {
-            Val::Ref(Box::new(rn))
+            Val0::Ref(Box::new(rn))
         } else if self.symbol("(").is_some() {
             let inner = self.val().unwrap_or_else(|| {
                 self.add_error("expected value in parentheses");
@@ -348,11 +304,18 @@ impl<'a> Tracker<'a> {
                 self.add_error("expected ')' at end of parentheses");
                 self.skip_until(")");
             }
-            Val::Paren(Box::new(inner))
+            Val0::Paren(Box::new(inner))
         } else {
             // TODO!
             return None;
         };
+
+        Some(self.end(u, v))
+    }
+    pub fn val(&mut self) -> Option<A<Val>> {
+        let u = self.begin();
+
+        let v = unimplemented!();
 
         Some(self.end(u, v))
     }
@@ -362,7 +325,7 @@ impl<'a> Tracker<'a> {
 
         let m = if self.symbol("{").is_some() {
             // block
-            let p = self.program();
+            let p = self.decls();
             if self.symbol("}").is_some() {
                 // pass
             } else {
@@ -398,7 +361,7 @@ impl<'a> Tracker<'a> {
         Some(self.end(u, op))
     }
 
-    pub fn unit_decl(&mut self) -> Option<A<UnitDecl>> {
+    pub fn decl_unit(&mut self) -> Option<A<DeclUnit>> {
         let u = self.begin();
 
         let mut names = vec![];
@@ -437,7 +400,7 @@ impl<'a> Tracker<'a> {
             None
         };
 
-        let decl = UnitDecl { names, ty, assign };
+        let decl = DeclUnit { names, ty, assign };
         Some(self.end(u, decl))
     }
 
@@ -473,11 +436,11 @@ impl<'a> Tracker<'a> {
             decos.push(d);
         }
 
-        let unit = if let Some(m) = self.module() {
-            Unit::Mod(m)
+        let main = if let Some(m) = self.module() {
+            DeclMain::Mod(m)
         } else {
-            let ud = match self.unit_decl() {
-                Some(ud) => ud,
+            let du = match self.decl_unit() {
+                Some(du) => du,
                 None => {
                     if decos.is_empty() {
                         return None;
@@ -487,7 +450,7 @@ impl<'a> Tracker<'a> {
                     }
                 }
             };
-            Unit::Decl(ud)
+            DeclMain::Unit(du)
         };
 
         let mut clauses = vec![];
@@ -497,36 +460,34 @@ impl<'a> Tracker<'a> {
 
         let decl = Decl {
             decos,
-            unit,
+            main,
             clauses,
         };
         Some(self.end(u, decl))
     }
 
-    pub fn program(&mut self) -> A<Program> {
-        let u = self.begin();
-
+    pub fn decls(&mut self) -> Vec<A<Decl>> {
         let mut decls = vec![];
+        // TODO: head?
         while let Some(d) = self.decl() {
             decls.push(d);
         }
-
-        self.end(u, Program(decls))
+        decls
     }
 
-    pub fn parse_full(&mut self) -> A<Program> {
+    pub fn program(&mut self) -> A<Program> {
         let u = self.begin();
-        let p = self.program();
+        let p = self.decls();
         if self.eoi().is_none() {
-            self.add_error("expected end of input"); // how
+            self.add_error("expected end of input");
         }
-        p
+        self.end(u, Program(p))
     }
 }
 
 pub fn parse<'a>(tokens: &'a [Token<'a>]) -> (A<Program>, Vec<Error>) {
     let mut tracker = Tracker::new(tokens);
-    let result = tracker.parse_full();
+    let result = tracker.program();
     (result, tracker.errors)
 }
 

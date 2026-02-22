@@ -35,9 +35,9 @@ pub struct Param {
 pub struct ParamPack(pub Vec<A<Param>>);
 
 #[derive(Debug)]
-pub struct AppName(pub A<Name>, pub Option<A<ParamPack>>);
+pub struct LocalRefName(pub A<Name>, pub Option<A<ParamPack>>);
 #[derive(Debug)]
-pub struct RefName(pub Vec<A<AppName>>, pub Option<A<Val>>);
+pub struct RefName(pub Vec<A<LocalRefName>>, pub Option<A<Val>>);
 
 #[derive(Debug)]
 pub enum Key {
@@ -53,23 +53,35 @@ pub enum Lit {
 }
 
 #[derive(Debug)]
-pub enum Op {
-    Comp(u8),
-    CompParam(A<ParamPack>),
-    Arrow(&'static str),
+pub enum ArrowTy {
+    To,
+    Eq,
+    Functor,
 }
 #[derive(Debug)]
-pub enum Val {
+pub enum Op {
+    CompRep(u32),
+    CompLit(u32),
+    CompStar,
+    Arrow(ArrowTy),
+    Sum,
+}
+#[derive(Debug)]
+pub enum Val0 {
     Ref(Box<A<RefName>>),
-    Dots(u8),
     Lit(A<Lit>),
-    Op(Box<A<Val>>, A<Op>, Box<A<Val>>),
+    Dots,
     Paren(Box<A<Val>>),
+}
+#[derive(Debug)]
+pub struct Val {
+    pub vs: Vec<A<Val0>>,
+    pub ops: Vec<(A<Op>, Option<A<ParamPack>>)>,
 }
 
 #[derive(Debug)]
 pub enum Module {
-    Block(A<Program>),
+    Block(Vec<A<Decl>>),
     Import(A<Lit>),
 }
 
@@ -85,7 +97,7 @@ pub enum ValMod {
     Mod(A<Module>),
 }
 #[derive(Debug)]
-pub struct UnitDecl {
+pub struct DeclUnit {
     pub names: Vec<A<RefName>>,
     pub ty: Option<A<Val>>,
     pub assign: Option<(A<AssignOp>, ValMod)>,
@@ -100,14 +112,14 @@ pub enum ClauseTy {
 pub struct Clause(pub A<ClauseTy>, pub A<Module>);
 
 #[derive(Debug)]
-pub enum Unit {
-    Decl(A<UnitDecl>),
+pub enum DeclMain {
+    Unit(A<DeclUnit>),
     Mod(A<Module>),
 }
 #[derive(Debug)]
 pub struct Decl {
     pub decos: Vec<A<ParamPack>>,
-    pub unit: Unit,
+    pub main: DeclMain,
     pub clauses: Vec<A<Clause>>,
 }
 

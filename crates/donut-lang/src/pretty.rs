@@ -93,7 +93,7 @@ impl Prettyable for Param {
             match ty {
                 ParamTy::Decl => pp.str(": "),
                 ParamTy::Named => pp.str(" = "),
-            }
+            };
         }
         self.val.pretty(pp);
     }
@@ -107,7 +107,7 @@ impl Prettyable for ParamPack {
     }
 }
 
-impl Prettyable for AppName {
+impl Prettyable for LocalRefName {
     fn pretty(&self, pp: &mut Pretty) {
         self.0.pretty(pp);
         if let Some(p) = &self.1 {
@@ -159,37 +159,42 @@ impl Prettyable for Lit {
                 pp.sep(obj, ", ");
                 pp.str("}");
             }
-        }
+        };
     }
 }
 
+impl Prettyable for ArrowTy {
+    fn pretty(&self, pp: &mut Pretty) {
+        match self {
+            ArrowTy::To => pp.str("→"),
+            ArrowTy::Eq => pp.str("~"),
+            ArrowTy::Functor => pp.str("~>"),
+        };
+    }
+}
 impl Prettyable for Op {
     fn pretty(&self, pp: &mut Pretty) {
         match self {
-            Op::Comp(0) => pp.str(" "),
-            Op::Comp(n) => pp.str(";".repeat(*n as usize).as_str()),
-            Op::CompParam(p) => {
-                pp.str(";[");
-                p.pretty(pp);
-                pp.str("]");
+            Op::CompRep(0) => pp.str(" "),
+            Op::CompRep(n) => pp.str(";".repeat(*n as usize).as_str()),
+            Op::CompLit(n) => {
+                pp.str(";");
+                pp.str(&n.to_string());
             }
-            Op::Arrow(s) => pp.str(s),
+            Op::CompStar => pp.str(";*"),
+            Op::Arrow(s) => s.pretty(pp),
+            Op::Sum => pp.str("+"),
         }
     }
 }
 
-impl Prettyable for Val {
+impl Prettyable for Val0 {
     fn pretty(&self, pp: &mut Pretty) {
         match self {
-            Val::Ref(r) => r.pretty(pp),
-            Val::Dots(n) => pp.str(".".repeat(*n as usize).as_str()),
-            Val::Lit(l) => l.pretty(pp),
-            Val::Op(l, o, r) => {
-                l.pretty(pp);
-                o.pretty(pp);
-                r.pretty(pp);
-            }
-            Val::Paren(v) => {
+            Val0::Ref(r) => r.pretty(pp),
+            Val0::Lit(l) => l.pretty(pp),
+            Val0::Dots => pp.str("..."),
+            Val0::Paren(v) => {
                 pp.str("(");
                 v.pretty(pp);
                 pp.str(")");
@@ -197,15 +202,24 @@ impl Prettyable for Val {
         }
     }
 }
+impl Prettyable for Val {
+    fn pretty(&self, pp: &mut Pretty) {
+        assert_eq!(self.vs.len(), self.ops.len() + 1);
+
+        unimplemented!();
+    }
+}
 
 impl Prettyable for Module {
     fn pretty(&self, pp: &mut Pretty) {
         match self {
-            Module::Block(p) => {
+            Module::Block(ds) => {
                 pp.str("{");
                 pp.indent();
                 pp.ln();
-                p.pretty(pp);
+                for d in ds {
+                    d.pretty(pp);
+                }
                 pp.dedent();
                 pp.str("}");
             }
@@ -227,7 +241,7 @@ impl Prettyable for AssignOp {
     }
 }
 
-impl Prettyable for UnitDecl {
+impl Prettyable for DeclUnit {
     fn pretty(&self, pp: &mut Pretty) {
         pp.sep(&self.names, " ");
         if let Some(ty) = &self.ty {
@@ -267,11 +281,11 @@ impl Prettyable for Decl {
             deco.pretty(pp);
             pp.ln();
         }
-        match &self.unit {
-            Unit::Decl(ud) => {
-                ud.pretty(pp);
+        match &self.main {
+            DeclMain::Unit(d) => {
+                d.pretty(pp);
             }
-            Unit::Mod(m) => {
+            DeclMain::Mod(m) => {
                 m.pretty(pp);
             }
         }
