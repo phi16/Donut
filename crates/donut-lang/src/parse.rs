@@ -4,42 +4,46 @@ use crate::types::tree::*;
 // num-lit = ...
 // str-lit = ...
 // name = ...
-// head-of-line = ...
 // param = (name+ (':' | '='))? val
 // param-pack = '[' (param %0 ',') ']'
-// local-ref = name param-pack?
-// ref = (local-ref %1 '.') (## '(' val ')')?
+// local-ref-name = name param-pack?
+// ref-name = (local-ref-name %1 '.') (## '(' val ')')?
 // lit = num-lit
 //     | str-lit
 //     | '[' (val %0 ',') ']'
 //     | '{' (((name | str-lit) ':' val) %0 ',') '}'
-// val0 = ref
+// val0 = ref-name
 //      | lit
 //      | '...'
 //      | '(' val ')'
 // valN = val0
-//      | valN (';'* | ';' ## num-lit | ';*' | '+') param-pack? valN
+//      | valN (';'* | ';' ## num-lit | ';*') param-pack? valN
 // val = valN
 //     | valN ('->' | '→' | '~' | '~>') param-pack? valN
 // assign-op = '=' | ':=' | '+='
 // mod = '{' decls '}'
 //     | 'import' lit
-// decl-unit = ref+ (':' val)? (assign-op (val | mod))?
+// decl-unit = ref-name+ (':' val)? (assign-op (val | mod))?
 // decorator = param-pack
 // decl-main = decl-unit | mod
 // clause = ('with' | 'where') mod
-// decl = head-of-line decorator* decl-main clause*
+// decl = decorator+ | decorator* decl-main clause*
 // decls = decl*
 // program = decls eoi
 
 struct Tracker<'a> {
     tokens: &'a [Token<'a>],
     pos: usize,
+    indent: usize,
+    decl_head: bool,
     errors: Vec<Error>,
 }
 
+#[derive(Clone)]
 struct NodeBase {
     start: usize,
+    indent: usize,
+    decl_head: bool,
 }
 
 impl<'a> Tracker<'a> {
@@ -47,15 +51,21 @@ impl<'a> Tracker<'a> {
         Self {
             tokens,
             pos: 0,
+            indent: 0,
+            decl_head: true,
             errors: vec![],
         }
     }
 
     pub fn begin(&self) -> NodeBase {
-        NodeBase { start: self.pos }
+        NodeBase {
+            start: self.pos,
+            indent: self.indent,
+            decl_head: self.decl_head,
+        }
     }
 
-    pub fn add_error(&mut self, msg: &'static str) {
+    pub fn add_error(&mut self, msg: &str) {
         // TODO: refine pos
         let pos = if self.pos < self.tokens.len() {
             self.tokens[self.pos].pos.clone()
@@ -80,28 +90,31 @@ impl<'a> Tracker<'a> {
 
     pub fn rollback(&mut self, base: NodeBase) {
         self.pos = base.start;
+        self.indent = base.indent;
+        self.decl_head = base.decl_head;
     }
 
     pub fn peek(&self) -> Option<&'a Token<'a>> {
-        self.tokens.get(self.pos)
-    }
-    pub fn peek_n(&self, n: usize) -> Option<&'a Token<'a>> {
-        self.tokens.get(self.pos + n)
-    }
-
-    pub fn skip_until(&mut self, s: &'static str) {
-        /* while let Some(t) = self.peek() {
-            if t.str == s {
-                return;
+        if let Some(t) = self.tokens.get(self.pos) {
+            if self.decl_head || self.indent < t.pos.col {
+                return Some(t);
             }
-            self.next();
-        } */
-        // TODO
+        }
+        None
+    }
+    pub fn peek_close(&self) -> Option<&'a Token<'a>> {
+        if let Some(t) = self.tokens.get(self.pos) {
+            if self.decl_head || self.indent <= t.pos.col {
+                return Some(t);
+            }
+        }
+        None
     }
 
     pub fn next(&mut self) {
         assert!(self.pos < self.tokens.len());
         self.pos += 1;
+        self.decl_head = false;
     }
 
     pub fn peek_is(&self, ty: TokenTy) -> Option<&'a str> {
@@ -131,6 +144,24 @@ impl<'a> Tracker<'a> {
     }
     pub fn symbol(&mut self, s: &'static str) -> Option<()> {
         if let Some(t) = self.peek() {
+            if t.ty == TokenTy::Symbol && t.str == s {
+                self.next();
+                return Some(());
+            }
+        }
+        None
+    }
+    pub fn symbol_connected(&mut self, s: &'static str) -> Option<()> {
+        if let Some(t) = self.peek() {
+            if t.ty == TokenTy::Symbol && t.connected && t.str == s {
+                self.next();
+                return Some(());
+            }
+        }
+        None
+    }
+    pub fn symbol_close(&mut self, s: &'static str) -> Option<()> {
+        if let Some(t) = self.peek_close() {
             if t.ty == TokenTy::Symbol && t.str == s {
                 self.next();
                 return Some(());
@@ -192,7 +223,7 @@ impl<'a> Tracker<'a> {
                 // skip extra commas
             }
         }
-        if self.symbol("]").is_some() {
+        if self.symbol_close("]").is_some() {
             // pass
         } else {
             loop {
@@ -202,16 +233,15 @@ impl<'a> Tracker<'a> {
                 });
                 params.push(p);
                 if self.symbol(",").is_some() {
-                    if self.symbol("]").is_some() {
+                    if self.symbol_close("]").is_some() {
                         // trailing comma
                         break;
                     }
                     continue;
-                } else if self.symbol("]").is_some() {
+                } else if self.symbol_close("]").is_some() {
                     break;
                 } else {
                     self.add_error("expected ',' or ']' in parameter pack");
-                    self.skip_until("]");
                     break;
                 }
             }
@@ -242,16 +272,15 @@ impl<'a> Tracker<'a> {
             names.push(n);
         }
 
-        let val = if self.symbol("(").is_some() {
+        let val = if self.symbol_connected("(").is_some() {
             let v = self.val().unwrap_or_else(|| {
                 self.add_error("expected value in functor application");
                 A::Error()
             });
-            if self.symbol(")").is_some() {
+            if self.symbol_close(")").is_some() {
                 // pass
             } else {
                 self.add_error("expected ')' at end of functor application");
-                self.skip_until(")");
             }
             Some(v)
         } else {
@@ -274,20 +303,47 @@ impl<'a> Tracker<'a> {
             Lit::String(str.to_string())
         } else if self.symbol("[").is_some() {
             // array
-            unimplemented!()
+            return None;
+            unimplemented!();
         } else if self.symbol("{").is_some() {
             // object
-            unimplemented!()
+            return None;
+            unimplemented!();
         } else {
             return None;
         };
         Some(self.end(u, lit))
     }
 
+    pub fn op(&mut self) -> Option<A<Op>> {
+        let u = self.begin();
+        let s = self.peek_is(TokenTy::Operator)?;
+        self.next();
+        let op = if s == "->" || s == "→" {
+            Op::Arrow(ArrowTy::To)
+        } else if s == "~" {
+            Op::Arrow(ArrowTy::Eq)
+        } else if s == "~>" {
+            Op::Arrow(ArrowTy::Functor)
+        } else if s == ";*" {
+            Op::CompStar
+        } else if s.starts_with(";;") {
+            Op::CompRep(s.len() as u32)
+        } else if s == ";" {
+            if let Some(n) = self.peek_is(TokenTy::Number) {
+                unimplemented!()
+            } else {
+                Op::CompRep(1)
+            }
+        } else {
+            self.rollback(u);
+            return None;
+        };
+        Some(self.end(u, op))
+    }
+
     pub fn val0(&mut self) -> Option<A<Val0>> {
         let u = self.begin();
-
-        // TODO?
 
         let v = if let Some(lit) = self.lit() {
             Val0::Lit(lit)
@@ -298,26 +354,54 @@ impl<'a> Tracker<'a> {
                 self.add_error("expected value in parentheses");
                 A::Error()
             });
-            if self.symbol(")").is_some() {
+            if self.symbol_close(")").is_some() {
                 // pass
             } else {
                 self.add_error("expected ')' at end of parentheses");
-                self.skip_until(")");
             }
             Val0::Paren(Box::new(inner))
+        } else if self
+            .peek_is(TokenTy::Keyword)
+            .filter(|s| s.starts_with(".."))
+            .is_some()
+        {
+            self.next();
+            Val0::Dots
         } else {
-            // TODO!
             return None;
         };
 
         Some(self.end(u, v))
     }
+
     pub fn val(&mut self) -> Option<A<Val>> {
         let u = self.begin();
+        let v0 = self.val0()?;
+        let mut val = Val {
+            vs: vec![v0],
+            ops: vec![],
+        };
+        loop {
+            let u2 = self.begin();
+            let op = if let Some(op) = self.op() {
+                let pp = self.param_pack();
+                (op, pp)
+            } else {
+                let op = self.end(u2.clone(), Op::CompRep(0));
+                (op, None)
+            };
+            let v = if let Some(v) = self.val0() {
+                v
+            } else {
+                self.rollback(u2);
+                break;
+            };
 
-        let v = unimplemented!();
+            val.vs.push(v);
+            val.ops.push(op);
+        }
 
-        Some(self.end(u, v))
+        Some(self.end(u, val))
     }
 
     pub fn module(&mut self) -> Option<A<Module>> {
@@ -326,11 +410,10 @@ impl<'a> Tracker<'a> {
         let m = if self.symbol("{").is_some() {
             // block
             let p = self.decls();
-            if self.symbol("}").is_some() {
+            if self.symbol_close("}").is_some() {
                 // pass
             } else {
                 self.add_error("expected '}' at end of module block");
-                self.skip_until("}");
             }
             Module::Block(p)
         } else if self.keyword("import").is_some() {
@@ -349,16 +432,22 @@ impl<'a> Tracker<'a> {
 
     pub fn assign_op(&mut self) -> Option<A<AssignOp>> {
         let u = self.begin();
-        let op = if self.symbol("=").is_some() {
-            AssignOp::Alias
-        } else if self.symbol(":=").is_some() {
-            AssignOp::Def
-        } else if self.symbol("+=").is_some() {
-            AssignOp::Add
+        if let Some(s) = self.peek_is(TokenTy::Operator) {
+            self.next();
+            let op = if s == "=" {
+                AssignOp::Alias
+            } else if s == ":=" {
+                AssignOp::Def
+            } else if s == "+=" {
+                AssignOp::Add
+            } else {
+                self.rollback(u);
+                return None;
+            };
+            Some(self.end(u, op))
         } else {
-            return None;
-        };
-        Some(self.end(u, op))
+            None
+        }
     }
 
     pub fn decl_unit(&mut self) -> Option<A<DeclUnit>> {
@@ -428,8 +517,43 @@ impl<'a> Tracker<'a> {
         Some(self.end(u, clause))
     }
 
+    pub fn consume_indent(&mut self, last_indent: usize) -> bool {
+        let mut consumed = false;
+        if self.indent != last_indent {
+            // Note: decl should read everything in this indent levels
+            if let Some(t) = self.peek() {
+                // TODO: or, close symbol?
+
+                // TODO: if there's already an error, don't add this one
+                self.add_error(&format!("unexpected token '{}' after declaration", t.str));
+
+                // skip tokens
+                loop {
+                    if self.peek().is_some() {
+                        self.next();
+                        consumed = true;
+                        continue;
+                    } else if let Some(t) = self.peek_close() {
+                        if t.str == "}" || t.str == "]" || t.str == ")" {
+                            self.next();
+                            consumed = true;
+                            continue;
+                        }
+                    }
+                    break;
+                }
+            }
+            self.indent = last_indent;
+        }
+        consumed
+    }
+
     pub fn decl(&mut self) -> Option<A<Decl>> {
         let u = self.begin();
+
+        let last_indent = self.indent;
+        self.indent = self.peek()?.indent;
+        self.decl_head = true;
 
         let mut decos = vec![];
         while let Some(d) = self.param_pack() {
@@ -437,20 +561,26 @@ impl<'a> Tracker<'a> {
         }
 
         let main = if let Some(m) = self.module() {
-            DeclMain::Mod(m)
+            Some(DeclMain::Mod(m))
         } else {
-            let du = match self.decl_unit() {
-                Some(du) => du,
+            match self.decl_unit() {
+                Some(du) => Some(DeclMain::Unit(du)),
                 None => {
                     if decos.is_empty() {
-                        return None;
+                        // hmmmm
+                        if self.consume_indent(last_indent) {
+                            // garbage
+                            return Some(A::Error());
+                        } else {
+                            // no consumption, simple rollback
+                            return None;
+                        }
                     } else {
-                        self.add_error("expected unit declaration or module in declaration");
-                        A::Error()
+                        // decorator-only block
+                        None
                     }
                 }
-            };
-            DeclMain::Unit(du)
+            }
         };
 
         let mut clauses = vec![];
@@ -463,12 +593,19 @@ impl<'a> Tracker<'a> {
             main,
             clauses,
         };
+
+        loop {
+            if self.symbol(",").is_some() {
+                // pass
+            }
+            break;
+        }
+        self.consume_indent(last_indent);
         Some(self.end(u, decl))
     }
 
     pub fn decls(&mut self) -> Vec<A<Decl>> {
         let mut decls = vec![];
-        // TODO: head?
         while let Some(d) = self.decl() {
             decls.push(d);
         }
@@ -503,7 +640,10 @@ mod tests {
 
         let (result, errors) = parse(&tokens);
         eprintln!("{}", pretty(&result));
-        // eprintln!("Errors: {:#?}", errors);
+        if !errors.is_empty() {
+            eprintln!("Errors: {:#?}", errors);
+        }
+        assert!(errors.is_empty());
     }
 
     #[test]
@@ -515,18 +655,121 @@ mod tests {
         test("x: A = B");
         test("x = B");
         test("x: A → B");
-        test("x: A → B = f where { f = g }");
         test(
             r#"
         x: A → B = f where {
             f = g
         }"#,
         );
-        test("a b c: d = e");
+        test("a b c: d = e ; f");
+        test("a b c: d = e;f ;;; g");
+        test("a b c: d = e f g");
+        test("a b c: d = e ; f ;;; g;h;;i");
+        test("a b c: d = e;;f ;;; g;h;;i");
+        test("a b c: d = e;;;;;f g h ;* i");
+        test("a b c: d = e;;;;;f (g h ;* i)");
         test("import \"module.donut\"");
         test("a = \"a\"");
         test("x = 1");
         test("[style[...]] y: *");
+    }
+
+    #[test]
+    fn parse_test2() {
+        test(
+            r#"
+        x = y
+        [A[...], C]
+        [B[.....]]
+        z = w
+        "#,
+        );
+        test(
+            r#"
+        x = y
+        z = w
+        "#,
+        );
+        test(
+            r#"
+        x = y
+        [style[...]]
+        z = w
+        "#,
+        );
+        assert!(false);
+    }
+
+    #[test]
+    fn parse_test3() {
+        test(
+            r#"
+        [style]
+        x = y with {
+            a = b
+        } where {
+            c = d where { z = z }
+            c = d where { z = z, z = z }
+            v = v,
+            v = v
+            v = {
+                a = a
+            }
+        }
+        [a, b(
+            c = d
+        )]
+        [c]
+        [c(
+            d
+        )]
+        [c(
+            d)
+        ]
+        a = q
+        "#,
+        );
+        assert!(false);
+    }
+
+    #[test]
+    fn parse_test4() {
+        test(
+            r#"
+        x = y with {
+            a = b
+        }
+        x = y with
+        {
+            a = b
+        }
+        x = y
+        with {
+            a = b
+        }
+        x = y
+        with { a = b }
+        x = y
+        with
+        { a = b }
+        x
+          = y with {
+            a = b
+        }
+        "#,
+        );
+        assert!(false);
+    }
+
+    #[test]
+    fn parse_test5() {
+        test(
+            r#"
+        x = { a = {
+            p = q
+        }}
+        "#,
+        );
         assert!(false);
     }
 }

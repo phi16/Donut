@@ -21,8 +21,8 @@ pub struct Token<'a> {
     pub str: &'a str,
     pub ty: TokenTy,
     pub pos: TokenPos,
+    pub indent: usize,
     pub connected: bool,
-    pub is_head: bool,
 }
 
 pub type Error = (TokenPos, String);

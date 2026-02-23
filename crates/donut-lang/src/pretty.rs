@@ -166,9 +166,9 @@ impl Prettyable for Lit {
 impl Prettyable for ArrowTy {
     fn pretty(&self, pp: &mut Pretty) {
         match self {
-            ArrowTy::To => pp.str("→"),
-            ArrowTy::Eq => pp.str("~"),
-            ArrowTy::Functor => pp.str("~>"),
+            ArrowTy::To => pp.str(" → "),
+            ArrowTy::Eq => pp.str(" ~ "),
+            ArrowTy::Functor => pp.str(" ~> "),
         };
     }
 }
@@ -176,14 +176,17 @@ impl Prettyable for Op {
     fn pretty(&self, pp: &mut Pretty) {
         match self {
             Op::CompRep(0) => pp.str(" "),
-            Op::CompRep(n) => pp.str(";".repeat(*n as usize).as_str()),
+            Op::CompRep(n) => {
+                pp.str(";".repeat(*n as usize).as_str());
+                pp.str(" ");
+            }
             Op::CompLit(n) => {
                 pp.str(";");
                 pp.str(&n.to_string());
+                pp.str(" ");
             }
-            Op::CompStar => pp.str(";*"),
+            Op::CompStar => pp.str(";* "),
             Op::Arrow(s) => s.pretty(pp),
-            Op::Sum => pp.str("+"),
         }
     }
 }
@@ -206,7 +209,14 @@ impl Prettyable for Val {
     fn pretty(&self, pp: &mut Pretty) {
         assert_eq!(self.vs.len(), self.ops.len() + 1);
 
-        unimplemented!();
+        self.vs[0].pretty(pp);
+        for i in 0..self.ops.len() {
+            self.ops[i].0.pretty(pp);
+            if let Some(ppack) = &self.ops[i].1 {
+                ppack.pretty(pp);
+            }
+            self.vs[i + 1].pretty(pp);
+        }
     }
 }
 
@@ -219,6 +229,7 @@ impl Prettyable for Module {
                 pp.ln();
                 for d in ds {
                     d.pretty(pp);
+                    pp.ln();
                 }
                 pp.dedent();
                 pp.str("}");
@@ -279,21 +290,21 @@ impl Prettyable for Decl {
     fn pretty(&self, pp: &mut Pretty) {
         for deco in &self.decos {
             deco.pretty(pp);
-            pp.ln();
+            pp.str(" ");
         }
         match &self.main {
-            DeclMain::Unit(d) => {
+            Some(DeclMain::Unit(d)) => {
                 d.pretty(pp);
             }
-            DeclMain::Mod(m) => {
+            Some(DeclMain::Mod(m)) => {
                 m.pretty(pp);
             }
+            None => {}
         }
         for clause in &self.clauses {
             pp.str(" ");
             clause.pretty(pp);
         }
-        pp.ln();
     }
 }
 
@@ -301,6 +312,7 @@ impl Prettyable for Program {
     fn pretty(&self, pp: &mut Pretty) {
         for d in &self.0 {
             d.pretty(pp);
+            pp.ln();
         }
     }
 }

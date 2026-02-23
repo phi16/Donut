@@ -36,7 +36,6 @@ type LocChar<'a> = (Loc<'a>, char);
 struct Tokenizer<'a, I: Iterator<Item = LocChar<'a>>> {
     iter: Peekable<I>,
     connected: bool,
-    waiting_for_head: bool,
     last_line: usize,
     errors: Vec<Error>,
 }
@@ -46,7 +45,6 @@ impl<'a, I: Iterator<Item = LocChar<'a>>> Tokenizer<'a, I> {
         Tokenizer {
             iter: iter.peekable(),
             connected: false,
-            waiting_for_head: true,
             last_line: 0,
             errors: vec![],
         }
@@ -78,13 +76,6 @@ impl<'a, I: Iterator<Item = LocChar<'a>>> Tokenizer<'a, I> {
         if let Some(err) = err {
             self.add_error(pos.clone(), err);
         }
-        if self.last_line != l0.ln {
-            self.waiting_for_head = true;
-        }
-        let is_head = ty != TokenTy::Whitespace && self.waiting_for_head;
-        if is_head {
-            self.waiting_for_head = false;
-        }
         let connected = self.last_line == l0.ln && self.connected;
         self.connected = ty != TokenTy::Whitespace;
         self.last_line = l0.ln;
@@ -92,8 +83,8 @@ impl<'a, I: Iterator<Item = LocChar<'a>>> Tokenizer<'a, I> {
             str,
             ty,
             pos,
+            indent: 0,
             connected,
-            is_head,
         }
     }
 
@@ -189,6 +180,13 @@ impl<'a, I: Iterator<Item = LocChar<'a>>> Iterator for Tokenizer<'a, I> {
                 let ty = if c0 == '.' && count >= 2 {
                     TokenTy::Keyword
                 } else {
+                    if count == 1 {
+                        if let Some((l, c)) = self.iter.peek() {
+                            if l0.ln == l.ln && *c == '*' {
+                                self.iter.next();
+                            }
+                        }
+                    }
                     TokenTy::Operator
                 };
                 return Some(self.make_token(&l0, ty));
@@ -247,8 +245,16 @@ pub fn tokenize<'a>(code: &'a str) -> (Vec<Token<'a>>, Vec<TokenPos>, Vec<Error>
     let iter = lines.into_iter().flatten();
     let mut tokenizer = Tokenizer::new(iter);
     let mut tokens = vec![];
+    let mut indent = None;
     while let Some(token) = tokenizer.next() {
         if token.ty != TokenTy::Whitespace {
+            let indent_lc = match indent {
+                Some((l, c)) if l == token.pos.line => (l, c),
+                _ => (token.pos.line, token.pos.col),
+            };
+            indent = Some(indent_lc);
+            let mut token = token;
+            token.indent = indent_lc.1;
             tokens.push(token);
         }
     }
@@ -303,5 +309,11 @@ mod tests {
                 Name, Operator, Name // ==h := i
             ],
         );
+    }
+
+    #[test]
+    fn tokenize_test2() {
+        let ts = test("x = y\nz = w");
+        eprintln!("{:#?}", ts);
     }
 }

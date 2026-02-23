@@ -64,7 +64,6 @@ pub enum Op {
     CompLit(u32),
     CompStar,
     Arrow(ArrowTy),
-    Sum,
 }
 #[derive(Debug)]
 pub enum Val0 {
@@ -119,7 +118,7 @@ pub enum DeclMain {
 #[derive(Debug)]
 pub struct Decl {
     pub decos: Vec<A<ParamPack>>,
-    pub main: DeclMain,
+    pub main: Option<DeclMain>,
     pub clauses: Vec<A<Clause>>,
 }
 
