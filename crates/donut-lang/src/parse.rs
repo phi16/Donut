@@ -95,18 +95,15 @@ impl<'a> Tracker<'a> {
     }
 
     pub fn peek(&self) -> Option<&'a Token<'a>> {
-        if let Some(t) = self.tokens.get(self.pos) {
-            if self.decl_head || self.indent < t.pos.col {
-                return Some(t);
-            }
+        let t = self.tokens.get(self.pos)?;
+        if self.decl_head || self.indent < t.pos.col {
+            return Some(t);
         }
         None
     }
-    pub fn peek_close(&self) -> Option<&'a Token<'a>> {
-        if let Some(t) = self.tokens.get(self.pos) {
-            if self.decl_head || self.indent <= t.pos.col {
-                return Some(t);
-            }
+    pub fn peek_is(&self, ty: TokenTy) -> Option<&'a str> {
+        if let Some(t) = self.peek() {
+            return if t.ty == ty { Some(t.str) } else { None };
         }
         None
     }
@@ -115,13 +112,6 @@ impl<'a> Tracker<'a> {
         assert!(self.pos < self.tokens.len());
         self.pos += 1;
         self.decl_head = false;
-    }
-
-    pub fn peek_is(&self, ty: TokenTy) -> Option<&'a str> {
-        if let Some(t) = self.peek() {
-            return if t.ty == ty { Some(t.str) } else { None };
-        }
-        None
     }
 
     pub fn eoi(&self) -> Option<()> {
@@ -133,35 +123,33 @@ impl<'a> Tracker<'a> {
 
     pub fn name(&mut self) -> Option<A<Name>> {
         let u = self.begin();
-        if let Some(t) = self.peek() {
-            if t.ty == TokenTy::Name {
-                let name = Name(t.str.to_string());
-                self.next();
-                return Some(self.end(u, name));
-            }
+        let t = self.peek()?;
+        if t.ty == TokenTy::Name {
+            let name = Name(t.str.to_string());
+            self.next();
+            return Some(self.end(u, name));
         }
         None
     }
     pub fn symbol(&mut self, s: &'static str) -> Option<()> {
-        if let Some(t) = self.peek() {
-            if t.ty == TokenTy::Symbol && t.str == s {
-                self.next();
-                return Some(());
-            }
+        let t = self.peek()?;
+        if t.ty == TokenTy::Symbol && t.str == s {
+            self.next();
+            return Some(());
         }
         None
     }
     pub fn symbol_connected(&mut self, s: &'static str) -> Option<()> {
-        if let Some(t) = self.peek() {
-            if t.ty == TokenTy::Symbol && t.connected && t.str == s {
-                self.next();
-                return Some(());
-            }
+        let t = self.peek()?;
+        if t.ty == TokenTy::Symbol && t.connected && t.str == s {
+            self.next();
+            return Some(());
         }
         None
     }
     pub fn symbol_close(&mut self, s: &'static str) -> Option<()> {
-        if let Some(t) = self.peek_close() {
+        let t = self.tokens.get(self.pos)?;
+        if self.decl_head || self.indent <= t.pos.col {
             if t.ty == TokenTy::Symbol && t.str == s {
                 self.next();
                 return Some(());
@@ -170,11 +158,10 @@ impl<'a> Tracker<'a> {
         None
     }
     pub fn keyword(&mut self, s: &'static str) -> Option<()> {
-        if let Some(t) = self.peek() {
-            if t.ty == TokenTy::Keyword && t.str == s {
-                self.next();
-                return Some(());
-            }
+        let t = self.peek()?;
+        if t.ty == TokenTy::Keyword && t.str == s {
+            self.next();
+            return Some(());
         }
         None
     }
@@ -217,12 +204,6 @@ impl<'a> Tracker<'a> {
 
         self.symbol("[")?;
         let mut params = vec![];
-        if self.symbol(",").is_some() {
-            self.add_error("unexpected ',' at start of parameter pack");
-            while self.symbol(",").is_some() {
-                // skip extra commas
-            }
-        }
         if self.symbol_close("]").is_some() {
             // pass
         } else {
@@ -266,7 +247,7 @@ impl<'a> Tracker<'a> {
         names.push(self.local_ref_name()?);
         while self.symbol(".").is_some() {
             let n = self.local_ref_name().unwrap_or_else(|| {
-                self.add_error("expected applicand name after '.' in name reference");
+                self.add_error("expected local name after '.' in name reference");
                 A::Error()
             });
             names.push(n);
@@ -303,12 +284,59 @@ impl<'a> Tracker<'a> {
             Lit::String(str.to_string())
         } else if self.symbol("[").is_some() {
             // array
-            return None;
-            unimplemented!();
+            let mut vs = vec![];
+            if self.symbol_close("]").is_some() {
+                // pass
+            } else {
+                loop {
+                    let v = self.val().unwrap_or_else(|| {
+                        self.add_error("expected value in array");
+                        A::Error()
+                    });
+                    vs.push(v);
+                    if self.symbol(",").is_some() {
+                        if self.symbol_close("]").is_some() {
+                            // trailing comma
+                            break;
+                        }
+                        continue;
+                    } else if self.symbol_close("]").is_some() {
+                        break;
+                    } else {
+                        self.add_error("expected ',' or ']' in array");
+                        break;
+                    }
+                }
+            }
+            Lit::Array(vs)
         } else if self.symbol("{").is_some() {
             // object
-            return None;
-            unimplemented!();
+            let mut ps = vec![];
+            if self.symbol_close("}").is_some() {
+                // pass
+            } else {
+                loop {
+                    // let v = self.val().unwrap_or_else(|| {
+                    //     self.add_error("expected value in array");
+                    //     A::Error()
+                    // });
+                    let p = todo!();
+                    ps.push(p);
+                    if self.symbol(",").is_some() {
+                        if self.symbol_close("}").is_some() {
+                            // trailing comma
+                            break;
+                        }
+                        continue;
+                    } else if self.symbol_close("}").is_some() {
+                        break;
+                    } else {
+                        self.add_error("expected ',' or '}' in object");
+                        break;
+                    }
+                }
+            }
+            Lit::Object(ps)
         } else {
             return None;
         };
@@ -330,8 +358,17 @@ impl<'a> Tracker<'a> {
         } else if s.starts_with(";;") {
             Op::CompRep(s.len() as u32)
         } else if s == ";" {
-            if let Some(n) = self.peek_is(TokenTy::Number) {
-                unimplemented!()
+            if let Some(t) = self.peek()
+                && t.ty == TokenTy::Number
+                && t.connected
+            {
+                self.next();
+                let n = t.str;
+                let n = n.parse::<u32>().unwrap_or_else(|_| {
+                    self.add_error("invalid number literal in comp level");
+                    0
+                });
+                Op::CompLit(n)
             } else {
                 Op::CompRep(1)
             }
@@ -533,12 +570,13 @@ impl<'a> Tracker<'a> {
                         self.next();
                         consumed = true;
                         continue;
-                    } else if let Some(t) = self.peek_close() {
-                        if t.str == "}" || t.str == "]" || t.str == ")" {
-                            self.next();
-                            consumed = true;
-                            continue;
-                        }
+                    } else if self.symbol_close(")").is_some()
+                        || self.symbol_close("}").is_some()
+                        || self.symbol_close("]").is_some()
+                    {
+                        self.next();
+                        consumed = true;
+                        continue;
                     }
                     break;
                 }
