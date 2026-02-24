@@ -4,7 +4,18 @@
     {
       "label": "Install donut-ls",
       "type": "shell",
-      "command": "cargo install --path ~/source/repos/Donut/crates/donut-ls",
+      "command": "cargo install --path .",
+      "options": {
+        "cwd": "${workspaceFolder}/donut-ls"
+      },
+    },
+    {
+      "label": "Package donut-vscode",
+      "type": "shell",
+      "command": "npx vsce package",
+      "options": {
+        "cwd": "${workspaceFolder}/donut-vscode"
+      },
     }
   ]
 }

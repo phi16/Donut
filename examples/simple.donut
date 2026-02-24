@@ -1,6 +1,6 @@
-[a[x = c]]
-[x]
-x: y = z {
+  [a[x = c]]
+  [x]
+  x: y = z {
+    }
+  with {
   }
-with {
-}

@@ -32,12 +32,14 @@ pub struct Param {
     pub val: A<Val>,
 }
 #[derive(Debug)]
-pub struct ParamPack(pub Vec<A<Param>>);
+pub struct Params(pub Vec<A<Param>>);
+#[derive(Debug)]
+pub struct Decorator(pub Vec<A<Param>>);
 
 #[derive(Debug)]
-pub struct LocalRefName(pub A<Name>, pub Option<A<ParamPack>>);
+pub struct Segment(pub A<Name>, pub Option<A<Params>>);
 #[derive(Debug)]
-pub struct RefName(pub Vec<A<LocalRefName>>, pub Option<A<Val>>);
+pub struct Path(pub Vec<A<Segment>>, pub Option<A<Val>>);
 
 #[derive(Debug)]
 pub enum Key {
@@ -67,7 +69,7 @@ pub enum Op {
 }
 #[derive(Debug)]
 pub enum Val0 {
-    Ref(Box<A<RefName>>),
+    Ref(Box<A<Path>>),
     Lit(A<Lit>),
     Dots,
     Paren(Box<A<Val>>),
@@ -75,7 +77,7 @@ pub enum Val0 {
 #[derive(Debug)]
 pub struct Val {
     pub vs: Vec<A<Val0>>,
-    pub ops: Vec<(A<Op>, Option<A<ParamPack>>)>,
+    pub ops: Vec<(A<Op>, Option<A<Params>>)>,
 }
 
 #[derive(Debug)]
@@ -97,7 +99,7 @@ pub enum ValMod {
 }
 #[derive(Debug)]
 pub struct DeclUnit {
-    pub names: Vec<A<RefName>>,
+    pub names: Vec<A<Path>>,
     pub ty: Option<A<Val>>,
     pub assign: Option<(A<AssignOp>, ValMod)>,
 }
@@ -117,7 +119,7 @@ pub enum DeclMain {
 }
 #[derive(Debug)]
 pub struct Decl {
-    pub decos: Vec<A<ParamPack>>,
+    pub decos: Vec<A<Decorator>>,
     pub main: Option<DeclMain>,
     pub clauses: Vec<A<Clause>>,
 }

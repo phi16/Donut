@@ -99,7 +99,7 @@ impl Prettyable for Param {
     }
 }
 
-impl Prettyable for ParamPack {
+impl Prettyable for Params {
     fn pretty(&self, pp: &mut Pretty) {
         pp.str("[");
         pp.sep(&self.0, ", ");
@@ -107,7 +107,15 @@ impl Prettyable for ParamPack {
     }
 }
 
-impl Prettyable for LocalRefName {
+impl Prettyable for Decorator {
+    fn pretty(&self, pp: &mut Pretty) {
+        pp.str("[");
+        pp.sep(&self.0, ", ");
+        pp.str("]");
+    }
+}
+
+impl Prettyable for Segment {
     fn pretty(&self, pp: &mut Pretty) {
         self.0.pretty(pp);
         if let Some(p) = &self.1 {
@@ -116,7 +124,7 @@ impl Prettyable for LocalRefName {
     }
 }
 
-impl Prettyable for RefName {
+impl Prettyable for Path {
     fn pretty(&self, pp: &mut Pretty) {
         pp.sep(&self.0, ".");
         if let Some(v) = &self.1 {

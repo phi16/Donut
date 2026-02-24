@@ -280,7 +280,7 @@ mod tests {
 
     #[test]
     fn test_assoc_layout() {
-        use crate::cell::tests::*;
+        use donut_core::cell::tests::*;
         let mut cb = LayoutSolver::new();
         let a = pentagon::<FreeCell>();
         let cell = cb.convert(a);

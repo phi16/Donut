@@ -1,0 +1,10 @@
+[workspace]
+members = [
+    "crates/*",
+    "donut-app",
+    "donut-ls",
+]
+resolver = "2"
+
+[profile.release]
+lto = true
