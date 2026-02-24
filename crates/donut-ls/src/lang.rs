@@ -1,4 +1,5 @@
 use donut_lang::types;
+use donut_lang::types::tree;
 use std::cell::RefCell;
 
 #[derive(Debug, Clone)]
@@ -54,6 +55,58 @@ impl Context {
         d.token_type = t;
     }
 }
+
+/* trait Marking {
+    fn mark(&self, x: &mut Context);
+}
+
+impl<T: Marking> Marking for types::tree::A<T> {
+    fn mark(&self, x: &mut Context) {
+        if let tree::A::Accepted(t, _) = self {
+            t.mark(x);
+        }
+    }
+}
+impl<T: Marking> Marking for Vec<T> {
+    fn mark(&self, x: &mut Context) {
+        for t in self {
+            t.mark(x);
+        }
+    }
+}
+impl<T: Marking> Marking for Option<T> {
+    fn mark(&self, x: &mut Context) {
+        if let Some(t) = self {
+            t.mark(x);
+        }
+    }
+}
+impl Marking for tree::Clause {
+    fn mark(&self, x: &mut Context) {
+        self.0.mark(x); // ClauseTy
+        self.1.mark(x);
+    }
+}
+impl Marking for tree::DeclMain {
+    fn mark(&self, x: &mut Context) {
+        match self {
+            tree::DeclMain::Unit(d) => d.mark(x),
+            tree::DeclMain::Mod(m) => m.mark(x),
+        }
+    }
+}
+impl Marking for tree::Decl {
+    fn mark(&self, x: &mut Context) {
+        self.decos.mark(x);
+        self.main.mark(x);
+        self.clauses.mark(x);
+    }
+}
+impl Marking for tree::Program {
+    fn mark(&self, x: &mut Context) {
+        self.0.mark(x);
+    }
+} */
 
 pub fn tokenize_example(code: &str) -> (Vec<TokenData>, Vec<Diagnostic>) {
     let lines = code.lines().collect::<Vec<_>>();
@@ -119,6 +172,18 @@ pub fn tokenize_example(code: &str) -> (Vec<TokenData>, Vec<Diagnostic>) {
     }
     for (pos, e) in &errors {
         add_diag(pos, e);
+    }
+    eprintln!("tokens: {:?}", tokens);
+    eprintln!("errors: {:?}", errors);
+    if errors.is_empty() {
+        let (program, errors) = donut_lang::parse::parse(&tokens);
+        eprintln!("program: {:?}", program);
+        eprintln!("errors: {:?}", errors);
+        // program.mark(&mut x.borrow_mut());
+        for (pos, e) in &errors {
+            add_diag(pos, e);
+        }
+        // TODO
     }
     let comments_iter = comments.into_iter().map(|pos| {
         let mut l = lines.get(pos.line).unwrap().chars().map(|c| c.len_utf16());

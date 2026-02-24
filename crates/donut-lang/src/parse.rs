@@ -34,7 +34,7 @@ use crate::types::tree::*;
 struct Tracker<'a> {
     tokens: &'a [Token<'a>],
     pos: usize,
-    indent: usize,
+    indent: i64,
     decl_head: bool,
     errors: Vec<Error>,
 }
@@ -42,7 +42,7 @@ struct Tracker<'a> {
 #[derive(Clone)]
 struct NodeBase {
     start: usize,
-    indent: usize,
+    indent: i64,
     decl_head: bool,
 }
 
@@ -51,7 +51,7 @@ impl<'a> Tracker<'a> {
         Self {
             tokens,
             pos: 0,
-            indent: 0,
+            indent: -1,
             decl_head: true,
             errors: vec![],
         }
@@ -96,7 +96,7 @@ impl<'a> Tracker<'a> {
 
     pub fn peek(&self) -> Option<&'a Token<'a>> {
         let t = self.tokens.get(self.pos)?;
-        if self.decl_head || self.indent < t.pos.col {
+        if self.decl_head || self.indent < t.pos.col as i64 {
             return Some(t);
         }
         None
@@ -149,7 +149,7 @@ impl<'a> Tracker<'a> {
     }
     pub fn symbol_close(&mut self, s: &'static str) -> Option<()> {
         let t = self.tokens.get(self.pos)?;
-        if self.decl_head || self.indent <= t.pos.col {
+        if self.decl_head || self.indent <= t.pos.col as i64 {
             if t.ty == TokenTy::Symbol && t.str == s {
                 self.next();
                 return Some(());
@@ -554,7 +554,7 @@ impl<'a> Tracker<'a> {
         Some(self.end(u, clause))
     }
 
-    pub fn consume_indent(&mut self, last_indent: usize) -> bool {
+    pub fn consume_indent(&mut self, last_indent: i64) -> bool {
         let mut consumed = false;
         if self.indent != last_indent {
             // Note: decl should read everything in this indent levels
@@ -574,7 +574,6 @@ impl<'a> Tracker<'a> {
                         || self.symbol_close("}").is_some()
                         || self.symbol_close("]").is_some()
                     {
-                        self.next();
                         consumed = true;
                         continue;
                     }
@@ -590,7 +589,7 @@ impl<'a> Tracker<'a> {
         let u = self.begin();
 
         let last_indent = self.indent;
-        self.indent = self.peek()?.indent;
+        self.indent = self.peek()?.indent as i64;
         self.decl_head = true;
 
         let mut decos = vec![];
@@ -632,11 +631,8 @@ impl<'a> Tracker<'a> {
             clauses,
         };
 
-        loop {
-            if self.symbol(",").is_some() {
-                // pass
-            }
-            break;
+        if self.symbol(",").is_some() {
+            // pass
         }
         self.consume_indent(last_indent);
         Some(self.end(u, decl))
@@ -682,6 +678,19 @@ mod tests {
             eprintln!("Errors: {:#?}", errors);
         }
         assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn parse_failtest() {
+        test(
+            r#"
+            [x]
+            x: y = z {
+                }
+            with {
+            }
+            "#,
+        );
     }
 
     #[test]
