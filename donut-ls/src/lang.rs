@@ -46,17 +46,22 @@ impl Context {
         (t.line, t.column, t.length)
     }
 
-    fn mark_as(&mut self, ix: &usize, offset: i32, t: TokenType) {
-        let index = *ix as i32 + offset;
-        let d = match self.tokens.get_mut(index as usize) {
+    fn mark_as(&mut self, index: usize, t: TokenType) {
+        let d = match self.tokens.get_mut(index) {
             Some(token) => token,
             None => return,
         };
         d.token_type = t;
     }
+    fn mark_elem_as<T>(&mut self, e: &tree::A<T>, t: TokenType) {
+        if let tree::A::Accepted(_, span) = e {
+            // TODO: end?
+            self.mark_as(span.start, t);
+        }
+    }
 }
 
-/* trait Marking {
+trait Marking {
     fn mark(&self, x: &mut Context);
 }
 
@@ -81,9 +86,122 @@ impl<T: Marking> Marking for Option<T> {
         }
     }
 }
+impl<T: Marking, U: Marking> Marking for (T, U) {
+    fn mark(&self, x: &mut Context) {
+        self.0.mark(x);
+        self.1.mark(x);
+    }
+}
+
+impl Marking for tree::Symbol {
+    fn mark(&self, _: &mut Context) {}
+}
+impl Marking for tree::Name {
+    fn mark(&self, _: &mut Context) {}
+}
+impl Marking for tree::ParamTy {
+    fn mark(&self, _: &mut Context) {}
+}
+impl Marking for tree::Param {
+    fn mark(&self, x: &mut Context) {
+        self.names.mark(x);
+        self.ty.mark(x);
+        self.val.mark(x);
+    }
+}
+impl Marking for tree::Params {
+    fn mark(&self, x: &mut Context) {
+        self.1.mark(x);
+    }
+}
+impl Marking for tree::Decorator {
+    fn mark(&self, x: &mut Context) {
+        x.mark_elem_as(&self.0, TokenType::Keyword);
+        self.1.mark(x);
+        x.mark_elem_as(&self.2, TokenType::Keyword);
+    }
+}
+impl Marking for tree::Segment {
+    fn mark(&self, x: &mut Context) {
+        self.0.mark(x);
+        self.1.mark(x);
+    }
+}
+impl Marking for tree::Path {
+    fn mark(&self, x: &mut Context) {
+        self.0.mark(x);
+        self.1.mark(x);
+    }
+}
+impl Marking for tree::Key {
+    fn mark(&self, x: &mut Context) {
+        match self {
+            tree::Key::Name(n) => n.mark(x),
+            tree::Key::String(_) => {}
+        }
+    }
+}
+impl Marking for tree::Lit {
+    fn mark(&self, x: &mut Context) {
+        match self {
+            tree::Lit::Number(_) => {}
+            tree::Lit::String(_) => {}
+            tree::Lit::Array(vs) => vs.mark(x),
+            tree::Lit::Object(kvs) => kvs.mark(x),
+        }
+    }
+}
+impl Marking for tree::Op {
+    fn mark(&self, _: &mut Context) {}
+}
+impl Marking for tree::Val0 {
+    fn mark(&self, x: &mut Context) {
+        match self {
+            tree::Val0::Path(p) => p.mark(x),
+            tree::Val0::Lit(l) => l.mark(x),
+            tree::Val0::Dots => {}
+            tree::Val0::Paren(v) => v.mark(x),
+        }
+    }
+}
+impl Marking for tree::Val {
+    fn mark(&self, x: &mut Context) {
+        self.vs.mark(x);
+        self.ops.mark(x);
+    }
+}
+impl Marking for tree::Module {
+    fn mark(&self, x: &mut Context) {
+        match self {
+            tree::Module::Block(ds) => ds.mark(x),
+            tree::Module::Import(l) => l.mark(x),
+        }
+    }
+}
+impl Marking for tree::AssignOp {
+    fn mark(&self, _: &mut Context) {}
+}
+impl Marking for tree::ValMod {
+    fn mark(&self, x: &mut Context) {
+        match self {
+            tree::ValMod::Val(v) => v.mark(x),
+            tree::ValMod::Mod(m) => m.mark(x),
+        }
+    }
+}
+impl Marking for tree::DeclUnit {
+    fn mark(&self, x: &mut Context) {
+        self.names.mark(x);
+        self.ty.mark(x);
+        self.assign.mark(x);
+    }
+}
+impl Marking for tree::ClauseTy {
+    fn mark(&self, _: &mut Context) {}
+}
 impl Marking for tree::Clause {
     fn mark(&self, x: &mut Context) {
-        self.0.mark(x); // ClauseTy
+        self.0.mark(x);
         self.1.mark(x);
     }
 }
@@ -106,7 +224,7 @@ impl Marking for tree::Program {
     fn mark(&self, x: &mut Context) {
         self.0.mark(x);
     }
-} */
+}
 
 pub fn tokenize_example(code: &str) -> (Vec<TokenData>, Vec<Diagnostic>) {
     let lines = code.lines().collect::<Vec<_>>();
@@ -156,8 +274,7 @@ pub fn tokenize_example(code: &str) -> (Vec<TokenData>, Vec<Diagnostic>) {
         let mut x = x.borrow_mut();
         tokens.iter().enumerate().for_each(|(ix, t)| {
             x.mark_as(
-                &ix,
-                0,
+                ix,
                 match t.ty {
                     types::token::TokenTy::Name => TokenType::Unknown,
                     types::token::TokenTy::Keyword => TokenType::Keyword,
@@ -179,7 +296,7 @@ pub fn tokenize_example(code: &str) -> (Vec<TokenData>, Vec<Diagnostic>) {
         let (program, errors) = donut_lang::parse::parse(&tokens);
         eprintln!("program: {:?}", program);
         eprintln!("errors: {:?}", errors);
-        // program.mark(&mut x.borrow_mut());
+        program.mark(&mut x.borrow_mut());
         for (pos, e) in &errors {
             add_diag(pos, e);
         }

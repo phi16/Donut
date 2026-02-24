@@ -6,6 +6,7 @@ x: A → B = f where {
   f = g
 }
 
+a.b[].x va.c.x := a[].b.y
 a[].b[].x va.c.x := a[].b.y
 
 x += a

@@ -102,7 +102,7 @@ impl Prettyable for Param {
 impl Prettyable for Params {
     fn pretty(&self, pp: &mut Pretty) {
         pp.str("[");
-        pp.sep(&self.0, ", ");
+        pp.sep(&self.1, ", ");
         pp.str("]");
     }
 }
@@ -110,7 +110,7 @@ impl Prettyable for Params {
 impl Prettyable for Decorator {
     fn pretty(&self, pp: &mut Pretty) {
         pp.str("[");
-        pp.sep(&self.0, ", ");
+        pp.sep(&self.1, ", ");
         pp.str("]");
     }
 }
@@ -202,7 +202,7 @@ impl Prettyable for Op {
 impl Prettyable for Val0 {
     fn pretty(&self, pp: &mut Pretty) {
         match self {
-            Val0::Ref(r) => r.pretty(pp),
+            Val0::Path(r) => r.pretty(pp),
             Val0::Lit(l) => l.pretty(pp),
             Val0::Dots => pp.str("..."),
             Val0::Paren(v) => {

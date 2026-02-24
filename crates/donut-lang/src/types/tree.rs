@@ -32,9 +32,9 @@ pub struct Param {
     pub val: A<Val>,
 }
 #[derive(Debug)]
-pub struct Params(pub Vec<A<Param>>);
+pub struct Params(pub A<Symbol>, pub Vec<A<Param>>, pub A<Symbol>);
 #[derive(Debug)]
-pub struct Decorator(pub Vec<A<Param>>);
+pub struct Decorator(pub A<Symbol>, pub Vec<A<Param>>, pub A<Symbol>);
 
 #[derive(Debug)]
 pub struct Segment(pub A<Name>, pub Option<A<Params>>);
@@ -69,7 +69,7 @@ pub enum Op {
 }
 #[derive(Debug)]
 pub enum Val0 {
-    Ref(Box<A<Path>>),
+    Path(Box<A<Path>>),
     Lit(A<Lit>),
     Dots,
     Paren(Box<A<Val>>),

@@ -123,39 +123,83 @@ impl<'a> Tracker<'a> {
         self.decl_head = false;
     }
 
+    pub fn eat(&mut self, pred: impl Fn(&Token<'a>) -> bool) -> Option<&'a Token<'a>> {
+        let t = self.peek()?;
+        if pred(t) {
+            self.next();
+            Some(t)
+        } else {
+            None
+        }
+    }
+    pub fn eat_close(&mut self, pred: impl Fn(&Token<'a>) -> bool) -> Option<&'a Token<'a>> {
+        let t = self.tokens.get(self.pos)?;
+        if self.decl_head || self.indent <= t.pos.col {
+            if pred(t) {
+                self.next();
+                return Some(t);
+            }
+        }
+        None
+    }
+
     pub fn eoi(&self) -> bool {
         self.tokens.get(self.pos).is_none()
     }
 
+    pub fn symbol(&mut self, s: &'static str) -> Option<A<Symbol>> {
+        let u = self.begin();
+        self.eat(|t| t.ty == TokenTy::Symbol && t.str == s)?;
+        Some(self.end(u, Symbol(s)))
+    }
+    pub fn symbol_connected(&mut self, s: &'static str) -> Option<A<Symbol>> {
+        let u = self.begin();
+        self.eat(|t| t.ty == TokenTy::Symbol && t.connected && t.str == s)?;
+        Some(self.end(u, Symbol(s)))
+    }
+    pub fn symbol_close(&mut self, s: &'static str) -> Option<A<Symbol>> {
+        let u = self.begin();
+        self.eat_close(|t| t.ty == TokenTy::Symbol && t.str == s)?;
+        Some(self.end(u, Symbol(s)))
+    }
+    pub fn operator(&mut self, s: &'static str) -> Option<&'a Token<'a>> {
+        self.eat(|t| t.ty == TokenTy::Operator && t.str == s)
+    }
+    pub fn keyword(&mut self, s: &'static str) -> Option<&'a Token<'a>> {
+        self.eat(|t| t.ty == TokenTy::Keyword && t.str == s)
+    }
+
     fn separated<T>(
         &mut self,
+        name: &str,
+        open: &'static str,
         close: &'static str,
-        err: &str,
         mut parse_item: impl FnMut(&mut Self) -> Option<T>,
-    ) -> Vec<T> {
-        if self.symbol_close(close).is_some() {
-            return vec![];
+    ) -> Option<(A<Symbol>, Vec<T>, A<Symbol>)> {
+        let open = self.symbol(open)?;
+        if let Some(close) = self.symbol_close(close) {
+            return Some((open, vec![], close));
         }
         let mut items = vec![];
-        loop {
+        let close = loop {
             let Some(item) = parse_item(self) else {
-                self.expected(err);
-                break;
+                self.expected(name);
+                break A::Error();
             };
             items.push(item);
             if self.symbol(",").is_some() {
-                if self.symbol_close(close).is_some() {
-                    break;
+                if let Some(close) = self.symbol_close(close) {
+                    break close;
                 }
                 continue;
-            } else if self.symbol_close(close).is_some() {
-                break;
+            } else if let Some(close) = self.symbol_close(close) {
+                break close;
             } else {
                 self.expected(&format!("',' or '{close}'"));
-                break;
+                break A::Error();
             }
-        }
-        items
+        };
+        Some((open, items, close))
     }
 
     pub fn name(&mut self) -> Option<A<Name>> {
@@ -168,41 +212,6 @@ impl<'a> Tracker<'a> {
         }
         None
     }
-    pub fn eat(&mut self, pred: impl Fn(&Token<'a>) -> bool) -> Option<&'a Token<'a>> {
-        let t = self.peek()?;
-        if pred(t) {
-            self.next();
-            Some(t)
-        } else {
-            None
-        }
-    }
-    pub fn eat_close(&mut self, pred: impl Fn(&Token<'a>) -> bool) -> Option<&'a Token<'a>> {
-        let t = self.tokens.get(self.pos)?;
-        if (self.decl_head || self.indent <= t.pos.col) && pred(t) {
-            self.next();
-            Some(t)
-        } else {
-            None
-        }
-    }
-
-    pub fn symbol(&mut self, s: &'static str) -> Option<()> {
-        self.eat(|t| t.ty == TokenTy::Symbol && t.str == s).map(|_| ())
-    }
-    pub fn symbol_connected(&mut self, s: &'static str) -> Option<()> {
-        self.eat(|t| t.ty == TokenTy::Symbol && t.connected && t.str == s).map(|_| ())
-    }
-    pub fn symbol_close(&mut self, s: &'static str) -> Option<()> {
-        self.eat_close(|t| t.ty == TokenTy::Symbol && t.str == s).map(|_| ())
-    }
-    pub fn operator(&mut self, s: &'static str) -> Option<()> {
-        self.eat(|t| t.ty == TokenTy::Operator && t.str == s).map(|_| ())
-    }
-    pub fn keyword(&mut self, s: &'static str) -> Option<()> {
-        self.eat(|t| t.ty == TokenTy::Keyword && t.str == s).map(|_| ())
-    }
-
     pub fn param(&mut self) -> Option<A<Param>> {
         let u = self.begin();
 
@@ -237,21 +246,21 @@ impl<'a> Tracker<'a> {
         Some(self.end(u, param))
     }
 
-    fn bracket(&mut self) -> Option<Vec<A<Param>>> {
-        self.symbol("[")?;
-        Some(self.separated("]", "parameter", |s| s.param()))
+    fn bracket(&mut self) -> Option<(A<Symbol>, Vec<A<Param>>, A<Symbol>)> {
+        let (open, items, close) = self.separated("parameter", "[", "]", |s| s.param())?;
+        Some((open, items, close))
     }
 
     pub fn params(&mut self) -> Option<A<Params>> {
         let u = self.begin();
-        let params = self.bracket()?;
-        Some(self.end(u, Params(params)))
+        let (open, items, close) = self.bracket()?;
+        Some(self.end(u, Params(open, items, close)))
     }
 
     pub fn decorator(&mut self) -> Option<A<Decorator>> {
         let u = self.begin();
-        let params = self.bracket()?;
-        Some(self.end(u, Decorator(params)))
+        let (open, items, close) = self.bracket()?;
+        Some(self.end(u, Decorator(open, items, close)))
     }
 
     pub fn segment(&mut self) -> Option<A<Segment>> {
@@ -269,7 +278,7 @@ impl<'a> Tracker<'a> {
 
         let mut names = vec![];
         names.push(self.segment()?);
-        while self.symbol(".").is_some() {
+        while self.operator(".").is_some() {
             let n = self.segment().unwrap_or_else(|| {
                 self.expected_after("name", ".");
                 A::Error()
@@ -328,14 +337,14 @@ impl<'a> Tracker<'a> {
             Lit::Number(t.str.to_string())
         } else if let Some(t) = self.eat(|t| t.ty == TokenTy::String) {
             Lit::String(t.str.to_string())
-        } else if self.symbol("[").is_some() {
+        } else if self.peek().is_some_and(|t| t.str == "[") {
             // array
-            let vs = self.separated("]", "value", |s| s.val());
-            Lit::Array(vs)
-        } else if self.symbol("{").is_some() {
+            let vs = self.separated("value", "[", "]", |s| s.val());
+            Lit::Array(vs.unwrap().1)
+        } else if self.peek().is_some_and(|t| t.str == "{") {
             // object
-            let ps = self.separated("}", "key-value pair", |s| s.key_val());
-            Lit::Object(ps)
+            let ps = self.separated("key-value pair", "{", "}", |s| s.key_val());
+            Lit::Object(ps.unwrap().1)
         } else {
             return None;
         };
@@ -378,7 +387,7 @@ impl<'a> Tracker<'a> {
         let v = if let Some(lit) = self.lit() {
             Val0::Lit(lit)
         } else if let Some(rn) = self.path() {
-            Val0::Ref(Box::new(rn))
+            Val0::Path(Box::new(rn))
         } else if self.symbol("(").is_some() {
             let inner = self.val().unwrap_or_else(|| {
                 self.expected_in("value", "parentheses");
@@ -390,7 +399,10 @@ impl<'a> Tracker<'a> {
                 self.expected_at_end_of("')'", "parentheses");
             }
             Val0::Paren(Box::new(inner))
-        } else if self.eat(|t| t.ty == TokenTy::Keyword && t.str.starts_with("..")).is_some() {
+        } else if self
+            .eat(|t| t.ty == TokenTy::Keyword && t.str.starts_with(".."))
+            .is_some()
+        {
             Val0::Dots
         } else {
             return None;
@@ -550,7 +562,9 @@ impl<'a> Tracker<'a> {
                         self.next();
                         consumed = true;
                         continue;
-                    } else if self.eat_close(|t| t.ty == TokenTy::Symbol && matches!(t.str, ")" | "}" | "]")).is_some()
+                    } else if self
+                        .eat_close(|t| t.ty == TokenTy::Symbol && matches!(t.str, ")" | "}" | "]"))
+                        .is_some()
                     {
                         consumed = true;
                         continue;
@@ -745,7 +759,6 @@ x: y = z {
         z = w
         "#,
         );
-        assert!(false);
     }
 
     #[test]
@@ -823,6 +836,13 @@ x: y = z {
         }}
         "#,
         );
-        assert!(false);
+    }
+    #[test]
+    fn parse_test6() {
+        test(
+            r#"
+        x.y = z
+        "#,
+        );
     }
 }
