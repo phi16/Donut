@@ -18,7 +18,7 @@ fn is_operator(s: &str) -> bool {
 
 fn is_separator(c: char) -> bool {
     match c {
-        '.' | ',' | ':' | ';' | '(' | ')' | '{' | '}' | '[' | ']' | '=' => true,
+        '.' | ',' | ':' | ';' | '(' | ')' | '{' | '}' | '[' | ']' => true,
         _ => false,
     }
 }
@@ -164,8 +164,6 @@ impl<'a, I: Iterator<Item = LocChar<'a>>> Iterator for Tokenizer<'a, I> {
                         return Some(self.make_token(&l0, TokenTy::Operator));
                     }
                 }
-            } else if c0 == '=' {
-                return Some(self.make_token(&l0, TokenTy::Operator));
             } else if c0 == '.' || c0 == ';' {
                 // ....., ;...;
                 let mut count = 1;
@@ -317,5 +315,17 @@ mod tests {
     fn tokenize_test2() {
         let ts = test("x = y\nz = w");
         eprintln!("{:#?}", ts);
+    }
+
+    #[test]
+    fn tokenize_test3() {
+        let ts = test("x:=y");
+        check_tys(&ts, tys![Name, Operator, Name]);
+    }
+
+    #[test]
+    fn tokenize_test4() {
+        let ts = test("x+=y");
+        check_tys(&ts, tys![Name]);
     }
 }

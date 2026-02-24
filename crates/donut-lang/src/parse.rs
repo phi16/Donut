@@ -611,7 +611,12 @@ impl<'a> Tracker<'a> {
 
         self.decl_head = true;
         let last_indent = self.indent;
-        self.indent = self.peek()?.indent;
+        let next_indent = self.peek()?.indent;
+        if next_indent < last_indent {
+            self.rollback(u);
+            return None;
+        }
+        self.indent = next_indent;
 
         let mut decos = vec![];
         while let Some(d) = self.decorator() {

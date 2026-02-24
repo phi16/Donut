@@ -8,6 +8,7 @@
       "options": {
         "cwd": "${workspaceFolder}/donut-ls"
       },
+      "problemMatcher": []
     },
     {
       "label": "Package donut-vscode",
@@ -15,7 +16,7 @@
       "command": "npx vsce package",
       "options": {
         "cwd": "${workspaceFolder}/donut-vscode"
-      },
+      }
     }
   ]
 }
