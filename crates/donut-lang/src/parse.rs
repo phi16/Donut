@@ -117,13 +117,6 @@ impl<'a> Tracker<'a> {
         }
         None
     }
-    pub fn peek_is(&self, ty: TokenTy) -> Option<&'a str> {
-        if let Some(t) = self.peek() {
-            return if t.ty == ty { Some(t.str) } else { None };
-        }
-        None
-    }
-
     pub fn next(&mut self) {
         assert!(self.pos < self.tokens.len());
         self.pos += 1;
@@ -175,47 +168,39 @@ impl<'a> Tracker<'a> {
         }
         None
     }
-    pub fn symbol(&mut self, s: &'static str) -> Option<()> {
+    pub fn eat(&mut self, pred: impl Fn(&Token<'a>) -> bool) -> Option<&'a Token<'a>> {
         let t = self.peek()?;
-        if t.ty == TokenTy::Symbol && t.str == s {
+        if pred(t) {
             self.next();
-            return Some(());
+            Some(t)
+        } else {
+            None
         }
-        None
+    }
+    pub fn eat_close(&mut self, pred: impl Fn(&Token<'a>) -> bool) -> Option<&'a Token<'a>> {
+        let t = self.tokens.get(self.pos)?;
+        if (self.decl_head || self.indent <= t.pos.col) && pred(t) {
+            self.next();
+            Some(t)
+        } else {
+            None
+        }
+    }
+
+    pub fn symbol(&mut self, s: &'static str) -> Option<()> {
+        self.eat(|t| t.ty == TokenTy::Symbol && t.str == s).map(|_| ())
     }
     pub fn symbol_connected(&mut self, s: &'static str) -> Option<()> {
-        let t = self.peek()?;
-        if t.ty == TokenTy::Symbol && t.connected && t.str == s {
-            self.next();
-            return Some(());
-        }
-        None
+        self.eat(|t| t.ty == TokenTy::Symbol && t.connected && t.str == s).map(|_| ())
     }
     pub fn symbol_close(&mut self, s: &'static str) -> Option<()> {
-        let t = self.tokens.get(self.pos)?;
-        if self.decl_head || self.indent <= t.pos.col {
-            if t.ty == TokenTy::Symbol && t.str == s {
-                self.next();
-                return Some(());
-            }
-        }
-        None
+        self.eat_close(|t| t.ty == TokenTy::Symbol && t.str == s).map(|_| ())
     }
     pub fn operator(&mut self, s: &'static str) -> Option<()> {
-        let t = self.peek()?;
-        if t.ty == TokenTy::Operator && t.str == s {
-            self.next();
-            return Some(());
-        }
-        None
+        self.eat(|t| t.ty == TokenTy::Operator && t.str == s).map(|_| ())
     }
     pub fn keyword(&mut self, s: &'static str) -> Option<()> {
-        let t = self.peek()?;
-        if t.ty == TokenTy::Keyword && t.str == s {
-            self.next();
-            return Some(());
-        }
-        None
+        self.eat(|t| t.ty == TokenTy::Keyword && t.str == s).map(|_| ())
     }
 
     pub fn param(&mut self) -> Option<A<Param>> {
@@ -315,13 +300,11 @@ impl<'a> Tracker<'a> {
         let u = self.begin();
         if let Some(name) = self.name() {
             Some(self.end(u, Key::Name(name)))
-        } else if let Some(s) = self.peek_is(TokenTy::String) {
-            let u2 = self.begin();
-            self.next();
-            let s = self.end(u2, s.to_string());
-            Some(self.end(u, Key::String(s)))
         } else {
-            None
+            let u2 = self.begin();
+            let t = self.eat(|t| t.ty == TokenTy::String)?;
+            let s = self.end(u2, t.str.to_string());
+            Some(self.end(u, Key::String(s)))
         }
     }
 
@@ -341,14 +324,10 @@ impl<'a> Tracker<'a> {
 
     pub fn lit(&mut self) -> Option<A<Lit>> {
         let u = self.begin();
-        let lit = if let Some(str) = self.peek_is(TokenTy::Number) {
-            // number
-            self.next();
-            Lit::Number(str.to_string())
-        } else if let Some(str) = self.peek_is(TokenTy::String) {
-            // string
-            self.next();
-            Lit::String(str.to_string())
+        let lit = if let Some(t) = self.eat(|t| t.ty == TokenTy::Number) {
+            Lit::Number(t.str.to_string())
+        } else if let Some(t) = self.eat(|t| t.ty == TokenTy::String) {
+            Lit::String(t.str.to_string())
         } else if self.symbol("[").is_some() {
             // array
             let vs = self.separated("]", "value", |s| s.val());
@@ -365,26 +344,20 @@ impl<'a> Tracker<'a> {
 
     pub fn op(&mut self) -> Option<A<Op>> {
         let u = self.begin();
-        let s = self.peek_is(TokenTy::Operator)?;
-        self.next();
-        let op = if s == "->" || s == "→" {
+        let t = self.eat(|t| t.ty == TokenTy::Operator)?;
+        let op = if t.str == "->" || t.str == "→" {
             Op::Arrow(ArrowTy::To)
-        } else if s == "~" {
+        } else if t.str == "~" {
             Op::Arrow(ArrowTy::Eq)
-        } else if s == "~>" {
+        } else if t.str == "~>" {
             Op::Arrow(ArrowTy::Functor)
-        } else if s == ";*" {
+        } else if t.str == ";*" {
             Op::CompStar
-        } else if s.starts_with(";;") {
-            Op::CompRep(s.len() as u32)
-        } else if s == ";" {
-            if let Some(t) = self.peek()
-                && t.ty == TokenTy::Number
-                && t.connected
-            {
-                self.next();
-                let n = t.str;
-                let n = n.parse::<u32>().unwrap_or_else(|_| {
+        } else if t.str.starts_with(";;") {
+            Op::CompRep(t.str.len() as u32)
+        } else if t.str == ";" {
+            if let Some(n) = self.eat(|t| t.ty == TokenTy::Number && t.connected) {
+                let n = n.str.parse::<u32>().unwrap_or_else(|_| {
                     self.add_error("invalid number literal in comp level");
                     0
                 });
@@ -417,12 +390,7 @@ impl<'a> Tracker<'a> {
                 self.expected_at_end_of("')'", "parentheses");
             }
             Val0::Paren(Box::new(inner))
-        } else if self
-            .peek_is(TokenTy::Keyword)
-            .filter(|s| s.starts_with(".."))
-            .is_some()
-        {
-            self.next();
+        } else if self.eat(|t| t.ty == TokenTy::Keyword && t.str.starts_with("..")).is_some() {
             Val0::Dots
         } else {
             return None;
@@ -489,22 +457,14 @@ impl<'a> Tracker<'a> {
 
     pub fn assign_op(&mut self) -> Option<A<AssignOp>> {
         let u = self.begin();
-        if let Some(s) = self.peek_is(TokenTy::Operator) {
-            self.next();
-            let op = if s == "=" {
-                AssignOp::Alias
-            } else if s == ":=" {
-                AssignOp::Def
-            } else if s == "+=" {
-                AssignOp::Add
-            } else {
-                self.rollback(u);
-                return None;
-            };
-            Some(self.end(u, op))
-        } else {
-            None
-        }
+        let t = self.eat(|t| t.ty == TokenTy::Operator && matches!(t.str, "=" | ":=" | "+="))?;
+        let op = match t.str {
+            "=" => AssignOp::Alias,
+            ":=" => AssignOp::Def,
+            "+=" => AssignOp::Add,
+            _ => unreachable!(),
+        };
+        Some(self.end(u, op))
     }
 
     pub fn decl_unit(&mut self) -> Option<A<DeclUnit>> {
@@ -513,7 +473,7 @@ impl<'a> Tracker<'a> {
         let mut names = vec![];
         names.push(self.path()?);
 
-        while self.peek_is(TokenTy::Name).is_some() {
+        while self.peek().is_some_and(|t| t.ty == TokenTy::Name) {
             let n = self.path().unwrap_or_else(|| {
                 self.expected("name");
                 A::Error()
@@ -579,9 +539,8 @@ impl<'a> Tracker<'a> {
         let mut consumed = false;
         if self.indent != last_indent {
             // decl should read everything in this indent level
+            // (no need to check parenthesis here)
             if let Some(t) = self.peek() {
-                // TODO: or, close symbol?
-
                 // TODO: if there's already an error, don't add this one
                 self.unexpected(t.str);
 
@@ -591,9 +550,7 @@ impl<'a> Tracker<'a> {
                         self.next();
                         consumed = true;
                         continue;
-                    } else if self.symbol_close(")").is_some()
-                        || self.symbol_close("}").is_some()
-                        || self.symbol_close("]").is_some()
+                    } else if self.eat_close(|t| t.ty == TokenTy::Symbol && matches!(t.str, ")" | "}" | "]")).is_some()
                     {
                         consumed = true;
                         continue;
