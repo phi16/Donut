@@ -83,17 +83,35 @@ impl<'a> Tracker<'a> {
         self.errors.push((pos, msg.to_string()));
     }
 
+    fn add_error_after_prev(&mut self, msg: &str) {
+        let pos = if self.pos > 0 {
+            let t = &self.tokens[self.pos - 1];
+            TokenPos {
+                line: t.pos.line,
+                col: t.pos.col + t.pos.len + 1,
+                len: 0,
+            }
+        } else {
+            TokenPos {
+                line: 0,
+                col: 0,
+                len: 0,
+            }
+        };
+        self.errors.push((pos, msg.to_string()));
+    }
+
     fn expected(&mut self, what: &str) {
         self.add_error(&format!("expected {what}"));
     }
     fn expected_after(&mut self, what: &str, after: &str) {
-        self.add_error(&format!("expected {what} after {after}"));
+        self.add_error_after_prev(&format!("expected {what} after {after}"));
     }
     fn expected_in(&mut self, what: &str, context: &str) {
-        self.add_error(&format!("expected {what} in {context}"));
+        self.add_error_after_prev(&format!("expected {what} in {context}"));
     }
     fn expected_at_end_of(&mut self, what: &str, context: &str) {
-        self.add_error(&format!("expected {what} at end of {context}"));
+        self.add_error_after_prev(&format!("expected {what} at end of {context}"));
     }
     fn unexpected(&mut self, s: &str) {
         self.add_error(&format!("unexpected '{s}'"));
@@ -606,6 +624,11 @@ impl<'a> Tracker<'a> {
 
         let main = if let Some(m) = self.module() {
             Some(DeclMain::Mod(m))
+        } else if self
+            .eat(|t| t.ty == TokenTy::Keyword && t.str.starts_with(".."))
+            .is_some()
+        {
+            Some(DeclMain::Dots)
         } else {
             match self.decl_unit() {
                 Some(du) => Some(DeclMain::Unit(du)),
@@ -706,6 +729,14 @@ mod tests {
         let (tokens, _, _) = tokenize(code.trim());
         let (_, errors) = parse(&tokens);
         errors.into_iter().map(|(_, msg)| msg).collect()
+    }
+
+    #[test]
+    fn decl_dots() {
+        assert_eq!(p("..."), "...\n");
+        assert_eq!(p("x = {\n    ...\n}"), "x = {\n    ...\n}\n");
+        assert_eq!(p("[A] ..."), "[A] ...\n");
+        assert_eq!(p("...\nx = y"), "...\nx = y\n");
     }
 
     #[test]
@@ -827,8 +858,14 @@ mod tests {
     #[test]
     fn comma_after_with_clause() {
         // with/where 節の後にカンマ
-        assert_eq!(p("x = y with { a = b }, z"), "x = y with {\n    a = b\n}\nz\n");
-        assert_eq!(p("x = y where { a = b }, z"), "x = y where {\n    a = b\n}\nz\n");
+        assert_eq!(
+            p("x = y with { a = b }, z"),
+            "x = y with {\n    a = b\n}\nz\n"
+        );
+        assert_eq!(
+            p("x = y where { a = b }, z"),
+            "x = y where {\n    a = b\n}\nz\n"
+        );
     }
 
     #[test]

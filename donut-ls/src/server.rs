@@ -8,6 +8,7 @@ use std::{collections::HashMap, error::Error};
 
 struct TokenTypeSignature(pub u32);
 
+#[allow(dead_code)]
 impl TokenTypeSignature {
     pub const PARAMETER: Self = Self(0);
     pub const NAMESPACE: Self = Self(1);
@@ -46,7 +47,8 @@ pub fn token_modifiers_list() -> Vec<SemanticTokenModifier> {
 fn from_token_type(t: TokenType) -> Option<(u32, u32)> {
     type Sig = TokenTypeSignature;
     let res = match t {
-        TokenType::Unknown => (Sig::VARIABLE, 0), // return None,
+        TokenType::Unknown => (Sig::VARIABLE, 0),
+        TokenType::Parameter => (Sig::PARAMETER, 0),
         TokenType::Keyword => (Sig::KEYWORD, 0),
         TokenType::Operator => (Sig::OPERATOR, 0),
         TokenType::Symbol => (Sig::OPERATOR, 0),
@@ -232,7 +234,7 @@ impl<'a> Server<'a> {
     }
     fn semantic_tokens_range(
         &mut self,
-        params: SemanticTokensRangeParams,
+        _params: SemanticTokensRangeParams,
     ) -> Result<Option<SemanticTokensRangeResult>> {
         Ok(None)
     }

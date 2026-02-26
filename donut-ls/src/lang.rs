@@ -1,6 +1,5 @@
 use donut_lang::types;
 use donut_lang::types::tree;
-use std::cell::RefCell;
 
 #[derive(Debug, Clone)]
 pub enum TokenType {
@@ -11,6 +10,7 @@ pub enum TokenType {
     Number,
     String,
     Comment,
+    Parameter, // [x: T] の x などパラメータ名
 }
 
 pub struct Diagnostic {
@@ -39,11 +39,6 @@ impl Context {
 
     fn into_inner(self) -> Vec<TokenData> {
         self.tokens
-    }
-
-    fn pos(&self, ix: usize) -> (u32, u32, u32) {
-        let t = self.tokens.get(ix).unwrap();
-        (t.line, t.column, t.length)
     }
 
     fn mark_as(&mut self, index: usize, t: TokenType) {
@@ -104,7 +99,9 @@ impl Marking for tree::ParamTy {
 }
 impl Marking for tree::Param {
     fn mark(&self, x: &mut Context) {
-        self.names.mark(x);
+        for name in &self.names {
+            x.mark_elem_as(name, TokenType::Parameter);
+        }
         self.ty.mark(x);
         self.val.mark(x);
     }
@@ -210,6 +207,7 @@ impl Marking for tree::DeclMain {
         match self {
             tree::DeclMain::Unit(d) => d.mark(x),
             tree::DeclMain::Mod(m) => m.mark(x),
+            tree::DeclMain::Dots => {}
         }
     }
 }
@@ -226,56 +224,42 @@ impl Marking for tree::Program {
     }
 }
 
+fn to_diag(pos: &types::token::TokenPos, msg: &str) -> Diagnostic {
+    Diagnostic {
+        begin_line: pos.line as u32,
+        begin_column: pos.col as u32,
+        end_line: pos.line as u32,
+        end_column: (pos.col + pos.len) as u32,
+        message: msg.to_string(),
+    }
+}
+
+fn to_utf16(lines: &[&str], line: usize, col: usize, len: usize) -> (u32, u32) {
+    let mut chars = lines.get(line).unwrap().chars();
+    let utf16_col = chars
+        .by_ref()
+        .take(col)
+        .map(|c| c.len_utf16())
+        .sum::<usize>() as u32;
+    let utf16_len = chars.take(len).map(|c| c.len_utf16()).sum::<usize>() as u32;
+    (utf16_col, utf16_len)
+}
+
 pub fn tokenize_example(code: &str) -> (Vec<TokenData>, Vec<Diagnostic>) {
     let lines = code.lines().collect::<Vec<_>>();
 
-    let (tokens, comments, errors) = donut_lang::tokenize::tokenize(code);
-    let x = RefCell::new(Context::new(
-        tokens
-            .iter()
-            .map(|t| {
-                let line = t.pos.line;
-                let column = t.pos.col;
-                let length = t.pos.len;
-                let mut l = lines.get(line).unwrap().chars();
-                let utf16_column = l
-                    .by_ref()
-                    .take(column)
-                    .map(|c| c.len_utf16())
-                    .sum::<usize>() as u32;
-                let utf16_length = l.take(length).map(|c| c.len_utf16()).sum::<usize>() as u32;
-                TokenData {
-                    line: line as u32,
-                    column: utf16_column,
-                    length: utf16_length,
-                    token_type: TokenType::Unknown,
-                }
-            })
-            .collect::<Vec<_>>(),
-    ));
+    let (tokens, comments, tokenize_errors) = donut_lang::tokenize::tokenize(code);
 
-    let mut diags = Vec::new();
-    let mut add_diag = |pos: &types::token::TokenPos, msg: &str| {
-        let begin_line = pos.line as u32;
-        let begin_column = pos.col as u32;
-        let len = pos.len as u32;
-        let end_line = begin_line;
-        let end_column = begin_column + len;
-        diags.push(Diagnostic {
-            begin_line,
-            begin_column,
-            end_line,
-            end_column,
-            message: msg.to_string(),
-        });
-    };
-
-    {
-        let mut x = x.borrow_mut();
-        tokens.iter().enumerate().for_each(|(ix, t)| {
-            x.mark_as(
-                ix,
-                match t.ty {
+    // tokenizer の型付けを初期値として TokenData を構築
+    let token_data = tokens
+        .iter()
+        .map(|t| {
+            let (utf16_col, utf16_len) = to_utf16(&lines, t.pos.line, t.pos.col, t.pos.len);
+            TokenData {
+                line: t.pos.line as u32,
+                column: utf16_col,
+                length: utf16_len,
+                token_type: match t.ty {
                     types::token::TokenTy::Name => TokenType::Unknown,
                     types::token::TokenTy::Keyword => TokenType::Keyword,
                     types::token::TokenTy::Operator => TokenType::Operator,
@@ -284,49 +268,43 @@ pub fn tokenize_example(code: &str) -> (Vec<TokenData>, Vec<Diagnostic>) {
                     types::token::TokenTy::String => TokenType::String,
                     types::token::TokenTy::Whitespace => TokenType::Unknown,
                 },
-            );
-        });
+            }
+        })
+        .collect::<Vec<_>>();
+
+    // tokenize エラーを診断として収集
+    let mut diags: Vec<Diagnostic> = tokenize_errors
+        .iter()
+        .map(|(pos, msg)| to_diag(pos, msg))
+        .collect();
+
+    // parse は常に実行（エラー回復があるので tokenize エラーがあっても走らせる）
+    let mut ctx = Context::new(token_data);
+    let (program, parse_errors) = donut_lang::parse::parse(&tokens);
+    program.mark(&mut ctx);
+    for (pos, msg) in &parse_errors {
+        diags.push(to_diag(pos, msg));
     }
-    for (pos, e) in &errors {
-        add_diag(pos, e);
-    }
-    eprintln!("tokens: {:?}", tokens);
-    eprintln!("errors: {:?}", errors);
-    if errors.is_empty() {
-        let (program, errors) = donut_lang::parse::parse(&tokens);
-        eprintln!("program: {:?}", program);
-        eprintln!("errors: {:?}", errors);
-        program.mark(&mut x.borrow_mut());
-        for (pos, e) in &errors {
-            add_diag(pos, e);
-        }
-        // TODO
-    }
+
+    // コメントトークンを構築
     let comments_iter = comments.into_iter().map(|pos| {
-        let mut l = lines.get(pos.line).unwrap().chars().map(|c| c.len_utf16());
-        let utf16_column = l.by_ref().take(pos.col).sum::<usize>() as u32;
-        let utf16_length = l.sum::<usize>() as u32;
+        let (utf16_col, utf16_len) = to_utf16(&lines, pos.line, pos.col, pos.len);
         TokenData {
             line: pos.line as u32,
-            column: utf16_column,
-            length: utf16_length,
+            column: utf16_col,
+            length: utf16_len,
             token_type: TokenType::Comment,
         }
     });
-    let mut tokens_iter = x.into_inner().into_inner().into_iter().peekable();
+
+    // トークンとコメントを行・列順にマージ
+    let mut tokens_iter = ctx.into_inner().into_iter().peekable();
     let mut comments_iter = comments_iter.peekable();
     let mut res = Vec::new();
     loop {
         match (tokens_iter.peek(), comments_iter.peek()) {
             (Some(t), Some(c)) => {
-                let token_first = if t.line < c.line {
-                    true
-                } else if t.line > c.line {
-                    false
-                } else {
-                    t.column < c.column
-                };
-                if token_first {
+                if (t.line, t.column) <= (c.line, c.column) {
                     res.push(tokens_iter.next().unwrap());
                 } else {
                     res.push(comments_iter.next().unwrap());
@@ -336,11 +314,8 @@ pub fn tokenize_example(code: &str) -> (Vec<TokenData>, Vec<Diagnostic>) {
                 res.extend(tokens_iter);
                 break;
             }
-            (None, Some(_)) => {
+            (None, _) => {
                 res.extend(comments_iter);
-                break;
-            }
-            (None, None) => {
                 break;
             }
         }

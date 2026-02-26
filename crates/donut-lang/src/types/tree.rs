@@ -116,6 +116,7 @@ pub struct Clause(pub A<ClauseTy>, pub A<Module>);
 pub enum DeclMain {
     Unit(A<DeclUnit>),
     Mod(A<Module>),
+    Dots,
 }
 #[derive(Debug)]
 pub struct Decl {

@@ -310,6 +310,9 @@ impl Prettyable for Decl {
             Some(DeclMain::Mod(m)) => {
                 m.pretty(pp);
             }
+            Some(DeclMain::Dots) => {
+                pp.str("...");
+            }
             None => {}
         }
         for clause in &self.clauses {
