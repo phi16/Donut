@@ -296,9 +296,12 @@ impl Prettyable for Clause {
 
 impl Prettyable for Decl {
     fn pretty(&self, pp: &mut Pretty) {
-        for deco in &self.decos {
+        let has_body = self.main.is_some() || !self.clauses.is_empty();
+        for (i, deco) in self.decos.iter().enumerate() {
             deco.pretty(pp);
-            pp.str(" ");
+            if has_body || i + 1 < self.decos.len() {
+                pp.str(" ");
+            }
         }
         match &self.main {
             Some(DeclMain::Unit(d)) => {

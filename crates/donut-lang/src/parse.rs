@@ -85,7 +85,7 @@ impl<'a> Tracker<'a> {
         self.add_error(&format!("expected {what}"));
     }
     fn expected_after(&mut self, what: &str, after: &str) {
-        self.add_error(&format!("expected {what} after '{after}'"));
+        self.add_error(&format!("expected {what} after {after}"));
     }
     fn expected_in(&mut self, what: &str, context: &str) {
         self.add_error(&format!("expected {what} in {context}"));
@@ -239,8 +239,8 @@ impl<'a> Tracker<'a> {
         let val = match &ty {
             Some(ty) => self.val().unwrap_or_else(|| {
                 let after = match ty {
-                    ParamTy::Decl => ":",
-                    ParamTy::Named => "=",
+                    ParamTy::Decl => "':'",
+                    ParamTy::Named => "'='",
                 };
                 self.expected_after("value", after);
                 A::Error()
@@ -290,7 +290,7 @@ impl<'a> Tracker<'a> {
         names.push(self.segment()?);
         while self.operator(".").is_some() {
             let n = self.segment().unwrap_or_else(|| {
-                self.expected_after("name", ".");
+                self.expected_after("name", "'.'");
                 A::Error()
             });
             names.push(n);
@@ -331,7 +331,7 @@ impl<'a> Tracker<'a> {
         let key = self.key()?;
         let val = if self.symbol(":").is_some() {
             self.val().unwrap_or_else(|| {
-                self.expected_after("value", ":");
+                self.expected_after("value", "':'");
                 A::Error()
             })
         } else {
@@ -466,7 +466,7 @@ impl<'a> Tracker<'a> {
         } else if self.keyword("import").is_some() {
             // import
             let s = self.lit().unwrap_or_else(|| {
-                self.expected_after("literal", "import");
+                self.expected_after("literal", "'import'");
                 A::Error()
             });
             Module::Import(s)
@@ -505,7 +505,7 @@ impl<'a> Tracker<'a> {
 
         let ty = if self.symbol(":").is_some() {
             let val = self.val().unwrap_or_else(|| {
-                self.expected_after("type", ":");
+                self.expected_after("type", "':'");
                 A::Error()
             });
             Some(val)
@@ -557,29 +557,32 @@ impl<'a> Tracker<'a> {
         Some(self.end(u, clause))
     }
 
-    fn is_close(t: &Token) -> bool {
-        t.ty == TokenTy::Symbol && matches!(t.str, ")" | "}" | "]")
-    }
-
     pub fn consume_indent(&mut self, last_indent: usize) -> bool {
+        fn is_bracket(t: &Token) -> bool {
+            t.ty == TokenTy::Symbol && matches!(t.str, "(" | ")" | "{" | "}" | "[" | "]")
+        }
         let mut consumed = false;
-        // Fire when indent changed, OR when there are leftover non-closing tokens visible
+        // Fire when indent changed, OR when there are leftover non-bracket tokens visible.
+        // Brackets (open or close) are NOT garbage: open brackets start valid constructs
+        // (module, decorator, ...) that the next decl() can parse, and close brackets
+        // belong to outer bracket parsers. Only non-bracket tokens are true garbage.
         let should_fire = self.indent != last_indent
-            || self.peek().is_some_and(|t| !Self::is_close(t));
+            || self.peek().is_some_and(|t| !is_bracket(t));
         if should_fire {
             if let Some(t) = self.peek() {
-                if !Self::is_close(t) {
+                if !is_bracket(t) {
                     // TODO: if there's already an error, don't add this one
                     self.unexpected(t.str);
                     loop {
-                        match self.peek() {
-                            Some(t) if Self::is_close(t) => break, // stop before closing brackets
-                            Some(_) => { self.next(); consumed = true; }
-                            None => break,
+                        let is_brk = self.peek().is_some_and(is_bracket);
+                        if is_brk || self.peek().is_none() {
+                            break; // stop before any bracket
                         }
+                        self.next();
+                        consumed = true;
                     }
                 }
-                // closing bracket: leave it for the outer bracket parser
+                // bracket: leave it for the appropriate parser
             }
             self.indent = last_indent;
         }
@@ -685,7 +688,10 @@ mod tests {
     fn parse_result(code: &str) -> (String, Vec<String>) {
         let (tokens, _, _) = tokenize(code.trim());
         let (result, errors) = parse(&tokens);
-        (pretty(&result), errors.into_iter().map(|(_, msg)| msg).collect())
+        (
+            pretty(&result),
+            errors.into_iter().map(|(_, msg)| msg).collect(),
+        )
     }
 
     fn errs(code: &str) -> Vec<String> {
@@ -702,7 +708,9 @@ mod tests {
         assert_eq!(p("x: A = y"), "x: A = y\n");
         assert_eq!(p("x: A := y"), "x: A := y\n");
         assert_eq!(p("x += y"), "x += y\n");
+        assert_eq!(p("x += { a = b }"), "x += {\n    a = b\n}\n");
         assert_eq!(p("x y z: A = b"), "x y z: A = b\n");
+        assert_eq!(p("a b c: T"), "a b c: T\n");
         assert_eq!(p("x.y = z"), "x.y = z\n");
     }
 
@@ -711,9 +719,12 @@ mod tests {
         assert_eq!(p("x = a b c"), "x = a b c\n");
         assert_eq!(p("x = a ; b"), "x = a; b\n");
         assert_eq!(p("x = a ;; b"), "x = a;; b\n");
+        assert_eq!(p("x = a ;;; b"), "x = a;;; b\n");
         assert_eq!(p("x = a ;* b"), "x = a;* b\n");
         // assert_eq!(p("x = a ;2 b"), "x = a;2 b\n");
         assert_eq!(p("x: A → B"), "x: A → B\n");
+        assert_eq!(p("x: A -> B"), "x: A → B\n"); // ASCII -> is the same as Unicode →
+        assert_eq!(p("x: A → B → C"), "x: A → B → C\n");
         assert_eq!(p("x: A ~ B"), "x: A ~ B\n");
         assert_eq!(p("x: A ~> B"), "x: A ~> B\n");
         assert_eq!(p("x = (a ; b)"), "x = (a; b)\n");
@@ -723,9 +734,13 @@ mod tests {
     #[test]
     fn path_and_params() {
         assert_eq!(p("x = a.b.c"), "x = a.b.c\n");
+        assert_eq!(p("x = a.b.c.d"), "x = a.b.c.d\n");
         assert_eq!(p("x = f[a]"), "x = f[a]\n");
         assert_eq!(p("x = f[a, b: c, d = e]"), "x = f[a, b: c, d = e]\n");
-        assert_eq!(p("x = f(a)"), "x = f(a)\n");
+        assert_eq!(p("x = f[a].g[b]"), "x = f[a].g[b]\n");
+        assert_eq!(p("x = f(a)"), "x = f(a)\n");   // connected → functor application
+        assert_eq!(p("x = f (a)"), "x = f (a)\n"); // space → juxtaposition
+        assert_eq!(p("x = a.b(c)"), "x = a.b(c)\n");
     }
 
     #[test]
@@ -744,7 +759,13 @@ mod tests {
             p("x = {\n    a = b\n    c = d\n}"),
             "x = {\n    a = b\n    c = d\n}\n"
         );
+        // anonymous module inside a block is parsed as its own decl
+        assert_eq!(
+            p("x = {\n    {}\n    a = b\n}"),
+            "x = {\n    {\n    }\n    a = b\n}\n"
+        );
         assert_eq!(p(r#"import "foo""#), "import \"foo\"\n");
+        assert_eq!(p(r#"import "foo/bar/baz""#), "import \"foo/bar/baz\"\n");
     }
 
     #[test]
@@ -760,12 +781,17 @@ mod tests {
         assert_eq!(p("[A] x = y"), "[A] x = y\n");
         assert_eq!(p("[A, B] x = y"), "[A, B] x = y\n");
         assert_eq!(p("[style[...]] y: *"), "[style[...]] y: *\n");
+        assert_eq!(p("[f[a, b]] x = y"), "[f[a, b]] x = y\n");
+        assert_eq!(p("[a: T, b = v] x: U"), "[a: T, b = v] x: U\n");
+        // decorator alone on its own line → decorator-only decl; next line is independent
+        assert_eq!(p("[A]\nx = y"), "[A]\nx = y\n");
+        assert_eq!(p("[A]\n[B]\n[C]"), "[A]\n[B]\n[C]\n");
     }
 
     #[test]
     fn multiple_decls() {
         assert_eq!(p("x = y\nz = w"), "x = y\nz = w\n");
-        assert_eq!(p("x = y\n[A]\nz = w"), "x = y\n[A] \nz = w\n");
+        assert_eq!(p("x = y\n[A]\nz = w"), "x = y\n[A]\nz = w\n");
     }
 
     #[test]
@@ -817,8 +843,8 @@ mod tests {
     /// Closing brackets are visible at same indent via eat_close (col >= indent).
     #[test]
     fn indent_close_bracket_same_level() {
-        assert_eq!(p("[a\n]"), "[a] \n"); // ] at col=0, same as [ at col=0
-        assert_eq!(p("[a,\n  b\n]"), "[a, b] \n"); // b at col=2, ] at col=0
+        assert_eq!(p("[a\n]"), "[a]\n"); // ] at col=0, same as [ at col=0
+        assert_eq!(p("[a,\n  b\n]"), "[a, b]\n"); // b at col=2, ] at col=0
         assert_eq!(p("x = {\n  a = b\n}"), "x = {\n    a = b\n}\n"); // } at col=0
     }
 
@@ -845,7 +871,10 @@ mod tests {
     #[test]
     fn indent_with_clause_multiline_body() {
         // } on its own line — consume_indent now stops before closing brackets
-        assert_eq!(p("x = y\n  with {\n    a = b\n  }"), "x = y with {\n    a = b\n}\n");
+        assert_eq!(
+            p("x = y\n  with {\n    a = b\n  }"),
+            "x = y with {\n    a = b\n}\n"
+        );
     }
 
     #[test]
@@ -883,6 +912,73 @@ mod tests {
         assert!(result.contains("y = z")); // y = z IS parsed after recovery
     }
 
+    /// Integration test: a program using many grammar features in an n-category context.
+    #[test]
+    fn integration_n_category() {
+        // --- main program (no errors) ---
+        let code = r#"import "prelude"
+
+*: *
+Nat Bool: *
+1: *
+
+zero: 1 → Nat
+succ: Nat → Nat
+add: Nat Nat → Nat
+
+[n: Nat → Nat] fixed: n → n
+
+k[c: *, f g: c → c, a: f → g]: f → g = id[a]
+
+F: Nat ~> Nat
+
+bool: 1 → Bool
+  with {
+    true: 1 → bool
+    false: 1 → bool
+  }
+
+bool += {
+  not: bool → bool
+}
+
+comp: Nat → Nat = succ succ
+  where {
+    succ: Nat → Nat
+  }"#;
+
+        assert_eq!(
+            p(code),
+            r#"import "prelude"
+*: *
+Nat Bool: *
+1: *
+zero: 1 → Nat
+succ: Nat → Nat
+add: Nat Nat → Nat
+[n: Nat → Nat] fixed: n → n
+k[c: *, f g: c → c, a: f → g]: f → g = id[a]
+F: Nat ~> Nat
+bool: 1 → Bool with {
+    true: 1 → bool
+    false: 1 → bool
+}
+bool += {
+    not: bool → bool
+}
+comp: Nat → Nat = succ succ where {
+    succ: Nat → Nat
+}
+"#
+        );
+
+        // --- error recovery: garbage token between valid declarations ---
+        let (result, errors) = parse_result("succ: Nat → Nat\n.\nzero: 1 → Nat");
+        assert_eq!(errors, vec!["unexpected '.'"]);
+        assert!(result.contains("succ: Nat → Nat"));
+        assert!(result.contains("zero: 1 → Nat"));
+    }
+
     #[test]
     fn error_recovery_nested_bracket_fail_at_indent0() {
         // `[(.]`: separator recovery in separated() consumes `.` and closes `]`
@@ -892,4 +988,32 @@ mod tests {
         assert!(!errors.iter().any(|e| e.contains("end of input")));
         assert!(!errors.is_empty()); // paren/bracket errors still present
     }
+
+    #[test]
+    fn error_recovery_module_literal_after_name() {
+        // `a {}`: `{` is left (open brackets are not garbage), so `{}` is parsed
+        // as an anonymous module by the next decl(). `[.]` on the second line is reached.
+        // `]` remains (acceptable), which causes "expected end of input" at the very end.
+        let (result, errors) = parse_result("a {}\n[.]");
+        assert_eq!(result, "a\n{\n}\n[]\n");
+        assert!(!errors.iter().any(|e| e == "unexpected '{'"), "errors: {errors:?}");
+        assert!(result.contains("[]")); // second line IS reached
+    }
+
+    #[test]
+    fn error_recovery_unclosed_module() {
+        // `a {` with no closing `}` — consume_indent consumes `{` and hits EOI.
+        let (_, errors) = parse_result("a {\nb = c");
+        assert!(!errors.is_empty());
+        assert!(!errors.iter().any(|e| e.contains("end of input")), "got eoi: {errors:?}");
+    }
+
+    #[test]
+    fn error_recovery_unclosed_bracket() {
+        // `[x` with no closing `]`
+        let (_, errors) = parse_result("[x\ny = z");
+        assert!(!errors.is_empty());
+        assert!(!errors.iter().any(|e| e.contains("end of input")), "got eoi: {errors:?}");
+    }
+
 }

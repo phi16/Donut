@@ -11,7 +11,7 @@ fn is_keyword(s: &str) -> bool {
 
 fn is_operator(s: &str) -> bool {
     match s {
-        "=" | ":=" | "+=" | "→" | "~" | "~>" => true,
+        "=" | ":=" | "+=" | "->" | "→" | "~" | "~>" => true,
         _ => false,
     }
 }

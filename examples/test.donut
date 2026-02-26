@@ -1,3 +1,8 @@
+a{}
+[.]
+a
+1.a +=
+with { }
 x: *
 x: A → B
 x: A → B = f where
