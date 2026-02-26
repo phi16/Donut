@@ -196,7 +196,17 @@ impl<'a> Tracker<'a> {
                 break close;
             } else {
                 self.expected(&format!("',' or '{close}'"));
-                break A::Error();
+                // error recovery: skip garbage until closing bracket
+                let recovered = loop {
+                    if let Some(c) = self.symbol_close(close) {
+                        break Some(c);
+                    } else if self.peek().is_some() {
+                        self.next();
+                    } else {
+                        break None;
+                    }
+                };
+                break recovered.unwrap_or_else(A::Error);
             }
         };
         Some((open, items, close))
@@ -547,30 +557,29 @@ impl<'a> Tracker<'a> {
         Some(self.end(u, clause))
     }
 
+    fn is_close(t: &Token) -> bool {
+        t.ty == TokenTy::Symbol && matches!(t.str, ")" | "}" | "]")
+    }
+
     pub fn consume_indent(&mut self, last_indent: usize) -> bool {
         let mut consumed = false;
-        if self.indent != last_indent {
-            // decl should read everything in this indent level
-            // (no need to check parenthesis here)
+        // Fire when indent changed, OR when there are leftover non-closing tokens visible
+        let should_fire = self.indent != last_indent
+            || self.peek().is_some_and(|t| !Self::is_close(t));
+        if should_fire {
             if let Some(t) = self.peek() {
-                // TODO: if there's already an error, don't add this one
-                self.unexpected(t.str);
-
-                // skip tokens
-                loop {
-                    if self.peek().is_some() {
-                        self.next();
-                        consumed = true;
-                        continue;
-                    } else if self
-                        .eat_close(|t| t.ty == TokenTy::Symbol && matches!(t.str, ")" | "}" | "]"))
-                        .is_some()
-                    {
-                        consumed = true;
-                        continue;
+                if !Self::is_close(t) {
+                    // TODO: if there's already an error, don't add this one
+                    self.unexpected(t.str);
+                    loop {
+                        match self.peek() {
+                            Some(t) if Self::is_close(t) => break, // stop before closing brackets
+                            Some(_) => { self.next(); consumed = true; }
+                            None => break,
+                        }
                     }
-                    break;
                 }
+                // closing bracket: leave it for the outer bracket parser
             }
             self.indent = last_indent;
         }
@@ -761,7 +770,8 @@ mod tests {
 
     #[test]
     fn error_unexpected_at_eoi() {
-        assert_eq!(errs("."), vec!["expected end of input"]);
+        // `.` is consumed by consume_indent now; "unexpected" is more informative
+        assert_eq!(errs("."), vec!["unexpected '.'"]);
     }
 
     #[test]
@@ -825,40 +835,26 @@ mod tests {
         );
     }
 
-    /// with clause at deeper indent (all on one line at indent=0): works fine.
     #[test]
     fn indent_with_clause_inline() {
         assert_eq!(p("x = y with { a = b }"), "x = y with {\n    a = b\n}\n");
-        // `with` at deeper indent, body inline at that indent:
-        // BUG: after parsing `a = b` inside `{ }` (all at indent=2), the trailing
-        // consume_indent(0) fires (self.indent=2 != 0), and sees `}` at col=15
-        // (2 < 15 = true), treating `}` as garbage. "unexpected '}'".
-        // TODO: consume_indent should not consume closing brackets.
-        let (_, errors) = parse_result("x = y\n  with { a = b }");
-        assert!(!errors.is_empty()); // should be empty ideally
+        // `with` at deeper indent — consume_indent now stops before closing brackets
+        assert_eq!(p("x = y\n  with { a = b }"), "x = y with {\n    a = b\n}\n");
     }
 
-    /// with clause where the body spans multiple lines (} on its own line): currently broken.
-    /// BUG: when inner decl fails and decl_head=true, consume_indent sees } via decl_head
-    /// and consumes it, causing "unexpected '}'" + "expected '}' at end of module block".
-    /// TODO: consume_indent should not consume tokens visible only via decl_head.
     #[test]
     fn indent_with_clause_multiline_body() {
-        let (result, errors) = parse_result("x = y\n  with {\n    a = b\n  }");
-        // x = y is parsed; the clause module has errors due to the bug
-        assert!(result.contains("x = y"));
-        assert!(!errors.is_empty()); // should be empty ideally
+        // } on its own line — consume_indent now stops before closing brackets
+        assert_eq!(p("x = y\n  with {\n    a = b\n  }"), "x = y with {\n    a = b\n}\n");
     }
 
-    /// with clause at same indent as decl: currently not treated as a clause.
-    /// BUG: `with` at col=0 is not visible via peek() (indent=0 < col=0 is false),
-    /// so it's never seen as a clause. It becomes an unrecognized top-level token.
-    /// TODO: `with`/`where` at same indent should be recognized as clauses.
     #[test]
     fn indent_with_clause_same_indent() {
+        // `with` at same indent as decl is NOT a clause — only deeper tokens continue a decl
+        // (closing brackets are an exception: they can appear at the same indent)
         let (result, errors) = parse_result("x = y\nwith { a = b }");
-        assert!(result.contains("x = y")); // x = y parsed ok
-        assert!(errors.iter().any(|e| e.contains("end of input"))); // `with` stranded
+        assert!(result.contains("x = y"));
+        assert!(!errors.is_empty()); // `with` not recognized as clause at col=0
     }
 
     /// Unrecognized token inside a block is consumed, and subsequent decls still parse.
@@ -871,39 +867,29 @@ mod tests {
         assert!(result.contains("a = b")); // a = b IS parsed — recovery works here
     }
 
-    /// Unrecognized token at indent=0 (top-level) is NOT consumed — blocks everything after.
-    /// BUG: consume_indent only fires when self.indent != last_indent. At the top level
-    /// both are 0, so the `.` is never consumed and `x = y` is never reached.
-    /// TODO: garbage at col=0 should be skipped, allowing subsequent decls to parse.
     #[test]
     fn error_recovery_garbage_at_indent0() {
+        // consume_indent now fires even at indent=0 (peek() sees non-closing token)
         let (result, errors) = parse_result(".\nx = y");
-        assert!(errors.iter().any(|e| e.contains("end of input")));
-        assert!(!result.contains("x = y")); // x = y lost due to the bug
+        assert_eq!(errors, vec!["unexpected '.'"]);
+        assert!(result.contains("x = y")); // x = y IS parsed after recovery
     }
 
-    /// After an error in a value (x = .), the `.` is NOT consumed at indent=0.
-    /// BUG: trailing consume_indent(0) doesn't fire (self.indent == last_indent == 0),
-    /// so `.` blocks all subsequent parsing including `y = z`.
-    /// TODO: y = z should parse successfully after the error in `x = .`.
     #[test]
     fn error_recovery_value_error_at_indent0() {
+        // leftover `.` after failed val is consumed by trailing consume_indent
         let (result, errors) = parse_result("x = .\ny = z");
         assert!(!errors.is_empty());
-        assert!(!result.contains("y = z")); // y = z NOT parsed — indent=0 bug
+        assert!(result.contains("y = z")); // y = z IS parsed after recovery
     }
 
-    /// BUG: `[(.]` — `(` opens nested parens inside decorator, `.` is garbage.
-    /// `]` forces the decorator closed but `(` was never closed → multiple errors.
-    /// The second line `[(.]` is NOT parsed at all ("expected end of input").
-    /// TODO: second line should parse independently (indent=0 recovery doesn't fire).
     #[test]
     fn error_recovery_nested_bracket_fail_at_indent0() {
+        // `[(.]`: separator recovery in separated() consumes `.` and closes `]`
+        // both lines are parsed as decorator-only decls
         let (result, errors) = parse_result("[(.]\n[(.]");
-        // first `[(.]` is partially parsed (the `(` gets a placeholder value)
-        assert!(result.contains("[(?)]"));
-        // second line not reached — same indent=0 bug as error_recovery_garbage_at_indent0
-        assert!(!result.contains("[(.]") || result.matches("[(?)]").count() == 1);
-        assert!(errors.iter().any(|e| e.contains("end of input")));
+        assert_eq!(result.matches("[(?)]").count(), 2); // both lines parsed
+        assert!(!errors.iter().any(|e| e.contains("end of input")));
+        assert!(!errors.is_empty()); // paren/bracket errors still present
     }
 }

@@ -2,6 +2,7 @@
 members = [
     "crates/*",
     "donut-app",
+    "donut-c",
     "donut-ls",
 ]
 resolver = "2"
