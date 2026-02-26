@@ -36,6 +36,7 @@ struct Tracker<'a> {
     tokens: &'a [Token<'a>],
     pos: usize,
     indent: usize,
+    depth: usize,
     decl_head: bool,
     errors: Vec<Error>,
 }
@@ -53,6 +54,7 @@ impl<'a> Tracker<'a> {
             tokens,
             pos: 0,
             indent: 0,
+            depth: 0,
             decl_head: true,
             errors: vec![],
         }
@@ -145,6 +147,11 @@ impl<'a> Tracker<'a> {
 
     pub fn eoi(&self) -> bool {
         self.tokens.get(self.pos).is_none()
+    }
+
+    pub fn last_indent(&self) -> usize {
+        assert!(self.pos > 0 && self.pos <= self.tokens.len());
+        self.tokens[self.pos - 1].indent
     }
 
     pub fn symbol(&mut self, s: &'static str) -> Option<A<Symbol>> {
@@ -455,8 +462,7 @@ impl<'a> Tracker<'a> {
         let u = self.begin();
 
         let m = if self.symbol("{").is_some() {
-            // block
-            let p = self.decls();
+            let p = self.decls(Some(self.last_indent()));
             if self.symbol_close("}").is_some() {
                 // pass
             } else {
@@ -558,34 +564,26 @@ impl<'a> Tracker<'a> {
     }
 
     pub fn consume_indent(&mut self, last_indent: usize) -> bool {
-        fn is_bracket(t: &Token) -> bool {
-            t.ty == TokenTy::Symbol && matches!(t.str, "(" | ")" | "{" | "}" | "[" | "]")
+        fn is_close(t: &Token) -> bool {
+            t.ty == TokenTy::Symbol && matches!(t.str, ")" | "}" | "]")
         }
         let mut consumed = false;
-        // Fire when indent changed, OR when there are leftover non-bracket tokens visible.
-        // Brackets (open or close) are NOT garbage: open brackets start valid constructs
-        // (module, decorator, ...) that the next decl() can parse, and close brackets
-        // belong to outer bracket parsers. Only non-bracket tokens are true garbage.
-        let should_fire = self.indent != last_indent
-            || self.peek().is_some_and(|t| !is_bracket(t));
-        if should_fire {
-            if let Some(t) = self.peek() {
-                if !is_bracket(t) {
-                    // TODO: if there's already an error, don't add this one
-                    self.unexpected(t.str);
-                    loop {
-                        let is_brk = self.peek().is_some_and(is_bracket);
-                        if is_brk || self.peek().is_none() {
-                            break; // stop before any bracket
-                        }
-                        self.next();
-                        consumed = true;
-                    }
-                }
-                // bracket: leave it for the appropriate parser
+        while let Some(t) = self.peek() {
+            // Leave close brackets for the outer parser only if they are on a line
+            // whose indent is <= last_indent (i.e. at the right nesting level).
+            // Close brackets on deeper-indented lines are garbage and should be
+            // consumed here, per the principle that a decl owns all tokens at its
+            // own indent level or deeper.
+            if is_close(t) && self.depth > 0 && t.indent <= last_indent {
+                break;
             }
-            self.indent = last_indent;
+            if !consumed {
+                self.unexpected(t.str);
+            }
+            self.next();
+            consumed = true;
         }
+        self.indent = last_indent;
         consumed
     }
 
@@ -641,27 +639,37 @@ impl<'a> Tracker<'a> {
         };
 
         if self.symbol(",").is_some() {
-            // pass
+            self.indent = last_indent; // トークン消費なしで indent をブロック基底に戻す
+        } else {
+            self.consume_indent(last_indent);
         }
-        self.consume_indent(last_indent);
         Some(self.end(u, decl))
     }
 
-    pub fn decls(&mut self) -> Vec<A<Decl>> {
+    pub fn decls(&mut self, new_indent: Option<usize>) -> Vec<A<Decl>> {
+        let saved_indent = self.indent;
+        if let Some(indent) = new_indent {
+            self.indent = indent;
+            self.depth += 1;
+        }
         let mut decls = vec![];
         while let Some(d) = self.decl() {
             decls.push(d);
+        }
+        if new_indent.is_some() {
+            self.depth -= 1;
+            self.indent = saved_indent;
         }
         decls
     }
 
     pub fn program(&mut self) -> A<Program> {
         let u = self.begin();
-        let p = self.decls();
+        let decls = self.decls(None);
         if !self.eoi() {
             self.add_error("expected end of input");
         }
-        self.end(u, Program(p))
+        self.end(u, Program(decls))
     }
 }
 
@@ -738,7 +746,7 @@ mod tests {
         assert_eq!(p("x = f[a]"), "x = f[a]\n");
         assert_eq!(p("x = f[a, b: c, d = e]"), "x = f[a, b: c, d = e]\n");
         assert_eq!(p("x = f[a].g[b]"), "x = f[a].g[b]\n");
-        assert_eq!(p("x = f(a)"), "x = f(a)\n");   // connected → functor application
+        assert_eq!(p("x = f(a)"), "x = f(a)\n"); // connected → functor application
         assert_eq!(p("x = f (a)"), "x = f (a)\n"); // space → juxtaposition
         assert_eq!(p("x = a.b(c)"), "x = a.b(c)\n");
     }
@@ -792,6 +800,80 @@ mod tests {
     fn multiple_decls() {
         assert_eq!(p("x = y\nz = w"), "x = y\nz = w\n");
         assert_eq!(p("x = y\n[A]\nz = w"), "x = y\n[A]\nz = w\n");
+    }
+
+    // ================================================================
+    // カンマ区切り宣言のエッジケース
+    // ================================================================
+
+    #[test]
+    fn comma_trailing_eoi() {
+        // 末尾カンマで EOI → エラーなしで x だけ
+        assert_eq!(p("x,"), "x\n");
+    }
+
+    #[test]
+    fn comma_then_anon_module() {
+        // カンマの後に匿名モジュール
+        assert_eq!(p("x, { a = b }"), "x\n{\n    a = b\n}\n");
+    }
+
+    #[test]
+    fn comma_after_module_rhs() {
+        // モジュール代入の後にカンマ
+        assert_eq!(p("x = { a = b }, y"), "x = {\n    a = b\n}\ny\n");
+    }
+
+    #[test]
+    fn comma_after_with_clause() {
+        // with/where 節の後にカンマ
+        assert_eq!(p("x = y with { a = b }, z"), "x = y with {\n    a = b\n}\nz\n");
+        assert_eq!(p("x = y where { a = b }, z"), "x = y where {\n    a = b\n}\nz\n");
+    }
+
+    #[test]
+    fn comma_trailing_in_block() {
+        // ブロック内末尾カンマ
+        assert_eq!(p("x = { a, }"), "x = {\n    a\n}\n");
+    }
+
+    #[test]
+    fn comma_decorated_decls() {
+        // デコレータ付き宣言のカンマ区切り
+        assert_eq!(p("[A] x, [B] y"), "[A] x\n[B] y\n");
+    }
+
+    #[test]
+    fn comma_block_multiline_same_indent() {
+        // ブロック内カンマ区切り、続きが同じ indent の次行
+        assert_eq!(
+            p("x = {\n  a = 1,\n  b = 2\n}"),
+            "x = {\n    a = 1\n    b = 2\n}\n"
+        );
+    }
+
+    #[test]
+    fn comma_block_shallower_indent_after_comma() {
+        // ブロック内でカンマの後、b が a より浅い indent になっている
+        // a (indent=4) → カンマ → b (indent=2): self.indent が 4 のまま残り
+        // b の next_indent=2 < last_indent=4 となってブロック内に入れなくなる
+        let (result, errors) = parse_result("x = {\n    a,\n  b\n}");
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        assert_eq!(result, "x = {\n    a\n    b\n}\n");
+    }
+
+    #[test]
+    fn comma_separated_decls() {
+        // 1行に複数の宣言をカンマで区切って並べられる
+        assert_eq!(p("x, y"), "x\ny\n");
+        assert_eq!(p("x: A, y: B"), "x: A\ny: B\n");
+        assert_eq!(p("x, y, z"), "x\ny\nz\n");
+        // カンマの後に改行しても続く
+        assert_eq!(p("x,\ny"), "x\ny\n");
+        // ブロック内でもカンマ区切りが使える
+        assert_eq!(p("x = { a, b }"), "x = {\n    a\n    b\n}\n");
+        // カンマ区切りと通常の改行区切りの混在
+        assert_eq!(p("a, b\nc, d"), "a\nb\nc\nd\n");
     }
 
     #[test]
@@ -991,12 +1073,19 @@ comp: Nat → Nat = succ succ where {
 
     #[test]
     fn error_recovery_module_literal_after_name() {
-        // `a {}`: `{` is left (open brackets are not garbage), so `{}` is parsed
-        // as an anonymous module by the next decl(). `[.]` on the second line is reached.
-        // `]` remains (acceptable), which causes "expected end of input" at the very end.
+        // `a {}`: `a` completes as a decl, then `{}` is consumed as garbage by
+        // consume_indent (depth==0 so close brackets don't stop the loop).
+        // `[.]` on the second line is reached.
         let (result, errors) = parse_result("a {}\n[.]");
-        assert_eq!(result, "a\n{\n}\n[]\n");
-        assert!(!errors.iter().any(|e| e == "unexpected '{'"), "errors: {errors:?}");
+        assert_eq!(result, "a\n[]\n");
+        assert!(
+            errors.iter().any(|e| e == "unexpected '{'"),
+            "errors: {errors:?}"
+        );
+        assert!(
+            !errors.iter().any(|e| e.contains("end of input")),
+            "got eoi: {errors:?}"
+        );
         assert!(result.contains("[]")); // second line IS reached
     }
 
@@ -1005,7 +1094,10 @@ comp: Nat → Nat = succ succ where {
         // `a {` with no closing `}` — consume_indent consumes `{` and hits EOI.
         let (_, errors) = parse_result("a {\nb = c");
         assert!(!errors.is_empty());
-        assert!(!errors.iter().any(|e| e.contains("end of input")), "got eoi: {errors:?}");
+        assert!(
+            !errors.iter().any(|e| e.contains("end of input")),
+            "got eoi: {errors:?}"
+        );
     }
 
     #[test]
@@ -1013,7 +1105,9 @@ comp: Nat → Nat = succ succ where {
         // `[x` with no closing `]`
         let (_, errors) = parse_result("[x\ny = z");
         assert!(!errors.is_empty());
-        assert!(!errors.iter().any(|e| e.contains("end of input")), "got eoi: {errors:?}");
+        assert!(
+            !errors.iter().any(|e| e.contains("end of input")),
+            "got eoi: {errors:?}"
+        );
     }
-
 }
