@@ -261,7 +261,13 @@ pub fn tokenize_example(code: &str) -> (Vec<TokenData>, Vec<Diagnostic>) {
                 column: utf16_col,
                 length: utf16_len,
                 token_type: match t.ty {
-                    types::token::TokenTy::Name => TokenType::Unknown,
+                    types::token::TokenTy::Name => {
+                        if donut_lang::convert::is_number_str(t.str) {
+                            TokenType::Number
+                        } else {
+                            TokenType::Unknown
+                        }
+                    }
                     types::token::TokenTy::Keyword => TokenType::Keyword,
                     types::token::TokenTy::Operator => TokenType::Operator,
                     types::token::TokenTy::Symbol => TokenType::Symbol,
@@ -288,8 +294,14 @@ pub fn tokenize_example(code: &str) -> (Vec<TokenData>, Vec<Diagnostic>) {
     }
 
     // convert（意味解析）を実行
-    let (_sem_program, convert_errors) = donut_lang::convert::convert(program, &tokens);
+    let (sem_program, convert_errors) = donut_lang::convert::convert(program, &tokens);
     for (pos, msg) in &convert_errors {
+        diags.push(to_diag(pos, msg));
+    }
+
+    // check（名前解決）を実行
+    let check_errors = donut_lang::check::check(&sem_program, &tokens);
+    for (pos, msg) in &check_errors {
         diags.push(to_diag(pos, msg));
     }
 

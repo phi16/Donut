@@ -401,7 +401,7 @@ impl<'a> Tracker<'a> {
         } else if t.str.starts_with(";;") {
             Op::CompRep(t.str.len() as u32)
         } else if t.str == ";" {
-            if let Some(n) = self.eat(|t| t.ty == TokenTy::Number && t.connected) {
+            if let Some(n) = self.eat(|t| t.connected && t.str.chars().all(|c| c.is_ascii_digit())) {
                 let n = n.str.parse::<u32>().unwrap_or_else(|_| {
                     self.add_error("invalid number literal in comp level");
                     0
@@ -761,7 +761,9 @@ mod tests {
         assert_eq!(p("x = a ;; b"), "x = a;; b\n");
         assert_eq!(p("x = a ;;; b"), "x = a;;; b\n");
         assert_eq!(p("x = a ;* b"), "x = a;* b\n");
-        // assert_eq!(p("x = a ;2 b"), "x = a;2 b\n");
+        assert_eq!(p("x = a ;2 b"), "x = a;2 b\n");
+        assert_eq!(p("x = a ;0 b"), "x = a;0 b\n");
+        assert_eq!(p("x = a ;10 b"), "x = a;10 b\n");
         assert_eq!(p("x: A → B"), "x: A → B\n");
         assert_eq!(p("x: A -> B"), "x: A → B\n"); // ASCII -> is the same as Unicode →
         assert_eq!(p("x: A → B → C"), "x: A → B → C\n");

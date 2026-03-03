@@ -264,13 +264,18 @@ impl<'a> Converter<'a> {
         unit: syntree::DeclUnit,
         span: &TokenSpan,
     ) -> Option<semtree::DeclUnit> {
-        let names = unit
+        let names: Vec<_> = unit
             .names
             .into_iter()
             .map(|p| map_a(p, |path| self.convert_path_decl(path)))
             .collect();
 
         let ty = unit.ty.map(|v| self.convert_val_a(v));
+
+        // Multiple names only allowed in declaration-only form (no assignment)
+        if names.len() > 1 && unit.assign.is_some() {
+            self.error_at(span, "multiple names are only allowed in declaration-only form");
+        }
 
         match unit.assign {
             Some((op_a, val_mod)) => {
@@ -325,6 +330,7 @@ impl<'a> Converter<'a> {
                         }
                         A::Accepted(syntree::ClauseTy::Where, _) => {
                             seen_where = true;
+                            self.check_where_alias_only(&converted);
                             where_clauses.push(converted);
                         }
                         A::Error() => {}
@@ -335,6 +341,36 @@ impl<'a> Converter<'a> {
         }
 
         (with_clauses, where_clauses)
+    }
+
+    fn check_where_alias_only(&mut self, module: &A<semtree::Module>) {
+        if let A::Accepted(semtree::Module::Block(decls), _) = module {
+            for decl_a in decls {
+                if let A::Accepted(decl, _) = decl_a {
+                    if let semtree::DeclMain::Unit(unit_a) = &decl.main {
+                        if let A::Accepted(unit, span) = unit_a {
+                            match unit.op.inner() {
+                                Some(semtree::AssignOp::Alias) => {}
+                                Some(_) => {
+                                    self.error_at(
+                                        span,
+                                        "only `=` (alias) is allowed in `where` clause",
+                                    );
+                                }
+                                None => {}
+                            }
+                            // Recursively check nested modules in body
+                            if let Some(semtree::ValMod::Mod(m)) = &unit.body {
+                                self.check_where_alias_only(m);
+                            }
+                        }
+                    }
+                    if let semtree::DeclMain::Mod(m) = &decl.main {
+                        self.check_where_alias_only(m);
+                    }
+                }
+            }
+        }
     }
 
     // --- Decorators ---
@@ -534,9 +570,21 @@ impl<'a> Converter<'a> {
 
     fn convert_val0(&mut self, val0: syntree::Val0, span: &TokenSpan) -> Option<semtree::Val> {
         match val0 {
-            syntree::Val0::Path(path_a) => {
-                let path_a = map_a(*path_a, |p| self.convert_path_val(p));
-                Some(semtree::Val::Path(Box::new(path_a)))
+            syntree::Val0::Path(path_a) => match *path_a {
+                A::Accepted(path, path_span) => {
+                    if let Some(num_str) = try_as_number_literal(&path) {
+                        Some(semtree::Val::Lit(A::Accepted(
+                            semtree::Lit::Number(num_str),
+                            path_span,
+                        )))
+                    } else {
+                        let converted = self.convert_path_val(path);
+                        Some(semtree::Val::Path(Box::new(A::Accepted(
+                            converted, path_span,
+                        ))))
+                    }
+                }
+                A::Error() => Some(semtree::Val::Path(Box::new(A::Error()))),
             }
             syntree::Val0::Lit(lit_a) => Some(semtree::Val::Lit(lit_a.convert(self))),
             syntree::Val0::Paren(val_a) => match *val_a {
@@ -628,6 +676,34 @@ impl<'a> Converter<'a> {
             }
         }
         Some(max_i)
+    }
+}
+
+pub fn is_number_str(s: &str) -> bool {
+    let s = s.strip_prefix('-').unwrap_or(s);
+    !s.is_empty() && s.chars().all(|c| c.is_ascii_digit())
+}
+
+fn try_as_number_literal(path: &syntree::Path) -> Option<String> {
+    // Single segment, no params, no suffix
+    if path.0.len() != 1 || path.1.is_some() {
+        return None;
+    }
+    let seg = match &path.0[0] {
+        A::Accepted(seg, _) => seg,
+        A::Error() => return None,
+    };
+    if seg.1.is_some() {
+        return None;
+    }
+    let name = match &seg.0 {
+        A::Accepted(name, _) => &name.0,
+        A::Error() => return None,
+    };
+    if is_number_str(name) {
+        Some(name.clone())
+    } else {
+        None
     }
 }
 
@@ -885,6 +961,16 @@ mod tests {
     }
 
     #[test]
+    fn val_comp_lit() {
+        // ;N is CompLit(N), same precedence as CompRep of same level
+        assert_eq!(c("x = a ;2 b"), "x = (a ;; b)\n");
+        assert_eq!(c("x = a ;0 b"), "x = (a b)\n");
+        // CompLit interacts with other ops
+        assert_eq!(c("x = a ;2 b ; c"), "x = (a ;; (b ; c))\n");
+        assert_eq!(c("x = a ; b ;2 c"), "x = ((a ; b) ;; c)\n");
+    }
+
+    #[test]
     fn val_left_assoc() {
         assert_eq!(c("x = a ; b ; c"), "x = ((a ; b) ; c)\n");
         assert_eq!(c("x = a b c"), "x = ((a b) c)\n");
@@ -920,6 +1006,21 @@ mod tests {
         assert_eq!(c("x = \"hello\""), "x = \"hello\"\n");
         assert_eq!(c("x = [1, 2, 3]"), "x = [1, 2, 3]\n");
         // {a: 1} is parsed as a module block, not an object literal
+    }
+
+    #[test]
+    fn number_literal_detection() {
+        // Standalone digits → number literal
+        assert_eq!(c("x = 0"), "x = 0\n");
+        assert_eq!(c("x = 123"), "x = 123\n");
+        // Negative number
+        assert_eq!(c("x = -42"), "x = -42\n");
+        // Not a number: digit + non-digit → stays as path
+        assert_eq!(c("x = 2D"), "x = 2D\n"); // path, not literal
+        // Dotted number path: 12.34 → path (like Rust's x.0)
+        assert_eq!(c("a.b = 12.34"), "a.b = 12.34\n");
+        // Number with params → stays as path
+        assert_eq!(c("x = 42[a]"), "x = 42[a]\n");
     }
 
     #[test]
@@ -989,14 +1090,14 @@ mod tests {
     g = h ;* i
   }
   where {
-    j := k[n = 1]
+    j = k[n = 1]
   }
 a.b.c += [2, \"hello\"]
 s := 42";
         assert_eq!(
             c(code),
             "\
-[p: T] [deco] f[x: A, y: A, z: B]: R = (((a ; b) ;; c) → (d e)) with { g = (h ;* i) } where { j := k[n = 1] }
+[p: T] [deco] f[x: A, y: A, z: B]: R = (((a ; b) ;; c) → (d e)) with { g = (h ;* i) } where { j = k[n = 1] }
 a.b.c += [2, \"hello\"]
 s := 42
 "
@@ -1057,5 +1158,66 @@ x = a -> b -> c
             "x = a\n  where {\n    y = b\n  }\n  with {\n    z = c\n  }"
         );
         assert_eq!(errs, vec!["`with` clause must come before `where` clause"]);
+    }
+
+    #[test]
+    fn error_where_non_alias() {
+        let errs = conv_errs("x = 1\n  where {\n    y := 2\n  }");
+        assert!(errs.iter().any(|e| e.contains("alias") || e.contains("`=`")), "expected alias-only error: {errs:?}");
+    }
+
+    #[test]
+    fn error_where_add() {
+        let errs = conv_errs("x = 1\n  where {\n    y += 2\n  }");
+        assert!(errs.iter().any(|e| e.contains("alias") || e.contains("`=`")), "expected alias-only error: {errs:?}");
+    }
+
+    #[test]
+    fn error_where_decl_only() {
+        // Pure declaration (x: T) is not allowed in where clause
+        let errs = conv_errs("T = 1\nx = 1\n  where {\n    y: T\n  }");
+        assert!(errs.iter().any(|e| e.contains("alias") || e.contains("`=`")), "expected alias-only error: {errs:?}");
+    }
+
+    #[test]
+    fn error_where_nested_module_def() {
+        // := inside a module inside where should also be rejected
+        let errs = conv_errs(r#"
+x = 1
+  where {
+    m = {
+        y := 2
+    }
+  }
+"#);
+        assert!(errs.iter().any(|e| e.contains("alias") || e.contains("`=`")), "expected alias-only error in nested module: {errs:?}");
+    }
+
+    #[test]
+    fn where_alias_ok() {
+        // `=` in where should not produce errors
+        let (tokens, _, _) = tokenize("x = g\n  where {\n    g = 1\n  }".trim());
+        let (program, parse_errors) = parse(&tokens);
+        assert!(parse_errors.is_empty());
+        let (_, conv_errors) = convert(program, &tokens);
+        assert!(conv_errors.is_empty(), "unexpected errors: {conv_errors:?}");
+    }
+
+    #[test]
+    fn error_multi_name_with_assign() {
+        let errs = conv_errs("a b = 1");
+        assert!(
+            errs.iter().any(|e| e.contains("multiple names") && e.contains("declaration-only")),
+            "{errs:?}"
+        );
+    }
+
+    #[test]
+    fn multi_name_decl_only_ok() {
+        let (tokens, _, _) = tokenize("a b: T".trim());
+        let (program, parse_errors) = parse(&tokens);
+        assert!(parse_errors.is_empty());
+        let (_, conv_errors) = convert(program, &tokens);
+        assert!(conv_errors.is_empty(), "unexpected errors: {conv_errors:?}");
     }
 }
