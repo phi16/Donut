@@ -1,4 +1,5 @@
-use crate::types::tree::*;
+use crate::types::common::A;
+use crate::types::syntree::*;
 
 #[derive(Debug)]
 struct Pretty {

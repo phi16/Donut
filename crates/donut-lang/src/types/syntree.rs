@@ -1,19 +1,4 @@
-use crate::types::token::TokenSpan;
-
-#[derive(Debug)]
-pub enum A<T> {
-    Accepted(T, TokenSpan),
-    Error(),
-}
-
-impl<T> A<T> {
-    pub fn inner(&self) -> Option<&T> {
-        match self {
-            A::Accepted(v, _) => Some(v),
-            A::Error() => None,
-        }
-    }
-}
+use crate::types::common::A;
 
 #[derive(Debug)]
 pub struct Symbol(pub &'static str);

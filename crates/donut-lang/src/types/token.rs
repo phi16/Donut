@@ -1,3 +1,5 @@
+use crate::types::common::TokenPos;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TokenTy {
     Name,
@@ -9,13 +11,6 @@ pub enum TokenTy {
     Whitespace,
 }
 
-#[derive(Debug, Clone)]
-pub struct TokenPos {
-    pub line: usize,
-    pub col: usize,
-    pub len: usize,
-}
-
 #[derive(Debug)]
 pub struct Token<'a> {
     pub str: &'a str,
@@ -23,12 +18,4 @@ pub struct Token<'a> {
     pub pos: TokenPos,
     pub indent: usize,
     pub connected: bool,
-}
-
-pub type Error = (TokenPos, String);
-
-#[derive(Debug, Clone)]
-pub struct TokenSpan {
-    pub start: usize,
-    pub end: usize,
 }
