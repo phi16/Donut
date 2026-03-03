@@ -287,6 +287,12 @@ pub fn tokenize_example(code: &str) -> (Vec<TokenData>, Vec<Diagnostic>) {
         diags.push(to_diag(pos, msg));
     }
 
+    // convert（意味解析）を実行
+    let (_sem_program, convert_errors) = donut_lang::convert::convert(program, &tokens);
+    for (pos, msg) in &convert_errors {
+        diags.push(to_diag(pos, msg));
+    }
+
     // コメントトークンを構築
     let comments_iter = comments.into_iter().map(|pos| {
         let (utf16_col, utf16_len) = to_utf16(&lines, pos.line, pos.col, pos.len);

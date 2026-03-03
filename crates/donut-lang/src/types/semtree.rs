@@ -69,6 +69,7 @@ pub enum Module {
 
 #[derive(Debug, Clone)]
 pub enum AssignOp {
+    Decl,
     Alias,
     Def,
     Add,
@@ -83,7 +84,7 @@ pub struct DeclUnit {
     pub names: Vec<A<PathDecl>>,
     pub ty: Option<A<Val>>,
     pub op: A<AssignOp>,
-    pub body: ValMod,
+    pub body: Option<ValMod>,
 }
 
 #[derive(Debug)]

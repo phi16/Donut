@@ -253,7 +253,7 @@ impl<'a> Converter<'a> {
             }
             syntree::DeclMain::Mod(mod_a) => Some(semtree::DeclMain::Mod(mod_a.convert(self))),
             syntree::DeclMain::Dots => {
-                self.error_at(parent_span, "`...` cannot be used as a declaration");
+                self.error_at(parent_span, "found `...` in declaration");
                 None
             }
         }
@@ -275,7 +275,7 @@ impl<'a> Converter<'a> {
         match unit.assign {
             Some((op_a, val_mod)) => {
                 let op = op_a.convert(self);
-                let body = val_mod.convert(self);
+                let body = Some(val_mod.convert(self));
                 Some(semtree::DeclUnit {
                     names,
                     ty,
@@ -284,8 +284,17 @@ impl<'a> Converter<'a> {
                 })
             }
             None => {
-                self.error_at(span, "missing assignment in declaration");
-                None
+                if ty.is_some() {
+                    Some(semtree::DeclUnit {
+                        names,
+                        ty,
+                        op: A::Accepted(semtree::AssignOp::Decl, span.clone()),
+                        body: None,
+                    })
+                } else {
+                    self.error_at(span, "missing assignment in declaration");
+                    None
+                }
             }
         }
     }
@@ -535,7 +544,7 @@ impl<'a> Converter<'a> {
                 A::Error() => None,
             },
             syntree::Val0::Dots => {
-                self.error_at(span, "`...` cannot be used as a value");
+                self.error_at(span, "found `...` in value");
                 None
             }
         }
@@ -757,6 +766,7 @@ mod tests {
     impl Fmt for semtree::AssignOp {
         fn fmt(&self, p: &mut PP) {
             match self {
+                semtree::AssignOp::Decl => p.s(": "),
                 semtree::AssignOp::Alias => p.s(" = "),
                 semtree::AssignOp::Def => p.s(" := "),
                 semtree::AssignOp::Add => p.s(" += "),
@@ -791,10 +801,12 @@ mod tests {
         fn fmt(&self, p: &mut PP) {
             for (i, n) in self.names.iter().enumerate() { if i > 0 { p.s(" "); } n.fmt(p); }
             if let Some(ty) = &self.ty { p.s(": "); ty.fmt(p); }
-            self.op.fmt(p);
-            match &self.body {
-                semtree::ValMod::Val(v) => v.fmt(p),
-                semtree::ValMod::Mod(m) => m.fmt(p),
+            if let Some(body) = &self.body {
+                self.op.fmt(p);
+                match body {
+                    semtree::ValMod::Val(v) => v.fmt(p),
+                    semtree::ValMod::Mod(m) => m.fmt(p),
+                }
             }
         }
     }
@@ -848,6 +860,12 @@ mod tests {
         assert_eq!(c("x: T = a"), "x: T = a\n");
         assert_eq!(c("x := a"), "x := a\n");
         assert_eq!(c("x += a"), "x += a\n");
+    }
+
+    #[test]
+    fn decl_only() {
+        assert_eq!(c("x: T"), "x: T\n");
+        assert_eq!(c("f[a: A]: T"), "f[a: A]: T\n");
     }
 
     #[test]
