@@ -1,4 +1,5 @@
 use crate::types::common::A;
+use std::rc::Rc;
 
 #[derive(Debug)]
 pub struct Name(pub String);
@@ -6,7 +7,7 @@ pub struct Name(pub String);
 #[derive(Debug)]
 pub struct ParamDecl {
     pub name: A<Name>,
-    pub ty: A<Val>,
+    pub ty: Rc<A<Val>>,
 }
 #[derive(Debug)]
 pub struct ParamVal {
@@ -19,12 +20,12 @@ pub struct ParamsDecl(pub Vec<A<ParamDecl>>);
 pub struct ParamsVal(pub Vec<A<ParamVal>>);
 
 #[derive(Debug)]
-pub struct SegmentDecl(pub A<Name>, pub A<ParamsDecl>);
+pub struct SegmentDecl(pub A<Name>, pub ParamsDecl);
 #[derive(Debug)]
 pub struct PathDecl(pub Vec<A<SegmentDecl>>, pub Option<A<Val>>);
 
 #[derive(Debug)]
-pub struct Segment(pub A<Name>, pub A<ParamsVal>);
+pub struct Segment(pub A<Name>, pub ParamsVal);
 #[derive(Debug)]
 pub struct Path(pub Vec<A<Segment>>, pub Option<A<Val>>);
 
@@ -57,7 +58,7 @@ pub enum Op {
 pub enum Val {
     Path(Box<A<Path>>),
     Lit(A<Lit>),
-    Op(Box<A<Val>>, A<Op>, Option<A<ParamsVal>>, Box<A<Val>>),
+    Op(Box<Val>, A<Op>, Option<A<ParamsVal>>, Box<Val>),
 }
 
 #[derive(Debug)]
@@ -92,7 +93,7 @@ pub enum DeclMain {
 }
 #[derive(Debug)]
 pub enum Decorator {
-    Param(A<Name>, A<Val>),
+    Param(A<Name>, Rc<A<Val>>),
     Deco(A<Val>),
 }
 #[derive(Debug)]
