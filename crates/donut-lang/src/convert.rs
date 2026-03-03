@@ -344,30 +344,31 @@ impl<'a> Converter<'a> {
     }
 
     fn check_where_alias_only(&mut self, module: &A<semtree::Module>) {
-        if let A::Accepted(semtree::Module::Block(decls), _) = module {
-            for decl_a in decls {
-                if let A::Accepted(decl, _) = decl_a {
-                    if let semtree::DeclMain::Unit(unit_a) = &decl.main {
-                        if let A::Accepted(unit, span) = unit_a {
-                            match unit.op.inner() {
-                                Some(semtree::AssignOp::Alias) => {}
-                                Some(_) => {
-                                    self.error_at(
-                                        span,
-                                        "only `=` (alias) is allowed in `where` clause",
-                                    );
-                                }
-                                None => {}
-                            }
-                            // Recursively check nested modules in body
-                            if let Some(semtree::ValMod::Mod(m)) = &unit.body {
-                                self.check_where_alias_only(m);
-                            }
+        let decls = match module {
+            A::Accepted(semtree::Module::Block(decls), _) => decls,
+            _ => return,
+        };
+        for decl_a in decls {
+            let decl = match decl_a {
+                A::Accepted(decl, _) => decl,
+                A::Error() => continue,
+            };
+            match &decl.main {
+                semtree::DeclMain::Unit(unit_a) => {
+                    if let A::Accepted(unit, span) = unit_a {
+                        if !matches!(unit.op.inner(), Some(semtree::AssignOp::Alias) | None) {
+                            self.error_at(
+                                span,
+                                "only `=` (alias) is allowed in `where` clause",
+                            );
+                        }
+                        if let Some(semtree::ValMod::Mod(m)) = &unit.body {
+                            self.check_where_alias_only(m);
                         }
                     }
-                    if let semtree::DeclMain::Mod(m) = &decl.main {
-                        self.check_where_alias_only(m);
-                    }
+                }
+                semtree::DeclMain::Mod(m) => {
+                    self.check_where_alias_only(m);
                 }
             }
         }
@@ -928,6 +929,11 @@ mod tests {
         errors.into_iter().map(|(_, msg)| msg).collect()
     }
 
+    fn conv_ok(code: &str) {
+        let errs = conv_errs(code);
+        assert!(errs.is_empty(), "unexpected convert errors: {errs:?}");
+    }
+
     // --- Tests ---
 
     #[test]
@@ -1195,12 +1201,7 @@ x = 1
 
     #[test]
     fn where_alias_ok() {
-        // `=` in where should not produce errors
-        let (tokens, _, _) = tokenize("x = g\n  where {\n    g = 1\n  }".trim());
-        let (program, parse_errors) = parse(&tokens);
-        assert!(parse_errors.is_empty());
-        let (_, conv_errors) = convert(program, &tokens);
-        assert!(conv_errors.is_empty(), "unexpected errors: {conv_errors:?}");
+        conv_ok("x = g\n  where {\n    g = 1\n  }");
     }
 
     #[test]
@@ -1214,10 +1215,6 @@ x = 1
 
     #[test]
     fn multi_name_decl_only_ok() {
-        let (tokens, _, _) = tokenize("a b: T".trim());
-        let (program, parse_errors) = parse(&tokens);
-        assert!(parse_errors.is_empty());
-        let (_, conv_errors) = convert(program, &tokens);
-        assert!(conv_errors.is_empty(), "unexpected errors: {conv_errors:?}");
+        conv_ok("a b: T");
     }
 }

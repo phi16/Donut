@@ -27,4 +27,11 @@ impl<T> A<T> {
             A::Error() => None,
         }
     }
+
+    pub fn accepted(&self) -> Option<(&T, &TokenSpan)> {
+        match self {
+            A::Accepted(v, span) => Some((v, span)),
+            A::Error() => None,
+        }
+    }
 }
