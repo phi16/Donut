@@ -960,6 +960,58 @@ mod tests {
         );
     }
 
+    // --- Composite tests ---
+
+    #[test]
+    fn kitchen_sink() {
+        let code = "\
+[p: T]
+[deco] f[x y: A, z: B]: R = (a ; b ;; c) -> d e
+  with {
+    g = h ;* i
+  }
+  where {
+    j := k[n = 1]
+  }
+a.b.c += [2, \"hello\"]
+s := 42";
+        assert_eq!(
+            c(code),
+            "\
+[p: T] [deco] f[x: A, y: A, z: B]: R = (((a ; b) ;; c) → (d e)) with { g = (h ;* i) } where { j := k[n = 1] }
+a.b.c += [2, \"hello\"]
+s := 42
+"
+        );
+    }
+
+    #[test]
+    fn nested_module() {
+        let code = "\
+m = {
+  x := y ; z
+  [q: U] w = v
+}";
+        assert_eq!(c(code), "m = { x := (y ; z); [q: U] w = v }\n");
+    }
+
+    #[test]
+    fn compound_errors() {
+        let code = "\
+[n = v]
+x = a -> b -> c
+  where {
+    y = 1
+  }
+  with {
+    z = 2
+  }";
+        let errs = conv_errs(code);
+        assert!(errs.iter().any(|e| e.contains("named")), "expected named param error: {errs:?}");
+        assert!(errs.iter().any(|e| e.contains("chain")), "expected chained arrow error: {errs:?}");
+        assert!(errs.iter().any(|e| e.contains("with")), "expected with/where order error: {errs:?}");
+    }
+
     // --- Error cases ---
 
     #[test]
