@@ -112,6 +112,26 @@ impl Convert for syntree::Program {
         semtree::Program(c.convert_decls(self.0))
     }
 }
+impl Convert for syntree::ArrowTy {
+    type Output = semtree::ArrowTy;
+    fn convert(self, _c: &mut Converter<'_>) -> semtree::ArrowTy {
+        match self {
+            syntree::ArrowTy::To => semtree::ArrowTy::To,
+            syntree::ArrowTy::Eq => semtree::ArrowTy::Eq,
+            syntree::ArrowTy::Functor => semtree::ArrowTy::Functor,
+        }
+    }
+}
+impl Convert for syntree::Op {
+    type Output = semtree::Op;
+    fn convert(self, c: &mut Converter<'_>) -> semtree::Op {
+        match self {
+            syntree::Op::CompRep(i) | syntree::Op::CompLit(i) => semtree::Op::Comp(i),
+            syntree::Op::CompStar => semtree::Op::CompStar,
+            syntree::Op::Arrow(ty) => semtree::Op::Arrow(ty.convert(c)),
+        }
+    }
+}
 
 // --- Converter ---
 
@@ -487,11 +507,118 @@ impl<'a> Converter<'a> {
         semtree::ParamsVal(result)
     }
 
-    // --- Val (stub) ---
+    // --- Val ---
 
-    fn convert_val_a(&mut self, _val: A<syntree::Val>) -> A<semtree::Val> {
-        // TODO: operator precedence parsing
-        A::Error()
+    fn convert_val_a(&mut self, val_a: A<syntree::Val>) -> A<semtree::Val> {
+        match val_a {
+            A::Accepted(val, span) => match self.convert_val(val) {
+                Some(v) => A::Accepted(v, span),
+                None => A::Error(),
+            },
+            A::Error() => A::Error(),
+        }
+    }
+
+    fn convert_val(&mut self, val: syntree::Val) -> Option<semtree::Val> {
+        self.build_val_tree(val.vs, val.ops)
+    }
+
+    fn convert_val0(&mut self, val0: syntree::Val0, span: &TokenSpan) -> Option<semtree::Val> {
+        match val0 {
+            syntree::Val0::Path(path_a) => {
+                let path_a = map_a(*path_a, |p| self.convert_path_val(p));
+                Some(semtree::Val::Path(Box::new(path_a)))
+            }
+            syntree::Val0::Lit(lit_a) => Some(semtree::Val::Lit(lit_a.convert(self))),
+            syntree::Val0::Paren(val_a) => match *val_a {
+                A::Accepted(inner, _) => self.convert_val(inner),
+                A::Error() => None,
+            },
+            syntree::Val0::Dots => {
+                self.error_at(span, "`...` cannot be used as a value");
+                None
+            }
+        }
+    }
+
+    fn build_val_tree(
+        &mut self,
+        mut vs: Vec<A<syntree::Val0>>,
+        mut ops: Vec<(A<syntree::Op>, Option<A<syntree::Params>>)>,
+    ) -> Option<semtree::Val> {
+        if ops.is_empty() {
+            let v0_a = vs.into_iter().next()?;
+            return match v0_a {
+                A::Accepted(v0, span) => self.convert_val0(v0, &span),
+                A::Error() => None,
+            };
+        }
+
+        let split = self.find_weakest_op(&ops)?;
+
+        let right_vs = vs.split_off(split + 1);
+        let right_ops = ops.split_off(split + 1);
+        let (op_a, params_a) = ops.pop().unwrap();
+
+        let left = self.build_val_tree(vs, ops)?;
+        let right = self.build_val_tree(right_vs, right_ops)?;
+
+        let op = op_a.convert(self);
+        let params = params_a.map(|p| map_a(p, |params| self.convert_params_val(params)));
+
+        Some(semtree::Val::Op(Box::new(left), op, params, Box::new(right)))
+    }
+
+    /// Find the index of the weakest (lowest-precedence) operator.
+    /// For left-associativity, picks the rightmost among ties.
+    fn find_weakest_op(
+        &mut self,
+        ops: &[(A<syntree::Op>, Option<A<syntree::Params>>)],
+    ) -> Option<usize> {
+        // Reject if any op is A::Error
+        if ops.iter().any(|(op_a, _)| matches!(op_a, A::Error())) {
+            return None;
+        }
+
+        // CompStar/Arrow are the weakest; at most one is allowed
+        let weakest: Vec<usize> = ops
+            .iter()
+            .enumerate()
+            .filter(|(_, (op_a, _))| {
+                matches!(
+                    op_a,
+                    A::Accepted(syntree::Op::CompStar | syntree::Op::Arrow(_), _)
+                )
+            })
+            .map(|(i, _)| i)
+            .collect();
+
+        if weakest.len() > 1 {
+            if let A::Accepted(_, span) = &ops[weakest[1]].0 {
+                self.error_at(span, "cannot chain `*` or arrow operators");
+            }
+            return None;
+        }
+        if weakest.len() == 1 {
+            return Some(weakest[0]);
+        }
+
+        // All ops are Comp(i). Find rightmost with highest weakness (left-associative).
+        let mut max_w = 0u32;
+        let mut max_i = 0;
+        for (i, (op_a, _)) in ops.iter().enumerate() {
+            if let A::Accepted(op, _) = op_a {
+                let w = match op {
+                    syntree::Op::CompRep(w) | syntree::Op::CompLit(w) => *w,
+                    _ => unreachable!(),
+                };
+                if w >= max_w {
+                    max_w = w;
+                    max_i = i;
+                }
+            }
+        }
+        Some(max_i)
     }
 }
 
