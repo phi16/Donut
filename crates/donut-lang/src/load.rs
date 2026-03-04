@@ -1,4 +1,4 @@
-use crate::check::{Item, ItemKind, Module};
+use crate::check::{Item, ItemBody, ItemKind, Module};
 use crate::types::common::*;
 use crate::types::semtree;
 use donut_core::cell::{check_prim, Diagram, Globular};
@@ -72,54 +72,59 @@ impl Table {
 
         let color = extract_color(&item.decos);
 
-        // Def: ignore body, use type only
-        let (ty_val, body_val) = if matches!(item.kind, Some(ItemKind::Def)) {
-            (&item.ty, &None)
-        } else {
-            (&item.ty, &item.val)
-        };
-
-        match (ty_val, body_val) {
-            (Some(ty), None) => {
-                if is_functor_type(ty) {
-                    // TODO: functor declarations are not yet loaded as cells
+        match &item.body {
+            ItemBody::Value { val, members } => {
+                // Def: ignore body, use type only
+                let body_val = if matches!(item.kind, Some(ItemKind::Def)) {
+                    &None
                 } else {
-                    let (_, ty) = self.eval_ty(ty)?;
-                    let prim = self.fresh_prim();
-                    let cell = match &ty {
-                        Ty::Zero => FreeCell::zero(prim),
-                        Ty::Succ(s, t) => FreeCell::prim(prim, s.clone(), t.clone())?,
-                    };
-                    self.add(name.to_string(), color, cell);
-                }
-            }
-            (dim_ty, Some(body_rc)) => {
-                let body = self.eval_val(body_rc)?;
-                let dim = body.pure.dim().in_space;
-                let body_ty = if dim == 0 {
-                    Ty::Zero
-                } else {
-                    Ty::Succ(
-                        FreeCell::from_pure(&body.pure.s()),
-                        FreeCell::from_pure(&body.pure.t()),
-                    )
+                    val
                 };
 
-                if let Some(ty_rc) = dim_ty {
-                    let (declared_dim, declared_ty) = self.eval_ty(ty_rc)?;
-                    if declared_dim != dim {
-                        return Err("declared type dimension does not match body".to_string());
+                match (&item.ty, body_val) {
+                    (Some(ty), None) => {
+                        let (_, ty) = self.eval_ty(ty)?;
+                        let prim = self.fresh_prim();
+                        let cell = match &ty {
+                            Ty::Zero => FreeCell::zero(prim),
+                            Ty::Succ(s, t) => FreeCell::prim(prim, s.clone(), t.clone())?,
+                        };
+                        self.add(name.to_string(), color, cell);
                     }
-                    match_ty(&declared_ty, &body_ty)?;
+                    (dim_ty, Some(body_rc)) => {
+                        let body = self.eval_val(body_rc)?;
+                        let dim = body.pure.dim().in_space;
+                        let body_ty = if dim == 0 {
+                            Ty::Zero
+                        } else {
+                            Ty::Succ(
+                                FreeCell::from_pure(&body.pure.s()),
+                                FreeCell::from_pure(&body.pure.t()),
+                            )
+                        };
+
+                        if let Some(ty_rc) = dim_ty {
+                            let (declared_dim, declared_ty) = self.eval_ty(ty_rc)?;
+                            if declared_dim != dim {
+                                return Err(
+                                    "declared type dimension does not match body".to_string(),
+                                );
+                            }
+                            match_ty(&declared_ty, &body_ty)?;
+                        }
+
+                        self.add(name.to_string(), color, body);
+                    }
+                    (None, None) => {}
                 }
 
-                self.add(name.to_string(), color, body);
+                if !members.entries.is_empty() {
+                    self.load_members(name, members)?;
+                }
             }
-            (None, None) => {}
-        }
-
-        if !item.members.entries.is_empty() {
-            self.load_members(name, &item.members)?;
+            ItemBody::Functor { .. } => {
+                // TODO: functor declarations are not yet loaded as cells
+            }
         }
 
         Ok(())
@@ -210,17 +215,6 @@ impl Table {
     }
 }
 
-fn is_functor_type(val: &A<semtree::Val>) -> bool {
-    if let Some(semtree::Val::Op(_, op_a, _, _)) = val.inner() {
-        matches!(
-            op_a.inner(),
-            Some(semtree::Op::Arrow(semtree::ArrowTy::Functor))
-        )
-    } else {
-        false
-    }
-}
-
 fn collect_comp_children(
     val: &semtree::Val,
     axis: u32,
@@ -296,12 +290,18 @@ fn extract_color(decos: &[Rc<A<semtree::Val>>]) -> Option<(u8, u8, u8)> {
         let Some(semtree::Val::Path(path_a)) = deco.inner() else {
             continue;
         };
-        let path = path_a.inner()?;
+        let Some(path) = path_a.inner() else {
+            continue;
+        };
         if path.0.len() != 1 {
             continue;
         }
-        let seg = path.0[0].inner()?;
-        let name = seg.0.inner()?;
+        let Some(seg) = path.0[0].inner() else {
+            continue;
+        };
+        let Some(name) = seg.0.inner() else {
+            continue;
+        };
         let args = &seg.1 .0;
 
         match name.0.as_str() {

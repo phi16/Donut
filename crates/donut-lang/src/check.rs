@@ -19,12 +19,28 @@ pub struct Param {
 }
 
 #[derive(Debug, Clone)]
+pub struct FunctorMapping {
+    pub applicand: Rc<A<semtree::Val>>,
+    pub val: Rc<A<semtree::Val>>,
+}
+
+#[derive(Debug, Clone)]
+pub enum ItemBody {
+    Value {
+        val: Option<Rc<A<semtree::Val>>>,
+        members: Module,
+    },
+    Functor {
+        mappings: Vec<FunctorMapping>,
+    },
+}
+
+#[derive(Debug, Clone)]
 pub struct Item {
     pub kind: Option<ItemKind>,
     pub ty: Option<Rc<A<semtree::Val>>>,
     pub params: Vec<Param>,
-    pub val: Option<Rc<A<semtree::Val>>>,
-    pub members: Module,
+    pub body: ItemBody,
     pub decos: Vec<Rc<A<semtree::Val>>>,
 }
 
@@ -86,8 +102,10 @@ impl Item {
             kind,
             ty: None,
             params: Vec::new(),
-            val: None,
-            members: Module::new(),
+            body: ItemBody::Value {
+                val: None,
+                members: Module::new(),
+            },
             decos: Vec::new(),
         }
     }
@@ -97,10 +115,44 @@ impl Item {
             kind: Some(ItemKind::Param),
             ty: Some(ty),
             params: Vec::new(),
-            val: None,
-            members: Module::new(),
+            body: ItemBody::Value {
+                val: None,
+                members: Module::new(),
+            },
             decos: Vec::new(),
         }
+    }
+
+    pub fn members(&self) -> Option<&Module> {
+        match &self.body {
+            ItemBody::Value { members, .. } => Some(members),
+            _ => None,
+        }
+    }
+
+    pub fn members_mut(&mut self) -> Option<&mut Module> {
+        match &mut self.body {
+            ItemBody::Value { members, .. } => Some(members),
+            _ => None,
+        }
+    }
+
+    pub fn val(&self) -> Option<&Rc<A<semtree::Val>>> {
+        match &self.body {
+            ItemBody::Value { val, .. } => val.as_ref(),
+            _ => None,
+        }
+    }
+}
+
+fn is_functor_type(val: &A<semtree::Val>) -> bool {
+    if let Some(semtree::Val::Op(_, op_a, _, _)) = val.inner() {
+        matches!(
+            op_a.inner(),
+            Some(semtree::Op::Arrow(semtree::ArrowTy::Functor))
+        )
+    } else {
+        false
     }
 }
 
@@ -220,7 +272,7 @@ impl<'a> Checker<'a> {
             } else {
                 let next = current
                     .take()
-                    .and_then(|item| item.members.get(name).cloned());
+                    .and_then(|item| item.members().and_then(|m| m.get(name).cloned()));
                 if next.is_none() {
                     self.error_at(span, format!("undefined member `{}`", name));
                     return None;
@@ -297,16 +349,21 @@ impl<'a> Checker<'a> {
             let mut current = root;
             for seg_a in &segs[1..segs.len() - 1] {
                 if let Some((name, _)) = seg_decl_name(seg_a) {
-                    if !current.members.contains_key(name) {
+                    let Some(members) = current.members_mut() else {
+                        return;
+                    };
+                    if !members.contains_key(name) {
                         return; // Error already reported in check phase
                     }
-                    current = current.members.get_mut(name).unwrap();
+                    current = members.get_mut(name).unwrap();
                 }
             }
-            if current.members.contains_key(last_name) {
-                conflict = true;
-            } else {
-                current.members.define(last_name.to_owned(), item);
+            if let Some(members) = current.members_mut() {
+                if members.contains_key(last_name) {
+                    conflict = true;
+                } else {
+                    members.define(last_name.to_owned(), item);
+                }
             }
         }
 
@@ -320,13 +377,18 @@ impl<'a> Checker<'a> {
         names: &[A<semtree::PathDecl>],
         item: Item,
     ) {
-        let members_to_merge = if let Some(val_rc) = &item.val {
-            // Body was Val - resolve the val path to get members
-            self.resolve_val_as_members(val_rc)
-                .unwrap_or_else(Module::new)
-        } else {
-            // Body was Mod or None - use the collected members
-            item.members
+        let members_to_merge = match item.body {
+            ItemBody::Value { val, members } => {
+                if let Some(val_rc) = &val {
+                    // Body was Val - resolve the val path to get members
+                    self.resolve_val_as_members(val_rc)
+                        .unwrap_or_else(Module::new)
+                } else {
+                    // Body was Mod or None - use the collected members
+                    members
+                }
+            }
+            ItemBody::Functor { .. } => Module::new(),
         };
 
         for name_a in names {
@@ -347,11 +409,12 @@ impl<'a> Checker<'a> {
                 if i == 0 {
                     current = self.lookup(name);
                 } else {
-                    current = current.and_then(|item| item.members.get(name));
+                    current =
+                        current.and_then(|item| item.members().and_then(|m| m.get(name)));
                 }
             }
         }
-        Some(current?.members.clone())
+        Some(current?.members()?.clone())
     }
 
     fn merge_into_path(&mut self, pd: &semtree::PathDecl, new_members: Module) {
@@ -366,7 +429,11 @@ impl<'a> Checker<'a> {
         if segs.len() == 1 {
             if let Some((name, span)) = segs.first().and_then(seg_decl_name) {
                 let conflicts = if let Some(existing) = self.lookup_mut(name) {
-                    existing.members.merge(new_members)
+                    if let Some(members) = existing.members_mut() {
+                        members.merge(new_members)
+                    } else {
+                        Vec::new()
+                    }
                 } else {
                     Vec::new()
                 };
@@ -543,6 +610,7 @@ impl<'a> Checker<'a> {
         match main {
             semtree::DeclMain::Unit(unit_a) => {
                 if let A::Accepted(unit, _) = unit_a {
+                    let kind = decl_item_kind(&unit);
                     let semtree::DeclUnit {
                         names,
                         ty,
@@ -550,24 +618,36 @@ impl<'a> Checker<'a> {
                         body,
                     } = unit;
 
-                    let kind = {
-                        let kind = match &body {
-                            Some(vm) => match vm {
-                                semtree::ValMod::Val(_) => match op.inner() {
-                                    Some(semtree::AssignOp::Alias) => Some(ItemKind::Alias),
-                                    Some(semtree::AssignOp::Def) => Some(ItemKind::Def),
-                                    Some(semtree::AssignOp::Decl) => Some(ItemKind::Decl),
-                                    _ => None,
-                                },
-                                semtree::ValMod::Mod(_) => None,
-                            },
-                            None => match op.inner() {
-                                Some(semtree::AssignOp::Decl) => Some(ItemKind::Decl),
-                                _ => None,
-                            },
-                        };
-                        kind
-                    };
+                    // Functor application constraints
+                    let has_functor_app = names.iter().any(|n| {
+                        n.inner().map_or(false, |pd| pd.1.is_some())
+                    });
+                    if has_functor_app {
+                        if !matches!(op.inner(), Some(semtree::AssignOp::Alias)) {
+                            if let Some((_, span)) = op.accepted() {
+                                self.error_at(
+                                    span,
+                                    "functor application only allows `=`",
+                                );
+                            }
+                        }
+                        if let Some(semtree::ValMod::Mod(m)) = &body {
+                            if let Some((_, span)) = m.accepted() {
+                                self.error_at(
+                                    span,
+                                    "functor application cannot have a module body",
+                                );
+                            }
+                        }
+                        for wc in &with_clauses {
+                            if let Some((_, span)) = wc.accepted() {
+                                self.error_at(
+                                    span,
+                                    "functor application cannot have `with` clauses",
+                                );
+                            }
+                        }
+                    }
 
                     let params = Self::extract_params(&names);
 
@@ -601,16 +681,65 @@ impl<'a> Checker<'a> {
                     self.pop_scope();
 
                     // 10. Register
-                    let item = Item {
-                        kind,
-                        ty: ty_rc,
-                        params,
-                        val,
-                        members: result,
-                        decos: deco_vals,
-                    };
-
-                    self.register_unit_results(&names, &op, item);
+                    if has_functor_app {
+                        for name_a in names {
+                            if let A::Accepted(pd, _) = name_a {
+                                let semtree::PathDecl(segs, applicand) = pd;
+                                if let Some(applicand) = applicand {
+                                    if let Some((fname, fspan)) =
+                                        segs.first().and_then(|s| seg_decl_name(s))
+                                    {
+                                        let fname = fname.to_owned();
+                                        let fspan = fspan.clone();
+                                        if let Some(existing) = self.lookup_mut(&fname) {
+                                            if let ItemBody::Functor { mappings } =
+                                                &mut existing.body
+                                            {
+                                                if let Some(v) = &val {
+                                                    mappings.push(FunctorMapping {
+                                                        applicand: Rc::new(applicand),
+                                                        val: Rc::clone(v),
+                                                    });
+                                                }
+                                            } else {
+                                                self.error_at(
+                                                    &fspan,
+                                                    format!("`{}` is not a functor", fname),
+                                                );
+                                            }
+                                        } else {
+                                            self.error_at(
+                                                &fspan,
+                                                format!("undefined functor `{}`", fname),
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        let is_functor = ty_rc
+                            .as_ref()
+                            .map_or(false, |t| is_functor_type(t));
+                        let body = if is_functor {
+                            ItemBody::Functor {
+                                mappings: Vec::new(),
+                            }
+                        } else {
+                            ItemBody::Value {
+                                val,
+                                members: result,
+                            }
+                        };
+                        let item = Item {
+                            kind,
+                            ty: ty_rc,
+                            params,
+                            body,
+                            decos: deco_vals,
+                        };
+                        self.register_unit_results(&names, &op, item);
+                    }
                 } else {
                     // unit_a is Error
                     self.pop_scope();

@@ -816,8 +816,8 @@ x = "hello"
 y = "world"
 "#,
     );
-    assert_eq!(val_as_string(m.get("x").unwrap().val.as_ref().unwrap()), Some("\"hello\""));
-    assert_eq!(val_as_string(m.get("y").unwrap().val.as_ref().unwrap()), Some("\"world\""));
+    assert_eq!(val_as_string(m.get("x").unwrap().val().unwrap()), Some("\"hello\""));
+    assert_eq!(val_as_string(m.get("y").unwrap().val().unwrap()), Some("\"world\""));
 }
 
 #[test]
@@ -828,7 +828,7 @@ a = "v"
 b = a
 "#,
     );
-    assert_eq!(val_as_path_name(m.get("b").unwrap().val.as_ref().unwrap()), Some("a"));
+    assert_eq!(val_as_path_name(m.get("b").unwrap().val().unwrap()), Some("a"));
 }
 
 #[test]
@@ -872,8 +872,8 @@ m = {
 }
 "#,
     );
-    let x = m.get("m").unwrap().members.get("x").unwrap();
-    assert_eq!(val_as_string(x.val.as_ref().unwrap()), Some("\"inner\""));
+    let x = m.get("m").unwrap().members().unwrap().get("x").unwrap();
+    assert_eq!(val_as_string(x.val().unwrap()), Some("\"inner\""));
 }
 
 #[test]
@@ -888,8 +888,8 @@ x = g
 "#,
     );
     let x = m.get("x").unwrap();
-    assert!(x.members.get("g").is_none(), "where binding should not be a member");
-    assert_eq!(val_as_path_name(x.val.as_ref().unwrap()), Some("g"));
+    assert!(x.members().unwrap().get("g").is_none(), "where binding should not be a member");
+    assert_eq!(val_as_path_name(x.val().unwrap()), Some("g"));
 }
 
 #[test]
@@ -904,9 +904,9 @@ x = "base"
 "#,
     );
     let x = m.get("x").unwrap();
-    assert_eq!(val_as_string(x.val.as_ref().unwrap()), Some("\"base\""));
-    assert_eq!(val_as_string(x.members.get("a").unwrap().val.as_ref().unwrap()), Some("\"m1\""));
-    assert_eq!(val_as_string(x.members.get("b").unwrap().val.as_ref().unwrap()), Some("\"m2\""));
+    assert_eq!(val_as_string(x.val().unwrap()), Some("\"base\""));
+    assert_eq!(val_as_string(x.members().unwrap().get("a").unwrap().val().unwrap()), Some("\"m1\""));
+    assert_eq!(val_as_string(x.members().unwrap().get("b").unwrap().val().unwrap()), Some("\"m2\""));
 }
 
 #[test]
@@ -936,8 +936,8 @@ m[x: T] = {
     assert_eq!(item.params.len(), 1);
     assert_eq!(item.params[0].name, "x");
     assert_eq!(val_as_path_name(&item.params[0].ty), Some("T"));
-    assert!(item.val.is_none(), "module body should not produce val");
-    assert_eq!(names(&item.members), vec!["inner"]);
+    assert!(item.val().is_none(), "module body should not produce val");
+    assert_eq!(names(item.members().unwrap()), vec!["inner"]);
 }
 
 #[test]
@@ -951,7 +951,7 @@ m = {
 }
 "#,
     );
-    let members = &m.get("m").unwrap().members;
+    let members = m.get("m").unwrap().members().unwrap();
     assert_eq!(names(members), vec!["x", "y", "z"]);
 }
 
@@ -966,7 +966,7 @@ x = "v"
   }
 "#,
     );
-    let members = &m.get("x").unwrap().members;
+    let members = m.get("x").unwrap().members().unwrap();
     assert_eq!(names(members), vec!["a", "b"]);
 }
 
@@ -981,7 +981,7 @@ m.b = "2"
 m.c = "3"
 "#,
     );
-    let members = &m.get("m").unwrap().members;
+    let members = m.get("m").unwrap().members().unwrap();
     assert_eq!(names(members), vec!["a", "b", "c"]);
 }
 
@@ -998,7 +998,7 @@ x += {
 }
 "#,
     );
-    let members = &m.get("x").unwrap().members;
+    let members = m.get("x").unwrap().members().unwrap();
     assert_eq!(names(members), vec!["a", "b", "c"]);
 }
 
@@ -1029,6 +1029,70 @@ a = {
 }
 "#,
     );
-    let b = m.get("a").unwrap().members.get("b").unwrap();
-    assert_eq!(names(&b.members), vec!["c", "d"]);
+    let b = m.get("a").unwrap().members().unwrap().get("b").unwrap();
+    assert_eq!(names(b.members().unwrap()), vec!["c", "d"]);
+}
+
+// --- Functor application constraints ---
+
+#[test]
+fn functor_app_alias_ok() {
+    // f must be declared with ~> type to be a functor
+    check_ok("A = \"a\"\nB = \"b\"\nf: A ~> B\na = \"y\"\nf(a) = \"z\"");
+}
+
+#[test]
+fn functor_app_decl_error() {
+    let errs = check_errs("A = \"a\"\nB = \"b\"\nf: A ~> B\na = \"y\"\nf(a): \"z\"");
+    assert!(
+        errs.iter().any(|e| e.contains("functor application")),
+        "expected functor application error: {errs:?}"
+    );
+}
+
+#[test]
+fn functor_app_module_error() {
+    let errs = check_errs("A = \"a\"\nB = \"b\"\nf: A ~> B\na = \"y\"\nf(a) = {\n    x = \"v\"\n}");
+    assert!(
+        errs.iter().any(|e| e.contains("functor application")),
+        "expected functor application error: {errs:?}"
+    );
+}
+
+#[test]
+fn functor_app_with_error() {
+    let errs = check_errs("A = \"a\"\nB = \"b\"\nf: A ~> B\na = \"y\"\nf(a) = \"z\" with {\n    w = \"v\"\n}");
+    assert!(
+        errs.iter().any(|e| e.contains("functor application")),
+        "expected functor application error: {errs:?}"
+    );
+}
+
+#[test]
+fn functor_app_not_a_functor() {
+    let errs = check_errs("f = \"x\"\na = \"y\"\nf(a) = \"z\"");
+    assert!(
+        errs.iter().any(|e| e.contains("is not a functor")),
+        "expected 'not a functor' error: {errs:?}"
+    );
+}
+
+#[test]
+fn functor_app_mappings_stored() {
+    use crate::check::ItemBody;
+    let m = check_module("A = \"a\"\nB = \"b\"\na = \"x\"\nb = \"y\"\nf: A ~> B\nf(a) = \"x\"\nf(b) = \"y\"");
+    let f = m.get("f").unwrap();
+    match &f.body {
+        ItemBody::Functor { mappings } => assert_eq!(mappings.len(), 2),
+        _ => panic!("expected Functor body"),
+    }
+}
+
+#[test]
+fn functor_app_undefined_functor() {
+    let errs = check_errs("a = \"a\"\ng(a) = \"x\"");
+    assert!(
+        errs.iter().any(|e| e.contains("undefined functor")),
+        "expected undefined functor error: {errs:?}"
+    );
 }

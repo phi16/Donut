@@ -178,6 +178,6 @@ fn test_load_nat_example() {
     let succ_add = &table.elements[table.lookup["succ_add"]];
     assert_eq!(succ_add.cell.pure.dim().in_space, 3);
 
-    // Functor type declaration is skipped, but mappings are loaded
-    assert!(table.lookup.contains_key("compile"));
+    // Functor type declaration is not yet loaded as a cell
+    assert!(!table.lookup.contains_key("compile"));
 }
