@@ -2,7 +2,6 @@ use crate::types::common::*;
 use crate::types::semtree;
 use crate::types::syntree;
 use crate::types::token::Token;
-use std::rc::Rc;
 
 trait Convert {
     type Output;
@@ -68,6 +67,94 @@ impl Convert for syntree::Op {
     }
 }
 
+// --- Parametric trait ---
+
+trait Parametric: Sized {
+    fn convert_params(c: &mut Converter<'_>, params: syntree::Params) -> semtree::Params<Self>;
+}
+
+impl Parametric for semtree::ParamDecl {
+    fn convert_params(c: &mut Converter<'_>, params: syntree::Params) -> semtree::Params<Self> {
+        let syntree::Params(_open, param_list, _close) = params;
+        let mut result = Vec::new();
+        for param_a in param_list {
+            match param_a {
+                A::Accepted(param, span) => match param.ty {
+                    Some(syntree::ParamTy::Decl) => {
+                        let ty = c.convert_val_a(param.val);
+                        let names: Vec<semtree::Name> = param
+                            .names
+                            .into_iter()
+                            .filter_map(|n| match n {
+                                A::Accepted(name, _) => Some(name.convert(c)),
+                                A::Error(_) => None,
+                            })
+                            .collect();
+                        result.push(semtree::ParamDecl { names, ty });
+                    }
+                    Some(syntree::ParamTy::Named) => {
+                        c.error_at(
+                            &span,
+                            "named parameter is not allowed in declaration context",
+                        );
+                    }
+                    None => {
+                        c.error_at(
+                            &span,
+                            "type annotation is required for declaration parameter",
+                        );
+                    }
+                },
+                A::Error(_) => {}
+            }
+        }
+        semtree::Params(result)
+    }
+}
+
+impl Parametric for semtree::ParamVal {
+    fn convert_params(c: &mut Converter<'_>, params: syntree::Params) -> semtree::Params<Self> {
+        let syntree::Params(_open, param_list, _close) = params;
+        let mut result = Vec::new();
+        for param_a in param_list {
+            match param_a {
+                A::Accepted(param, span) => match param.ty {
+                    Some(syntree::ParamTy::Named) => {
+                        if param.names.len() != 1 {
+                            c.error_at(
+                                &span,
+                                "named parameter must have exactly one name",
+                            );
+                        }
+                        let name = param
+                            .names
+                            .into_iter()
+                            .next()
+                            .and_then(|n| match n {
+                                A::Accepted(n, _) => Some(n.convert(c)),
+                                A::Error(_) => None,
+                            });
+                        let val = c.convert_val_a(param.val);
+                        result.push(semtree::ParamVal { name, val });
+                    }
+                    None => {
+                        let val = c.convert_val_a(param.val);
+                        result.push(semtree::ParamVal { name: None, val });
+                    }
+                    Some(syntree::ParamTy::Decl) => {
+                        c.error_at(
+                            &span,
+                            "declaration parameter is not allowed in value context",
+                        );
+                    }
+                },
+                A::Error(_) => {}
+            }
+        }
+        semtree::Params(result)
+    }
+}
+
 // --- Converter ---
 
 struct Converter<'a> {
@@ -110,7 +197,7 @@ impl<'a> Converter<'a> {
                     if let Some(num_str) = try_as_number_literal(&path) {
                         semtree::Val::Lit(S(semtree::Lit::Number(num_str), path_span))
                     } else {
-                        let converted = self.convert_path_val(path);
+                        let converted = self.convert_path::<semtree::ParamVal>(path);
                         semtree::Val::Path(Box::new(S(converted, path_span)))
                     }
                 }
@@ -198,7 +285,7 @@ impl<'a> Converter<'a> {
             A::Error(_) => return S(semtree::Val::Any, fallback.clone()),
         };
         let params = params_a.and_then(|p| match p {
-            A::Accepted(params, _) => Some(self.convert_params_val(params)),
+            A::Accepted(params, _) => Some(semtree::ParamVal::convert_params(self, params)),
             A::Error(_) => None,
         });
 
@@ -377,7 +464,7 @@ impl<'a> Converter<'a> {
             .names
             .into_iter()
             .filter_map(|p| match p {
-                A::Accepted(path, span) => Some(S(self.convert_path_decl(path), span)),
+                A::Accepted(path, span) => Some(S(self.convert_path::<semtree::ParamDecl>(path), span)),
                 A::Error(_) => None,
             })
             .collect();
@@ -539,18 +626,16 @@ impl<'a> Converter<'a> {
     ) {
         match param.ty {
             Some(syntree::ParamTy::Decl) => {
-                let val = Rc::new(self.convert_val_a(param.val));
-                for name_a in param.names {
-                    match name_a {
-                        A::Accepted(name, _) => {
-                            result.push(semtree::Decorator::Param(
-                                name.convert(self),
-                                Rc::clone(&val),
-                            ));
-                        }
-                        A::Error(_) => {}
-                    }
-                }
+                let ty = self.convert_val_a(param.val);
+                let names: Vec<semtree::Name> = param
+                    .names
+                    .into_iter()
+                    .filter_map(|n| match n {
+                        A::Accepted(name, _) => Some(name.convert(self)),
+                        A::Error(_) => None,
+                    })
+                    .collect();
+                result.push(semtree::Decorator::Param(names, ty));
             }
             Some(syntree::ParamTy::Named) => {
                 self.error_at(&span, "named parameter is not allowed in decorator");
@@ -562,18 +647,14 @@ impl<'a> Converter<'a> {
         }
     }
 
-    // --- Path/Segment (generic) ---
+    // --- Path/Segment (generic via Parametric) ---
 
-    fn convert_path<P>(
-        &mut self,
-        path: syntree::Path,
-        mut convert_seg: impl FnMut(&mut Self, syntree::Segment) -> Option<semtree::Segment<P>>,
-    ) -> semtree::Path<P> {
+    fn convert_path<P: Parametric>(&mut self, path: syntree::Path) -> semtree::Path<P> {
         let segments = path
             .0
             .into_iter()
             .filter_map(|s| match s {
-                A::Accepted(seg, span) => convert_seg(self, seg).map(|sd| S(sd, span)),
+                A::Accepted(seg, span) => self.convert_segment::<P>(seg).map(|sd| S(sd, span)),
                 A::Error(_) => None,
             })
             .collect();
@@ -581,124 +662,19 @@ impl<'a> Converter<'a> {
         semtree::Path(segments, val)
     }
 
-    fn convert_segment<P>(
-        &mut self,
-        seg: syntree::Segment,
-        convert_params: impl FnOnce(&mut Self, syntree::Params) -> semtree::Params<P>,
-        default_params: impl FnOnce() -> semtree::Params<P>,
-    ) -> Option<semtree::Segment<P>> {
+    fn convert_segment<P: Parametric>(&mut self, seg: syntree::Segment) -> Option<semtree::Segment<P>> {
         let name = match seg.0 {
             A::Accepted(name, _) => name.convert(self),
             A::Error(_) => return None,
         };
         let params = match seg.1 {
             Some(params_a) => match params_a {
-                A::Accepted(params, _) => convert_params(self, params),
-                A::Error(_) => default_params(),
+                A::Accepted(params, _) => P::convert_params(self, params),
+                A::Error(_) => semtree::Params(vec![]),
             },
-            None => default_params(),
+            None => semtree::Params(vec![]),
         };
         Some(semtree::Segment(name, params))
-    }
-
-    fn convert_path_decl(&mut self, path: syntree::Path) -> semtree::Path<semtree::ParamDecl> {
-        self.convert_path(path, |c, seg| {
-            c.convert_segment(
-                seg,
-                |c, p| c.convert_params_decl(p),
-                || semtree::Params(vec![]),
-            )
-        })
-    }
-
-    fn convert_path_val(&mut self, path: syntree::Path) -> semtree::Path<semtree::ParamVal> {
-        self.convert_path(path, |c, seg| {
-            c.convert_segment(
-                seg,
-                |c, p| c.convert_params_val(p),
-                || semtree::Params(vec![]),
-            )
-        })
-    }
-
-    fn convert_params_decl(&mut self, params: syntree::Params) -> semtree::Params<semtree::ParamDecl> {
-        let syntree::Params(_open, param_list, _close) = params;
-        let mut result = Vec::new();
-        for param_a in param_list {
-            match param_a {
-                A::Accepted(param, span) => match param.ty {
-                    Some(syntree::ParamTy::Decl) => {
-                        let ty = Rc::new(self.convert_val_a(param.val));
-                        for name_a in param.names {
-                            match name_a {
-                                A::Accepted(name, _) => {
-                                    result.push(semtree::ParamDecl {
-                                        name: name.convert(self),
-                                        ty: Rc::clone(&ty),
-                                    });
-                                }
-                                A::Error(_) => {}
-                            }
-                        }
-                    }
-                    Some(syntree::ParamTy::Named) => {
-                        self.error_at(
-                            &span,
-                            "named parameter is not allowed in declaration context",
-                        );
-                    }
-                    None => {
-                        self.error_at(
-                            &span,
-                            "type annotation is required for declaration parameter",
-                        );
-                    }
-                },
-                A::Error(_) => {}
-            }
-        }
-        semtree::Params(result)
-    }
-
-    fn convert_params_val(&mut self, params: syntree::Params) -> semtree::Params<semtree::ParamVal> {
-        let syntree::Params(_open, param_list, _close) = params;
-        let mut result = Vec::new();
-        for param_a in param_list {
-            match param_a {
-                A::Accepted(param, span) => match param.ty {
-                    Some(syntree::ParamTy::Named) => {
-                        if param.names.len() != 1 {
-                            self.error_at(
-                                &span,
-                                "named parameter must have exactly one name",
-                            );
-                        }
-                        let name = param
-                            .names
-                            .into_iter()
-                            .next()
-                            .and_then(|n| match n {
-                                A::Accepted(n, _) => Some(n.convert(self)),
-                                A::Error(_) => None,
-                            });
-                        let val = self.convert_val_a(param.val);
-                        result.push(semtree::ParamVal { name, val });
-                    }
-                    None => {
-                        let val = self.convert_val_a(param.val);
-                        result.push(semtree::ParamVal { name: None, val });
-                    }
-                    Some(syntree::ParamTy::Decl) => {
-                        self.error_at(
-                            &span,
-                            "declaration parameter is not allowed in value context",
-                        );
-                    }
-                },
-                A::Error(_) => {}
-            }
-        }
-        semtree::Params(result)
     }
 }
 

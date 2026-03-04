@@ -37,7 +37,12 @@ impl Fmt for semtree::Op {
     }
 }
 impl Fmt for semtree::ParamDecl {
-    fn fmt(&self, p: &mut PP) { self.name.fmt(p); p.s(": "); self.ty.fmt(p); }
+    fn fmt(&self, p: &mut PP) {
+        for (i, name) in self.names.iter().enumerate() {
+            if i > 0 { p.s(", "); }
+            name.fmt(p); p.s(": "); self.ty.fmt(p);
+        }
+    }
 }
 impl Fmt for semtree::ParamVal {
     fn fmt(&self, p: &mut PP) {
@@ -130,8 +135,11 @@ impl Fmt for semtree::Module {
 impl Fmt for semtree::Decorator {
     fn fmt(&self, p: &mut PP) {
         match self {
-            semtree::Decorator::Param(n, v) => {
-                p.s("["); n.fmt(p); p.s(": "); v.fmt(p); p.s("]");
+            semtree::Decorator::Param(names, v) => {
+                for (i, name) in names.iter().enumerate() {
+                    if i > 0 { p.s(" "); }
+                    p.s("["); name.fmt(p); p.s(": "); v.fmt(p); p.s("]");
+                }
             }
             semtree::Decorator::Deco(v) => {
                 p.s("["); v.fmt(p); p.s("]");

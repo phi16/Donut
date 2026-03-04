@@ -1,13 +1,12 @@
 use crate::types::common::S;
-use std::rc::Rc;
 
 #[derive(Debug)]
 pub struct Name(pub String);
 
 #[derive(Debug)]
 pub struct ParamDecl {
-    pub name: Name,
-    pub ty: Rc<S<Val>>,
+    pub names: Vec<Name>,
+    pub ty: S<Val>,
 }
 #[derive(Debug)]
 pub struct ParamVal {
@@ -88,7 +87,7 @@ pub enum DeclMain {
 }
 #[derive(Debug)]
 pub enum Decorator {
-    Param(Name, Rc<S<Val>>),
+    Param(Vec<Name>, S<Val>),
     Deco(S<Val>),
 }
 #[derive(Debug)]
