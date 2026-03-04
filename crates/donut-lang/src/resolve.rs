@@ -12,22 +12,6 @@ trait Resolve {
 
 // --- Helper functions ---
 
-fn val_span(val: &semtree::Val) -> Option<TokenSpan> {
-    match val {
-        semtree::Val::Path(path_s) => Some(path_s.1.clone()),
-        semtree::Val::Lit(lit_s) => Some(lit_s.1.clone()),
-        semtree::Val::Op(l, _, _, r) => {
-            let l_span = val_span(l)?;
-            let r_span = val_span(r)?;
-            Some(TokenSpan {
-                start: l_span.start,
-                end: r_span.end,
-            })
-        }
-        semtree::Val::Any => None,
-    }
-}
-
 fn is_functor_type(val: &Val) -> bool {
     matches!(val, Val::Arrow(ArrowKind::Functor, _, _))
 }
@@ -57,28 +41,36 @@ fn decl_item_kind(unit: &semtree::DeclUnit) -> Option<ItemKind> {
     Some(kind)
 }
 
+fn resolve_arrow_kind(arrow_ty: &semtree::ArrowTy) -> ArrowKind {
+    match arrow_ty {
+        semtree::ArrowTy::To => ArrowKind::To,
+        semtree::ArrowTy::Eq => ArrowKind::Eq,
+        semtree::ArrowTy::Functor => ArrowKind::Functor,
+    }
+}
+
 // --- Resolve trait implementations ---
 
 impl Resolve for S<semtree::Val> {
-    type Output = Option<S<Val>>;
-    fn resolve(self, ctx: &mut Checker) -> Self::Output {
+    type Output = S<Val>;
+    fn resolve(self, ctx: &mut Checker) -> S<Val> {
         let S(v, span) = self;
-        let val = v.resolve(ctx)?;
-        Some(S(val, span))
+        let val = v.resolve(ctx);
+        S(val, span)
     }
 }
 
 impl Resolve for semtree::Val {
-    type Output = Option<Val>;
-    fn resolve(self, ctx: &mut Checker) -> Self::Output {
+    type Output = Val;
+    fn resolve(self, ctx: &mut Checker) -> Val {
         match self {
             semtree::Val::Path(path_s) => {
-                let path = (*path_s).resolve(ctx)?;
-                Some(Val::Path(path))
+                let path = (*path_s).resolve(ctx);
+                Val::Path(path)
             }
             semtree::Val::Lit(lit_s) => {
-                let lit = lit_s.resolve(ctx)?;
-                Some(Val::Lit(lit))
+                let lit = lit_s.resolve(ctx);
+                Val::Lit(lit)
             }
             semtree::Val::Op(l, op_s, _params, r) => {
                 let S(op, _) = op_s;
@@ -87,34 +79,30 @@ impl Resolve for semtree::Val {
                         let mut children = Vec::new();
                         ctx.resolve_comp_flat(*l, axis, &mut children);
                         ctx.resolve_comp_flat(*r, axis, &mut children);
-                        Some(Val::Comp(axis, children))
+                        Val::Comp(axis, children)
                     }
                     semtree::Op::CompStar => {
                         let mut children = Vec::new();
                         ctx.resolve_comp_star_flat(*l, &mut children);
                         ctx.resolve_comp_star_flat(*r, &mut children);
-                        Some(Val::CompStar(children))
+                        Val::CompStar(children)
                     }
                     semtree::Op::Arrow(arrow_ty) => {
-                        let kind = match arrow_ty {
-                            semtree::ArrowTy::To => ArrowKind::To,
-                            semtree::ArrowTy::Eq => ArrowKind::Eq,
-                            semtree::ArrowTy::Functor => ArrowKind::Functor,
-                        };
-                        let l_s = ctx.resolve_val_with_span(*l)?;
-                        let r_s = ctx.resolve_val_with_span(*r)?;
-                        Some(Val::Arrow(kind, Box::new(l_s), Box::new(r_s)))
+                        let kind = resolve_arrow_kind(&arrow_ty);
+                        let l_s = (*l).resolve(ctx);
+                        let r_s = (*r).resolve(ctx);
+                        Val::Arrow(kind, Box::new(l_s), Box::new(r_s))
                     }
                 }
             }
-            semtree::Val::Any => None,
+            semtree::Val::Any => Val::Hole(Hole::Any),
         }
     }
 }
 
 impl Resolve for S<semtree::Path<semtree::ParamVal>> {
-    type Output = Option<Path>;
-    fn resolve(self, ctx: &mut Checker) -> Self::Output {
+    type Output = Path;
+    fn resolve(self, ctx: &mut Checker) -> Path {
         let S(path, _) = self;
 
         // Name resolution
@@ -125,76 +113,73 @@ impl Resolve for S<semtree::Path<semtree::ParamVal>> {
         let segments: Vec<S<Segment>> = path
             .0
             .into_iter()
-            .filter_map(|seg_s| seg_s.resolve(ctx))
+            .map(|seg_s| seg_s.resolve(ctx))
             .collect();
 
-        let applicand = match path.1 {
-            Some(v) => Some(Box::new(v.resolve(ctx)?)),
-            None => None,
-        };
+        let applicand = path.1.map(|v| Box::new(v.resolve(ctx)));
 
-        Some(Path {
+        Path {
             segments,
             applicand,
-        })
+        }
     }
 }
 
 impl Resolve for S<semtree::Segment<semtree::ParamVal>> {
-    type Output = Option<S<Segment>>;
-    fn resolve(self, ctx: &mut Checker) -> Self::Output {
+    type Output = S<Segment>;
+    fn resolve(self, ctx: &mut Checker) -> S<Segment> {
         let S(seg, span) = self;
         let params: Vec<ParamVal> = seg
             .1
              .0
             .into_iter()
-            .filter_map(|pv| pv.resolve(ctx))
+            .map(|pv| pv.resolve(ctx))
             .collect();
-        Some(S(
+        S(
             Segment {
                 name: seg.0 .0,
                 params,
             },
             span,
-        ))
+        )
     }
 }
 
 impl Resolve for semtree::ParamVal {
-    type Output = Option<ParamVal>;
-    fn resolve(self, ctx: &mut Checker) -> Self::Output {
+    type Output = ParamVal;
+    fn resolve(self, ctx: &mut Checker) -> ParamVal {
         let name = self.name.map(|n| n.0);
-        let val = self.val.resolve(ctx)?;
-        Some(ParamVal { name, val })
+        let val = self.val.resolve(ctx);
+        ParamVal { name, val }
     }
 }
 
 impl Resolve for S<semtree::Lit> {
-    type Output = Option<Lit>;
-    fn resolve(self, ctx: &mut Checker) -> Self::Output {
+    type Output = Lit;
+    fn resolve(self, ctx: &mut Checker) -> Lit {
         let S(lit, _) = self;
         match lit {
-            semtree::Lit::Number(s) => Some(Lit::Number(s)),
-            semtree::Lit::String(s) => Some(Lit::String(s)),
+            semtree::Lit::Number(s) => Lit::Number(s),
+            semtree::Lit::String(s) => Lit::String(s),
             semtree::Lit::Array(vs) => {
                 let items: Vec<S<Val>> =
-                    vs.into_iter().filter_map(|v| v.resolve(ctx)).collect();
-                Some(Lit::Array(items))
+                    vs.into_iter().map(|v| v.resolve(ctx)).collect();
+                Lit::Array(items)
             }
             semtree::Lit::Object(kvs) => {
                 let items: Vec<(String, S<Val>)> = kvs
                     .into_iter()
-                    .filter_map(|(k, v)| {
+                    .map(|(k, v)| {
                         let S(key, _) = k;
                         let key_str = match key {
                             semtree::Key::Name(n) => n.0,
                             semtree::Key::String(s) => s,
                         };
-                        let val = v.resolve(ctx)?;
-                        Some((key_str, val))
+                        let val = v.resolve(ctx);
+                        (key_str, val)
                     })
                     .collect();
-                Some(Lit::Object(items))
+                Lit::Object(items)
             }
         }
     }
@@ -296,21 +281,21 @@ impl<'a> Checker<'a> {
 
     // --- Resolve helpers (borrowing, used in outer scope phases) ---
 
-    fn resolve_s_val(&mut self, sv: &S<semtree::Val>) -> Option<S<Val>> {
+    fn resolve_s_val(&mut self, sv: &S<semtree::Val>) -> S<Val> {
         let S(v, span) = sv;
-        let val = self.resolve_val(v)?;
-        Some(S(val, span.clone()))
+        let val = self.resolve_val(v);
+        S(val, span.clone())
     }
 
-    fn resolve_val(&mut self, val: &semtree::Val) -> Option<Val> {
+    fn resolve_val(&mut self, val: &semtree::Val) -> Val {
         match val {
             semtree::Val::Path(path_s) => {
-                let path = self.resolve_path(path_s)?;
-                Some(Val::Path(path))
+                let path = self.resolve_path(path_s);
+                Val::Path(path)
             }
             semtree::Val::Lit(lit_s) => {
-                let lit = self.resolve_lit(lit_s)?;
-                Some(Val::Lit(lit))
+                let lit = self.resolve_lit(lit_s);
+                Val::Lit(lit)
             }
             semtree::Val::Op(l, op_s, _params, r) => {
                 let S(op, _) = op_s;
@@ -319,43 +304,27 @@ impl<'a> Checker<'a> {
                         let mut children = Vec::new();
                         self.resolve_comp_flat_ref(l, *axis, &mut children);
                         self.resolve_comp_flat_ref(r, *axis, &mut children);
-                        Some(Val::Comp(*axis, children))
+                        Val::Comp(*axis, children)
                     }
                     semtree::Op::CompStar => {
                         let mut children = Vec::new();
                         self.resolve_comp_star_flat_ref(l, &mut children);
                         self.resolve_comp_star_flat_ref(r, &mut children);
-                        Some(Val::CompStar(children))
+                        Val::CompStar(children)
                     }
                     semtree::Op::Arrow(arrow_ty) => {
-                        let kind = match arrow_ty {
-                            semtree::ArrowTy::To => ArrowKind::To,
-                            semtree::ArrowTy::Eq => ArrowKind::Eq,
-                            semtree::ArrowTy::Functor => ArrowKind::Functor,
-                        };
-                        let l_s = self.resolve_val_with_span_ref(l)?;
-                        let r_s = self.resolve_val_with_span_ref(r)?;
-                        Some(Val::Arrow(kind, Box::new(l_s), Box::new(r_s)))
+                        let kind = resolve_arrow_kind(arrow_ty);
+                        let l_s = self.resolve_s_val(l);
+                        let r_s = self.resolve_s_val(r);
+                        Val::Arrow(kind, Box::new(l_s), Box::new(r_s))
                     }
                 }
             }
-            semtree::Val::Any => None,
+            semtree::Val::Any => Val::Hole(Hole::Any),
         }
     }
 
-    fn resolve_val_with_span(&mut self, val: semtree::Val) -> Option<S<Val>> {
-        let span = val_span(&val)?;
-        let v = val.resolve(self)?;
-        Some(S(v, span))
-    }
-
-    fn resolve_val_with_span_ref(&mut self, val: &semtree::Val) -> Option<S<Val>> {
-        let span = val_span(val)?;
-        let v = self.resolve_val(val)?;
-        Some(S(v, span))
-    }
-
-    fn resolve_path(&mut self, path_s: &S<semtree::Path<semtree::ParamVal>>) -> Option<Path> {
+    fn resolve_path(&mut self, path_s: &S<semtree::Path<semtree::ParamVal>>) -> Path {
         let S(path, _) = path_s;
 
         // Name resolution
@@ -366,129 +335,118 @@ impl<'a> Checker<'a> {
         let segments: Vec<S<Segment>> = path
             .0
             .iter()
-            .filter_map(|seg_s| self.resolve_segment(seg_s))
+            .map(|seg_s| self.resolve_segment(seg_s))
             .collect();
 
-        let applicand = match &path.1 {
-            Some(v) => Some(Box::new(self.resolve_s_val(v)?)),
-            None => None,
-        };
+        let applicand = path.1.as_ref().map(|v| Box::new(self.resolve_s_val(v)));
 
-        Some(Path {
+        Path {
             segments,
             applicand,
-        })
+        }
     }
 
-    fn resolve_segment(&mut self, seg_s: &S<semtree::Segment<semtree::ParamVal>>) -> Option<S<Segment>> {
+    fn resolve_segment(&mut self, seg_s: &S<semtree::Segment<semtree::ParamVal>>) -> S<Segment> {
         let S(seg, span) = seg_s;
         let params: Vec<ParamVal> = seg
             .1
              .0
             .iter()
-            .filter_map(|pv| self.resolve_param_val(pv))
+            .map(|pv| self.resolve_param_val(pv))
             .collect();
-        Some(S(
+        S(
             Segment {
                 name: seg.0 .0.clone(),
                 params,
             },
             span.clone(),
-        ))
+        )
     }
 
-    fn resolve_param_val(&mut self, pv: &semtree::ParamVal) -> Option<ParamVal> {
+    fn resolve_param_val(&mut self, pv: &semtree::ParamVal) -> ParamVal {
         let name = pv.name.as_ref().map(|n| n.0.clone());
-        let val = self.resolve_s_val(&pv.val)?;
-        Some(ParamVal { name, val })
+        let val = self.resolve_s_val(&pv.val);
+        ParamVal { name, val }
     }
 
-    fn resolve_lit(&mut self, lit_s: &S<semtree::Lit>) -> Option<Lit> {
+    fn resolve_lit(&mut self, lit_s: &S<semtree::Lit>) -> Lit {
         let S(lit, _) = lit_s;
         match lit {
-            semtree::Lit::Number(s) => Some(Lit::Number(s.clone())),
-            semtree::Lit::String(s) => Some(Lit::String(s.clone())),
+            semtree::Lit::Number(s) => Lit::Number(s.clone()),
+            semtree::Lit::String(s) => Lit::String(s.clone()),
             semtree::Lit::Array(vs) => {
                 let items: Vec<S<Val>> =
-                    vs.iter().filter_map(|v| self.resolve_s_val(v)).collect();
-                Some(Lit::Array(items))
+                    vs.iter().map(|v| self.resolve_s_val(v)).collect();
+                Lit::Array(items)
             }
             semtree::Lit::Object(kvs) => {
                 let items: Vec<(String, S<Val>)> = kvs
                     .iter()
-                    .filter_map(|(k, v)| {
+                    .map(|(k, v)| {
                         let S(key, _) = k;
                         let key_str = match key {
                             semtree::Key::Name(n) => n.0.clone(),
                             semtree::Key::String(s) => s.clone(),
                         };
-                        let val = self.resolve_s_val(v)?;
-                        Some((key_str, val))
+                        let val = self.resolve_s_val(v);
+                        (key_str, val)
                     })
                     .collect();
-                Some(Lit::Object(items))
+                Lit::Object(items)
             }
         }
     }
 
     // --- Comp flat helpers ---
 
-    fn resolve_comp_flat(&mut self, val: semtree::Val, axis: u32, out: &mut Vec<S<Val>>) {
-        match val {
-            semtree::Val::Op(l, op_s, _, r)
+    fn resolve_comp_flat(&mut self, val_s: S<semtree::Val>, axis: u32, out: &mut Vec<S<Val>>) {
+        match val_s {
+            S(semtree::Val::Op(l, op_s, _, r), _)
                 if matches!(&op_s.0, semtree::Op::Comp(n) if *n == axis) =>
             {
                 self.resolve_comp_flat(*l, axis, out);
                 self.resolve_comp_flat(*r, axis, out);
             }
-            _ => {
-                if let Some(s) = self.resolve_val_with_span(val) {
-                    out.push(s);
-                }
+            other => {
+                out.push(other.resolve(self));
             }
         }
     }
 
-    fn resolve_comp_star_flat(&mut self, val: semtree::Val, out: &mut Vec<S<Val>>) {
-        match val {
-            semtree::Val::Op(l, op_s, _, r)
+    fn resolve_comp_star_flat(&mut self, val_s: S<semtree::Val>, out: &mut Vec<S<Val>>) {
+        match val_s {
+            S(semtree::Val::Op(l, op_s, _, r), _)
                 if matches!(&op_s.0, semtree::Op::CompStar) =>
             {
                 self.resolve_comp_star_flat(*l, out);
                 self.resolve_comp_star_flat(*r, out);
             }
-            _ => {
-                if let Some(s) = self.resolve_val_with_span(val) {
-                    out.push(s);
-                }
+            other => {
+                out.push(other.resolve(self));
             }
         }
     }
 
-    fn resolve_comp_flat_ref(&mut self, val: &semtree::Val, axis: u32, out: &mut Vec<S<Val>>) {
-        if let semtree::Val::Op(l, op_s, _, r) = val {
+    fn resolve_comp_flat_ref(&mut self, val_s: &S<semtree::Val>, axis: u32, out: &mut Vec<S<Val>>) {
+        if let S(semtree::Val::Op(l, op_s, _, r), _) = val_s {
             if matches!(&op_s.0, semtree::Op::Comp(n) if *n == axis) {
                 self.resolve_comp_flat_ref(l, axis, out);
                 self.resolve_comp_flat_ref(r, axis, out);
                 return;
             }
         }
-        if let Some(s) = self.resolve_val_with_span_ref(val) {
-            out.push(s);
-        }
+        out.push(self.resolve_s_val(val_s));
     }
 
-    fn resolve_comp_star_flat_ref(&mut self, val: &semtree::Val, out: &mut Vec<S<Val>>) {
-        if let semtree::Val::Op(l, op_s, _, r) = val {
+    fn resolve_comp_star_flat_ref(&mut self, val_s: &S<semtree::Val>, out: &mut Vec<S<Val>>) {
+        if let S(semtree::Val::Op(l, op_s, _, r), _) = val_s {
             if matches!(&op_s.0, semtree::Op::CompStar) {
                 self.resolve_comp_star_flat_ref(l, out);
                 self.resolve_comp_star_flat_ref(r, out);
                 return;
             }
         }
-        if let Some(s) = self.resolve_val_with_span_ref(val) {
-            out.push(s);
-        }
+        out.push(self.resolve_s_val(val_s));
     }
 
     // --- Scope resolution ---
@@ -549,14 +507,10 @@ impl<'a> Checker<'a> {
         for deco in decos {
             match deco {
                 semtree::Decorator::Param(name, ty) => {
-                    if let Some(ty_resolved) = self.resolve_s_val(ty) {
-                        param_defs.push((name.0.clone(), ty_resolved));
-                    }
+                    param_defs.push((name.0.clone(), self.resolve_s_val(ty)));
                 }
                 semtree::Decorator::Deco(v) => {
-                    if let Some(sv) = self.resolve_s_val(v) {
-                        deco_vals.push(sv);
-                    }
+                    deco_vals.push(self.resolve_s_val(v));
                 }
             }
         }
@@ -586,14 +540,12 @@ impl<'a> Checker<'a> {
             for seg_s in segs {
                 let S(seg, _) = seg_s;
                 for param in &seg.1 .0 {
-                    let ty_resolved = self.resolve_s_val(&param.ty);
+                    let ty = self.resolve_s_val(&param.ty);
                     if i == 0 {
-                        if let Some(ty) = ty_resolved {
-                            params.push(Param {
-                                name: param.name.0.clone(),
-                                ty,
-                            });
-                        }
+                        params.push(Param {
+                            name: param.name.0.clone(),
+                            ty,
+                        });
                     }
                 }
             }
@@ -604,7 +556,7 @@ impl<'a> Checker<'a> {
             }
         }
 
-        let ty = unit.ty.as_ref().and_then(|ty| self.resolve_s_val(ty));
+        let ty = unit.ty.as_ref().map(|ty| self.resolve_s_val(ty));
 
         // += pre-check
         if matches!(&unit.op.0, semtree::AssignOp::Add) {
@@ -814,7 +766,7 @@ impl<'a> Checker<'a> {
 
         // 4. Resolve body val in inner scope (borrowing)
         let body_val_resolved = if let Some(semtree::ValMod::Val(ref v)) = unit.body {
-            self.resolve_s_val(v)
+            Some(self.resolve_s_val(v))
         } else {
             None
         };
@@ -874,12 +826,10 @@ impl<'a> Checker<'a> {
                             &mut existing.body
                         {
                             if let Some(v) = &body_val_resolved {
-                                if let Some(app_s) = app_resolved {
-                                    mappings.push(FunctorMapping {
-                                        applicand: app_s,
-                                        val: v.clone(),
-                                    });
-                                }
+                                mappings.push(FunctorMapping {
+                                    applicand: app_resolved,
+                                    val: v.clone(),
+                                });
                             }
                         } else {
                             self.error_at(

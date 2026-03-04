@@ -37,12 +37,19 @@ pub enum Lit {
 }
 
 #[derive(Debug, Clone)]
+pub enum Hole {
+    Any,
+    Named(String),
+}
+
+#[derive(Debug, Clone)]
 pub enum Val {
     Path(Path),
     Lit(Lit),
     Comp(u32, Vec<S<Val>>),
     CompStar(Vec<S<Val>>),
     Arrow(ArrowKind, Box<S<Val>>, Box<S<Val>>),
+    Hole(Hole),
 }
 
 // --- Item 型 ---

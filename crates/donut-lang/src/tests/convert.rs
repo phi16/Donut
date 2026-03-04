@@ -95,10 +95,10 @@ impl Fmt for semtree::Val {
             semtree::Val::Lit(lit) => lit.fmt(p),
             semtree::Val::Op(l, op, params, r) => {
                 p.s("(");
-                l.fmt(p);
+                l.0.fmt(p);
                 op.fmt(p);
                 if let Some(pv) = params { pv.fmt(p); }
-                r.fmt(p);
+                r.0.fmt(p);
                 p.s(")");
             }
             semtree::Val::Any => p.s("?"),

@@ -155,6 +155,7 @@ impl Table {
                 Ok((max + 1, Ty::Succ(s, t)))
             }
             Val::Arrow(ArrowKind::Functor, _, _) => Err("expected arrow type".to_string()),
+            Val::Hole(_) => Err("hole in type position".to_string()),
             _ => Err("expected `*` or arrow type".to_string()),
         }
     }
@@ -184,6 +185,7 @@ impl Table {
             Val::Lit(_) => Err("literal in value position".to_string()),
             Val::CompStar(_) => Err("unsupported operator in value".to_string()),
             Val::Arrow(_, _, _) => Err("unsupported operator in value".to_string()),
+            Val::Hole(_) => Err("hole in value position".to_string()),
         }
     }
 }

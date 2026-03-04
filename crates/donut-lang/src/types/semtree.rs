@@ -51,7 +51,7 @@ pub enum Op {
 pub enum Val {
     Path(Box<S<Path<ParamVal>>>),
     Lit(S<Lit>),
-    Op(Box<Val>, S<Op>, Option<Params<ParamVal>>, Box<Val>),
+    Op(Box<S<Val>>, S<Op>, Option<Params<ParamVal>>, Box<S<Val>>),
     Any,
 }
 

@@ -98,23 +98,21 @@ impl<'a> Converter<'a> {
     /// Convert A<syntree::Val> → Option<S<semtree::Val>>. None on error.
     fn convert_val_a(&mut self, val_a: A<syntree::Val>) -> Option<S<semtree::Val>> {
         match val_a {
-            A::Accepted(val, span) => match self.convert_val(val) {
-                Some(v) => Some(S(v, span)),
-                None => None,
-            },
+            A::Accepted(val, _) => self.convert_val(val),
             A::Error() => None,
         }
     }
 
     /// Convert A<syntree::Val> → S<semtree::Val>, using Val::Any for errors.
     fn convert_val_a_or_any(&mut self, val_a: A<syntree::Val>) -> S<semtree::Val> {
-        match self.convert_val_a(val_a) {
-            Some(sv) => sv,
-            None => S(semtree::Val::Any, Self::dummy_span()),
+        match val_a {
+            A::Accepted(val, span) => self.convert_val(val)
+                .unwrap_or_else(|| S(semtree::Val::Any, span)),
+            A::Error() => S(semtree::Val::Any, Self::dummy_span()),
         }
     }
 
-    fn convert_val(&mut self, val: syntree::Val) -> Option<semtree::Val> {
+    fn convert_val(&mut self, val: syntree::Val) -> Option<S<semtree::Val>> {
         self.build_val_tree(val.vs, val.ops)
     }
 
@@ -142,7 +140,7 @@ impl<'a> Converter<'a> {
                 A::Error() => None,
             },
             syntree::Val0::Paren(val_a) => match *val_a {
-                A::Accepted(inner, _) => self.convert_val(inner),
+                A::Accepted(inner, _) => self.convert_val(inner).map(|s| s.0),
                 A::Error() => None,
             },
             syntree::Val0::Dots => {
@@ -190,11 +188,14 @@ impl<'a> Converter<'a> {
         &mut self,
         mut vs: Vec<A<syntree::Val0>>,
         mut ops: Vec<(A<syntree::Op>, Option<A<syntree::Params>>)>,
-    ) -> Option<semtree::Val> {
+    ) -> Option<S<semtree::Val>> {
         if ops.is_empty() {
             let v0_a = vs.into_iter().next()?;
             return match v0_a {
-                A::Accepted(v0, span) => self.convert_val0(v0, &span),
+                A::Accepted(v0, span) => {
+                    let val = self.convert_val0(v0, &span)?;
+                    Some(S(val, span))
+                }
                 A::Error() => None,
             };
         }
@@ -217,7 +218,14 @@ impl<'a> Converter<'a> {
             A::Error() => None,
         });
 
-        Some(semtree::Val::Op(Box::new(left), op, params, Box::new(right)))
+        let span = TokenSpan {
+            start: left.1.start,
+            end: right.1.end,
+        };
+        Some(S(
+            semtree::Val::Op(Box::new(left), op, params, Box::new(right)),
+            span,
+        ))
     }
 
     /// Find the index of the weakest (lowest-precedence) operator.
