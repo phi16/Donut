@@ -363,7 +363,7 @@ pub fn load(code: &str) -> Result<Table> {
     if !conv_errors.is_empty() {
         return Err(format!("convert errors: {:?}", conv_errors));
     }
-    let (module, check_errors) = crate::check::check(sem_prog, &tokens);
+    let (module, check_errors) = crate::resolve::resolve(sem_prog, &tokens);
     if !check_errors.is_empty() {
         return Err(format!("check errors: {:?}", check_errors));
     }
