@@ -208,7 +208,12 @@ impl<'a> Checker<'a> {
                 match self.lookup(name) {
                     Some(item) => current = Some(item.clone()),
                     None => {
-                        self.error_at(span, format!("undefined name `{}`", name));
+                        // TODO: temporary suppression — `*` and numeric names are
+                        // not yet resolvable in the checker; remove once proper
+                        // built-in name handling is implemented.
+                        if name != "*" && !crate::convert::is_number_str(name) {
+                            self.error_at(span, format!("undefined name `{}`", name));
+                        }
                         return None;
                     }
                 }

@@ -70,6 +70,9 @@ fn test_load_pentagon() {
 #[test]
 fn test_load_colors() {
     let input = r#"
+        gray: *
+        hsv: *
+        rgb: *
         [gray[80]]
         u: *
         [hsv[0.6, 1, 1]]
@@ -78,11 +81,14 @@ fn test_load_colors() {
         m: x x → x
     "#;
     let table = load(input).unwrap();
-    assert_eq!(table.elements[0].color, (80, 80, 80));
+    let u = table.lookup["u"];
+    let x = table.lookup["x"];
+    let m = table.lookup["m"];
+    assert_eq!(table.elements[u].color, (80, 80, 80));
     // hsv(0.6, 1, 1) should produce a blue-ish color
-    let c = table.elements[1].color;
+    let c = table.elements[x].color;
     assert!(c.2 > c.0 && c.2 > c.1, "hsv(0.6) should be blue-ish: {:?}", c);
-    assert_eq!(table.elements[2].color, (255, 0, 128));
+    assert_eq!(table.elements[m].color, (255, 0, 128));
 }
 
 #[test]
@@ -133,4 +139,45 @@ fn test_load_auto_color() {
     let c1 = table.elements[1].color;
     // Colors should be different
     assert_ne!(c0, c1);
+}
+
+#[test]
+fn test_load_nat_example() {
+    let input = include_str!("../../../../examples/nat.donut");
+    let table = load(input).unwrap();
+
+    // Modules: nat and u8
+    assert!(table.lookup.contains_key("nat.C"));
+    assert!(table.lookup.contains_key("nat.Nat"));
+    assert!(table.lookup.contains_key("nat.add"));
+    assert!(table.lookup.contains_key("u8.D"));
+    assert!(table.lookup.contains_key("u8.U8"));
+    assert!(table.lookup.contains_key("u8.add"));
+
+    // Derived constants
+    assert!(table.lookup.contains_key("one"));
+    assert!(table.lookup.contains_key("two"));
+    assert!(table.lookup.contains_key("three"));
+
+    // Derived operations
+    assert!(table.lookup.contains_key("double"));
+    assert!(table.lookup.contains_key("square"));
+
+    // Composite computations
+    assert!(table.lookup.contains_key("sum_12"));
+    assert!(table.lookup.contains_key("sum_123"));
+
+    // Properties (3-cells)
+    let add_assoc = &table.elements[table.lookup["add_assoc"]];
+    assert_eq!(add_assoc.cell.pure.dim().in_space, 3);
+
+    let add_comm = &table.elements[table.lookup["add_comm"]];
+    assert_eq!(add_comm.cell.pure.dim().in_space, 3);
+
+    // Equivalence (~ arrow)
+    let succ_add = &table.elements[table.lookup["succ_add"]];
+    assert_eq!(succ_add.cell.pure.dim().in_space, 3);
+
+    // Functor type declaration is skipped, but mappings are loaded
+    assert!(table.lookup.contains_key("compile"));
 }

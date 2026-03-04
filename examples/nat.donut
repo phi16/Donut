@@ -1,0 +1,137 @@
+gray: *
+hsv: *
+rgb: *
+
+// ============================================================
+// Abstract environment: natural number arithmetic
+// ============================================================
+
+nat = {
+    [hsv[0.33]]
+    C: *
+
+    // Types
+    [gray[200]]
+    Unit: C → C
+    [hsv[0.55]]
+    Nat: C → C
+    [hsv[0.08]]
+    Bool: C → C
+
+    // Nat constants
+    zero: Unit → Nat
+    succ: Nat → Nat
+
+    // Nat arithmetic
+    add: Nat Nat → Nat
+    mul: Nat Nat → Nat
+
+    // Bool constants
+    true: Unit → Bool
+    false: Unit → Bool
+
+    // Bool operations
+    not: Bool → Bool
+    and: Bool Bool → Bool
+    or: Bool Bool → Bool
+
+    // Comparison
+    eq: Nat Nat → Bool
+    le: Nat Nat → Bool
+
+    // Structural
+    dup: Nat → Nat Nat
+    swap: Nat Nat → Nat Nat
+}
+
+// ============================================================
+// Derived constants
+// ============================================================
+
+one = nat.zero; nat.succ
+two = nat.zero; nat.succ; nat.succ
+three = nat.zero; nat.succ; nat.succ; nat.succ
+
+// ============================================================
+// Derived operations
+// ============================================================
+
+// double(n) = n + n
+double = nat.dup; nat.add
+
+// square(n) = n * n
+square = nat.dup; nat.mul
+
+// ============================================================
+// Composite computations
+// ============================================================
+
+// 1 + 2
+sum_12 = one two; nat.add
+
+// (1 + 2) + 3
+sum_123 = sum_12 three; nat.add
+
+// ============================================================
+// Properties (3-cells)
+// ============================================================
+
+// add(add(a,b), c) = add(a, add(b,c))
+add_assoc: nat.add nat.Nat; nat.add → nat.Nat nat.add; nat.add
+
+// add(a, b) = add(b, a)
+add_comm: nat.add → nat.swap; nat.add
+
+// mul(a, b) = mul(b, a)
+mul_comm: nat.mul → nat.swap; nat.mul
+
+// succ(a) + b ~ a + succ(b)  (equivalence)
+succ_add: nat.succ nat.Nat; nat.add ~ nat.Nat nat.succ; nat.add
+
+// ============================================================
+// Concrete environment: u8 wrapping arithmetic
+// ============================================================
+
+u8 = {
+    [hsv[0.75]]
+    D: *
+
+    // Types
+    [gray[200]]
+    Unit: D → D
+    [hsv[0.85]]
+    U8: D → D
+
+    // Constants
+    zero: Unit → U8
+    succ: U8 → U8
+
+    // Arithmetic (wrapping)
+    add: U8 U8 → U8
+    mul: U8 U8 → U8
+
+    // Structural
+    dup: U8 → U8 U8
+    swap: U8 U8 → U8 U8
+}
+
+// ============================================================
+// Functor: compilation from nat to u8
+// ============================================================
+//
+// By declaring compile as a functor, only the primitive mappings
+// are needed. All composite programs (double, square, sum_12, ...)
+// are automatically translated.
+//
+compile: nat.C ~> u8.D
+compile(nat.Unit) = u8.Unit
+compile(nat.Nat)  = u8.U8
+compile(nat.zero) = u8.zero
+compile(nat.succ) = u8.succ
+compile(nat.add)  = u8.add
+compile(nat.mul)  = u8.mul
+compile(nat.dup)  = u8.dup
+compile(nat.swap) = u8.swap
+
+// e.g. compile(double) = u8.dup; u8.add
+// e.g. compile(sum_12) = (u8.zero; u8.succ) (u8.zero; u8.succ; u8.succ); u8.add

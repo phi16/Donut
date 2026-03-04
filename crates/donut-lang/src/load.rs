@@ -81,13 +81,17 @@ impl Table {
 
         match (ty_val, body_val) {
             (Some(ty), None) => {
-                let (_, ty) = self.eval_ty(ty)?;
-                let prim = self.fresh_prim();
-                let cell = match &ty {
-                    Ty::Zero => FreeCell::zero(prim),
-                    Ty::Succ(s, t) => FreeCell::prim(prim, s.clone(), t.clone())?,
-                };
-                self.add(name.to_string(), color, cell);
+                if is_functor_type(ty) {
+                    // TODO: functor declarations are not yet loaded as cells
+                } else {
+                    let (_, ty) = self.eval_ty(ty)?;
+                    let prim = self.fresh_prim();
+                    let cell = match &ty {
+                        Ty::Zero => FreeCell::zero(prim),
+                        Ty::Succ(s, t) => FreeCell::prim(prim, s.clone(), t.clone())?,
+                    };
+                    self.add(name.to_string(), color, cell);
+                }
             }
             (dim_ty, Some(body_rc)) => {
                 let body = self.eval_val(body_rc)?;
@@ -143,7 +147,10 @@ impl Table {
                 Err("expected `*` or arrow type".to_string())
             }
             semtree::Val::Op(l, op_a, _, r) => {
-                if let Some(semtree::Op::Arrow(semtree::ArrowTy::To)) = op_a.inner() {
+                if let Some(semtree::Op::Arrow(
+                    semtree::ArrowTy::To | semtree::ArrowTy::Eq,
+                )) = op_a.inner()
+                {
                     let mut s = self.eval_val_inner(l)?;
                     let mut t = self.eval_val_inner(r)?;
                     let max = s.pure.dim().in_space.max(t.pure.dim().in_space);
@@ -200,6 +207,17 @@ impl Table {
             }
             semtree::Val::Lit(_) => Err("literal in value position".to_string()),
         }
+    }
+}
+
+fn is_functor_type(val: &A<semtree::Val>) -> bool {
+    if let Some(semtree::Val::Op(_, op_a, _, _)) = val.inner() {
+        matches!(
+            op_a.inner(),
+            Some(semtree::Op::Arrow(semtree::ArrowTy::Functor))
+        )
+    } else {
+        false
     }
 }
 
@@ -412,8 +430,10 @@ pub fn load(code: &str) -> Result<Table> {
     if !conv_errors.is_empty() {
         return Err(format!("convert errors: {:?}", conv_errors));
     }
-    let (module, _check_errors) = crate::check::check(sem_prog, &tokens);
-    // Note: check errors (e.g. `*` undefined) are non-fatal; the module is still built.
+    let (module, check_errors) = crate::check::check(sem_prog, &tokens);
+    if !check_errors.is_empty() {
+        return Err(format!("check errors: {:?}", check_errors));
+    }
     let mut table = Table::new();
     table.load_module(&module)?;
     Ok(table)
