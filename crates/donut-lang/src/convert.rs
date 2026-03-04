@@ -4,27 +4,11 @@ use crate::types::syntree;
 use crate::types::token::Token;
 use std::rc::Rc;
 
-fn map_a<T, U>(a: A<T>, f: impl FnOnce(T) -> U) -> A<U> {
-    match a {
-        A::Accepted(v, span) => A::Accepted(f(v), span),
-        A::Error() => A::Error(),
-    }
-}
-
 trait Convert {
     type Output;
     fn convert(self, c: &mut Converter<'_>) -> Self::Output;
 }
 
-impl<T: Convert> Convert for A<T> {
-    type Output = A<T::Output>;
-    fn convert(self, c: &mut Converter<'_>) -> A<T::Output> {
-        match self {
-            A::Accepted(v, span) => A::Accepted(v.convert(c), span),
-            A::Error() => A::Error(),
-        }
-    }
-}
 impl<T: Convert> Convert for Vec<T> {
     type Output = Vec<T::Output>;
     fn convert(self, c: &mut Converter<'_>) -> Vec<T::Output> {
@@ -62,56 +46,7 @@ impl Convert for syntree::AssignOp {
         }
     }
 }
-impl Convert for syntree::Key {
-    type Output = semtree::Key;
-    fn convert(self, c: &mut Converter<'_>) -> semtree::Key {
-        match self {
-            syntree::Key::Name(n) => semtree::Key::Name(n.convert(c)),
-            syntree::Key::String(s) => semtree::Key::String(s),
-        }
-    }
-}
-impl Convert for syntree::Lit {
-    type Output = semtree::Lit;
-    fn convert(self, c: &mut Converter<'_>) -> semtree::Lit {
-        match self {
-            syntree::Lit::Number(s) => semtree::Lit::Number(s),
-            syntree::Lit::String(s) => semtree::Lit::String(s),
-            syntree::Lit::Array(vs) => {
-                semtree::Lit::Array(vs.into_iter().map(|v| c.convert_val_a(v)).collect())
-            }
-            syntree::Lit::Object(kvs) => semtree::Lit::Object(
-                kvs.into_iter()
-                    .map(|(k, v)| (k.convert(c), c.convert_val_a(v)))
-                    .collect(),
-            ),
-        }
-    }
-}
-impl Convert for syntree::Module {
-    type Output = semtree::Module;
-    fn convert(self, c: &mut Converter<'_>) -> semtree::Module {
-        match self {
-            syntree::Module::Block(decls) => semtree::Module::Block(c.convert_decls(decls)),
-            syntree::Module::Import(lit) => semtree::Module::Import(lit.convert(c)),
-        }
-    }
-}
-impl Convert for syntree::ValMod {
-    type Output = semtree::ValMod;
-    fn convert(self, c: &mut Converter<'_>) -> semtree::ValMod {
-        match self {
-            syntree::ValMod::Val(v) => semtree::ValMod::Val(c.convert_val_a(v)),
-            syntree::ValMod::Mod(m) => semtree::ValMod::Mod(m.convert(c)),
-        }
-    }
-}
-impl Convert for syntree::Program {
-    type Output = semtree::Program;
-    fn convert(self, c: &mut Converter<'_>) -> semtree::Program {
-        semtree::Program(c.convert_decls(self.0))
-    }
-}
+// Key conversion is handled inline in convert_lit since it needs to handle A<T> unwrapping
 impl Convert for syntree::ArrowTy {
     type Output = semtree::ArrowTy;
     fn convert(self, _c: &mut Converter<'_>) -> semtree::ArrowTy {
@@ -154,414 +89,28 @@ impl<'a> Converter<'a> {
         }
     }
 
-    // --- Decls (main==None: forward decorators to next Decl) ---
-
-    fn convert_decls(&mut self, decls: Vec<A<syntree::Decl>>) -> Vec<A<semtree::Decl>> {
-        let mut result: Vec<A<semtree::Decl>> = Vec::new();
-        let mut pending_decos: Vec<A<semtree::Decorator>> = Vec::new();
-
-        for decl_a in decls {
-            match decl_a {
-                A::Accepted(decl, span) => {
-                    if decl.main.is_none() {
-                        if !decl.clauses.is_empty() {
-                            self.error_at(
-                                &span,
-                                "clause is not allowed on a declaration without a body",
-                            );
-                        }
-                        pending_decos.extend(self.convert_decorators(decl.decos));
-                    } else {
-                        let mut sem_decl = self.convert_decl(decl, span);
-                        if !pending_decos.is_empty() {
-                            if let A::Accepted(ref mut d, _) = sem_decl {
-                                let mut carried = std::mem::take(&mut pending_decos);
-                                carried.append(&mut d.decos);
-                                d.decos = carried;
-                            } else {
-                                pending_decos.clear();
-                            }
-                        }
-                        result.push(sem_decl);
-                    }
-                }
-                A::Error() => {
-                    result.push(A::Error());
-                }
-            }
-        }
-
-        if !pending_decos.is_empty() {
-            let span = pending_decos.iter().rev().find_map(|d| match d {
-                A::Accepted(_, s) => Some(s.clone()),
-                A::Error() => None,
-            });
-            if let Some(span) = span {
-                self.error_at(&span, "decorator has no following declaration");
-            }
-        }
-
-        result
+    fn dummy_span() -> TokenSpan {
+        TokenSpan { start: 0, end: 0 }
     }
 
-    // --- Decl ---
+    // --- Val conversion ---
 
-    fn convert_decl(&mut self, decl: syntree::Decl, span: TokenSpan) -> A<semtree::Decl> {
-        let decos = self.convert_decorators(decl.decos);
-
-        let main = match decl.main {
-            Some(m) => m,
-            None => {
-                self.error_at(&span, "missing declaration body");
-                return A::Error();
-            }
-        };
-
-        let main = match self.convert_decl_main(main, &span) {
-            Some(m) => m,
-            None => return A::Error(),
-        };
-
-        let (with_clauses, where_clauses) = self.convert_clauses(decl.clauses);
-
-        A::Accepted(
-            semtree::Decl {
-                decos,
-                main,
-                with_clauses,
-                where_clauses,
-            },
-            span,
-        )
-    }
-
-    fn convert_decl_main(
-        &mut self,
-        main: syntree::DeclMain,
-        parent_span: &TokenSpan,
-    ) -> Option<semtree::DeclMain> {
-        match main {
-            syntree::DeclMain::Unit(unit_a) => {
-                let converted = match unit_a {
-                    A::Accepted(unit, span) => match self.convert_decl_unit(unit, &span) {
-                        Some(u) => A::Accepted(u, span),
-                        None => A::Error(),
-                    },
-                    A::Error() => A::Error(),
-                };
-                Some(semtree::DeclMain::Unit(converted))
-            }
-            syntree::DeclMain::Mod(mod_a) => Some(semtree::DeclMain::Mod(mod_a.convert(self))),
-            syntree::DeclMain::Dots => {
-                self.error_at(parent_span, "found `...` in declaration");
-                None
-            }
-        }
-    }
-
-    fn convert_decl_unit(
-        &mut self,
-        unit: syntree::DeclUnit,
-        span: &TokenSpan,
-    ) -> Option<semtree::DeclUnit> {
-        let names: Vec<_> = unit
-            .names
-            .into_iter()
-            .map(|p| map_a(p, |path| self.convert_path_decl(path)))
-            .collect();
-
-        let ty = unit.ty.map(|v| self.convert_val_a(v));
-
-        // Multiple names only allowed in declaration-only form (no assignment)
-        if names.len() > 1 && unit.assign.is_some() {
-            self.error_at(span, "multiple names are only allowed in declaration-only form");
-        }
-
-        match unit.assign {
-            Some((op_a, val_mod)) => {
-                let op = op_a.convert(self);
-                let body = Some(val_mod.convert(self));
-                Some(semtree::DeclUnit {
-                    names,
-                    ty,
-                    op,
-                    body,
-                })
-            }
-            None => {
-                if ty.is_some() {
-                    Some(semtree::DeclUnit {
-                        names,
-                        ty,
-                        op: A::Accepted(semtree::AssignOp::Decl, span.clone()),
-                        body: None,
-                    })
-                } else {
-                    self.error_at(span, "missing assignment in declaration");
-                    None
-                }
-            }
-        }
-    }
-
-    // --- Clauses ---
-
-    fn convert_clauses(
-        &mut self,
-        clauses: Vec<A<syntree::Clause>>,
-    ) -> (Vec<A<semtree::Module>>, Vec<A<semtree::Module>>) {
-        let mut with_clauses = Vec::new();
-        let mut where_clauses = Vec::new();
-        let mut seen_where = false;
-
-        for clause_a in clauses {
-            match clause_a {
-                A::Accepted(syntree::Clause(ty_a, mod_a), _) => {
-                    let converted = mod_a.convert(self);
-                    match ty_a {
-                        A::Accepted(syntree::ClauseTy::With, ty_span) => {
-                            if seen_where {
-                                self.error_at(
-                                    &ty_span,
-                                    "`with` clause must come before `where` clause",
-                                );
-                            }
-                            with_clauses.push(converted);
-                        }
-                        A::Accepted(syntree::ClauseTy::Where, _) => {
-                            seen_where = true;
-                            self.check_where_alias_only(&converted);
-                            where_clauses.push(converted);
-                        }
-                        A::Error() => {}
-                    }
-                }
-                A::Error() => {}
-            }
-        }
-
-        (with_clauses, where_clauses)
-    }
-
-    fn check_where_alias_only(&mut self, module: &A<semtree::Module>) {
-        let decls = match module {
-            A::Accepted(semtree::Module::Block(decls), _) => decls,
-            _ => return,
-        };
-        for decl_a in decls {
-            let decl = match decl_a {
-                A::Accepted(decl, _) => decl,
-                A::Error() => continue,
-            };
-            match &decl.main {
-                semtree::DeclMain::Unit(unit_a) => {
-                    if let A::Accepted(unit, span) = unit_a {
-                        if !matches!(unit.op.inner(), Some(semtree::AssignOp::Alias) | None) {
-                            self.error_at(
-                                span,
-                                "only `=` (alias) is allowed in `where` clause",
-                            );
-                        }
-                        if let Some(semtree::ValMod::Mod(m)) = &unit.body {
-                            self.check_where_alias_only(m);
-                        }
-                    }
-                }
-                semtree::DeclMain::Mod(m) => {
-                    self.check_where_alias_only(m);
-                }
-            }
-        }
-    }
-
-    // --- Decorators ---
-
-    fn convert_decorators(
-        &mut self,
-        decos: Vec<A<syntree::Decorator>>,
-    ) -> Vec<A<semtree::Decorator>> {
-        let mut result = Vec::new();
-        for deco_a in decos {
-            match deco_a {
-                A::Accepted(syntree::Decorator(_open, params, _close), _) => {
-                    for param_a in params {
-                        match param_a {
-                            A::Accepted(param, param_span) => {
-                                self.convert_decorator_param(param, param_span, &mut result);
-                            }
-                            A::Error() => result.push(A::Error()),
-                        }
-                    }
-                }
-                A::Error() => result.push(A::Error()),
-            }
-        }
-        result
-    }
-
-    fn convert_decorator_param(
-        &mut self,
-        param: syntree::Param,
-        span: TokenSpan,
-        result: &mut Vec<A<semtree::Decorator>>,
-    ) {
-        match param.ty {
-            Some(syntree::ParamTy::Decl) => {
-                let val = Rc::new(self.convert_val_a(param.val));
-                for name_a in param.names {
-                    let name_a = name_a.convert(self);
-                    result.push(A::Accepted(
-                        semtree::Decorator::Param(name_a, Rc::clone(&val)),
-                        span.clone(),
-                    ));
-                }
-            }
-            Some(syntree::ParamTy::Named) => {
-                self.error_at(&span, "named parameter is not allowed in decorator");
-            }
-            None => {
-                let val = self.convert_val_a(param.val);
-                result.push(A::Accepted(semtree::Decorator::Deco(val), span));
-            }
-        }
-    }
-
-    // --- Path (declaration context) ---
-
-    fn convert_path_decl(&mut self, path: syntree::Path) -> semtree::PathDecl {
-        let segments = path
-            .0
-            .into_iter()
-            .map(|s| map_a(s, |seg| self.convert_segment_decl(seg)))
-            .collect();
-        let val = path.1.map(|v| self.convert_val_a(v));
-        semtree::PathDecl(segments, val)
-    }
-
-    fn convert_segment_decl(&mut self, seg: syntree::Segment) -> semtree::SegmentDecl {
-        let name = seg.0.convert(self);
-        let params = match seg.1 {
-            Some(params_a) => match params_a {
-                A::Accepted(params, _) => self.convert_params_decl(params),
-                A::Error() => semtree::ParamsDecl(vec![]),
-            },
-            None => semtree::ParamsDecl(vec![]),
-        };
-        semtree::SegmentDecl(name, params)
-    }
-
-    fn convert_params_decl(&mut self, params: syntree::Params) -> semtree::ParamsDecl {
-        let syntree::Params(_open, param_list, _close) = params;
-        let mut result = Vec::new();
-        for param_a in param_list {
-            match param_a {
-                A::Accepted(param, span) => match param.ty {
-                    Some(syntree::ParamTy::Decl) => {
-                        let ty = Rc::new(self.convert_val_a(param.val));
-                        for name_a in param.names {
-                            let name_a = name_a.convert(self);
-                            result.push(A::Accepted(
-                                semtree::ParamDecl {
-                                    name: name_a,
-                                    ty: Rc::clone(&ty),
-                                },
-                                span.clone(),
-                            ));
-                        }
-                    }
-                    Some(syntree::ParamTy::Named) => {
-                        self.error_at(
-                            &span,
-                            "named parameter is not allowed in declaration context",
-                        );
-                    }
-                    None => {
-                        self.error_at(
-                            &span,
-                            "type annotation is required for declaration parameter",
-                        );
-                    }
-                },
-                A::Error() => result.push(A::Error()),
-            }
-        }
-        semtree::ParamsDecl(result)
-    }
-
-    // --- Path (value context) ---
-
-    fn convert_path_val(&mut self, path: syntree::Path) -> semtree::Path {
-        let segments = path
-            .0
-            .into_iter()
-            .map(|s| map_a(s, |seg| self.convert_segment_val(seg)))
-            .collect();
-        let val = path.1.map(|v| self.convert_val_a(v));
-        semtree::Path(segments, val)
-    }
-
-    fn convert_segment_val(&mut self, seg: syntree::Segment) -> semtree::Segment {
-        let name = seg.0.convert(self);
-        let params = match seg.1 {
-            Some(params_a) => match params_a {
-                A::Accepted(params, _) => self.convert_params_val(params),
-                A::Error() => semtree::ParamsVal(vec![]),
-            },
-            None => semtree::ParamsVal(vec![]),
-        };
-        semtree::Segment(name, params)
-    }
-
-    fn convert_params_val(&mut self, params: syntree::Params) -> semtree::ParamsVal {
-        let syntree::Params(_open, param_list, _close) = params;
-        let mut result = Vec::new();
-        for param_a in param_list {
-            match param_a {
-                A::Accepted(param, span) => match param.ty {
-                    Some(syntree::ParamTy::Named) => {
-                        if param.names.len() != 1 {
-                            self.error_at(
-                                &span,
-                                "named parameter must have exactly one name",
-                            );
-                        }
-                        let name = param
-                            .names
-                            .into_iter()
-                            .next()
-                            .map(|n| n.convert(self));
-                        let val = self.convert_val_a(param.val);
-                        result.push(A::Accepted(semtree::ParamVal { name, val }, span));
-                    }
-                    None => {
-                        let val = self.convert_val_a(param.val);
-                        result.push(A::Accepted(
-                            semtree::ParamVal { name: None, val },
-                            span,
-                        ));
-                    }
-                    Some(syntree::ParamTy::Decl) => {
-                        self.error_at(
-                            &span,
-                            "declaration parameter is not allowed in value context",
-                        );
-                    }
-                },
-                A::Error() => result.push(A::Error()),
-            }
-        }
-        semtree::ParamsVal(result)
-    }
-
-    // --- Val ---
-
-    fn convert_val_a(&mut self, val_a: A<syntree::Val>) -> A<semtree::Val> {
+    /// Convert A<syntree::Val> → Option<S<semtree::Val>>. None on error.
+    fn convert_val_a(&mut self, val_a: A<syntree::Val>) -> Option<S<semtree::Val>> {
         match val_a {
             A::Accepted(val, span) => match self.convert_val(val) {
-                Some(v) => A::Accepted(v, span),
-                None => A::Error(),
+                Some(v) => Some(S(v, span)),
+                None => None,
             },
-            A::Error() => A::Error(),
+            A::Error() => None,
+        }
+    }
+
+    /// Convert A<syntree::Val> → S<semtree::Val>, using Val::Any for errors.
+    fn convert_val_a_or_any(&mut self, val_a: A<syntree::Val>) -> S<semtree::Val> {
+        match self.convert_val_a(val_a) {
+            Some(sv) => sv,
+            None => S(semtree::Val::Any, Self::dummy_span()),
         }
     }
 
@@ -574,20 +123,24 @@ impl<'a> Converter<'a> {
             syntree::Val0::Path(path_a) => match *path_a {
                 A::Accepted(path, path_span) => {
                     if let Some(num_str) = try_as_number_literal(&path) {
-                        Some(semtree::Val::Lit(A::Accepted(
+                        Some(semtree::Val::Lit(S(
                             semtree::Lit::Number(num_str),
                             path_span,
                         )))
                     } else {
                         let converted = self.convert_path_val(path);
-                        Some(semtree::Val::Path(Box::new(A::Accepted(
-                            converted, path_span,
-                        ))))
+                        Some(semtree::Val::Path(Box::new(S(converted, path_span))))
                     }
                 }
-                A::Error() => Some(semtree::Val::Path(Box::new(A::Error()))),
+                A::Error() => None,
             }
-            syntree::Val0::Lit(lit_a) => Some(semtree::Val::Lit(lit_a.convert(self))),
+            syntree::Val0::Lit(lit_a) => match lit_a {
+                A::Accepted(lit, lit_span) => {
+                    let converted = self.convert_lit(lit);
+                    Some(semtree::Val::Lit(S(converted, lit_span)))
+                }
+                A::Error() => None,
+            },
             syntree::Val0::Paren(val_a) => match *val_a {
                 A::Accepted(inner, _) => self.convert_val(inner),
                 A::Error() => None,
@@ -596,6 +149,40 @@ impl<'a> Converter<'a> {
                 self.error_at(span, "found `...` in value");
                 None
             }
+        }
+    }
+
+    fn convert_lit(&mut self, lit: syntree::Lit) -> semtree::Lit {
+        match lit {
+            syntree::Lit::Number(s) => semtree::Lit::Number(s),
+            syntree::Lit::String(s) => semtree::Lit::String(s),
+            syntree::Lit::Array(vs) => {
+                semtree::Lit::Array(vs.into_iter().map(|v| self.convert_val_a_or_any(v)).collect())
+            }
+            syntree::Lit::Object(kvs) => semtree::Lit::Object(
+                kvs.into_iter()
+                    .filter_map(|(k, v)| {
+                        let key = match k {
+                            A::Accepted(k, span) => {
+                                let sem_key = match k {
+                                    syntree::Key::Name(n) => match n {
+                                        A::Accepted(n, _) => semtree::Key::Name(semtree::Name(n.0)),
+                                        A::Error() => return None,
+                                    },
+                                    syntree::Key::String(s) => match s {
+                                        A::Accepted(s, _) => semtree::Key::String(s),
+                                        A::Error() => return None,
+                                    },
+                                };
+                                S(sem_key, span)
+                            }
+                            A::Error() => return None,
+                        };
+                        let val = self.convert_val_a_or_any(v);
+                        Some((key, val))
+                    })
+                    .collect(),
+            ),
         }
     }
 
@@ -621,8 +208,14 @@ impl<'a> Converter<'a> {
         let left = self.build_val_tree(vs, ops)?;
         let right = self.build_val_tree(right_vs, right_ops)?;
 
-        let op = op_a.convert(self);
-        let params = params_a.map(|p| map_a(p, |params| self.convert_params_val(params)));
+        let op = match op_a {
+            A::Accepted(op, span) => S(op.convert(self), span),
+            A::Error() => return None,
+        };
+        let params = params_a.and_then(|p| match p {
+            A::Accepted(params, _) => Some(self.convert_params_val(params)),
+            A::Error() => None,
+        });
 
         Some(semtree::Val::Op(Box::new(left), op, params, Box::new(right)))
     }
@@ -678,6 +271,478 @@ impl<'a> Converter<'a> {
         }
         Some(max_i)
     }
+
+    // --- Decls (main==None: forward decorators to next Decl) ---
+
+    fn convert_decls(&mut self, decls: Vec<A<syntree::Decl>>) -> Vec<semtree::Decl> {
+        let mut result: Vec<semtree::Decl> = Vec::new();
+        let mut pending_decos: Vec<semtree::Decorator> = Vec::new();
+
+        for decl_a in decls {
+            match decl_a {
+                A::Accepted(decl, span) => {
+                    if decl.main.is_none() {
+                        if !decl.clauses.is_empty() {
+                            self.error_at(
+                                &span,
+                                "clause is not allowed on a declaration without a body",
+                            );
+                        }
+                        pending_decos.extend(self.convert_decorators(decl.decos));
+                    } else {
+                        match self.convert_decl(decl, span) {
+                            Some(mut sem_decl) => {
+                                if !pending_decos.is_empty() {
+                                    let mut carried = std::mem::take(&mut pending_decos);
+                                    carried.append(&mut sem_decl.decos);
+                                    sem_decl.decos = carried;
+                                }
+                                result.push(sem_decl);
+                            }
+                            None => {
+                                pending_decos.clear();
+                            }
+                        }
+                    }
+                }
+                A::Error() => {}
+            }
+        }
+
+        if !pending_decos.is_empty() {
+            // Try to find a span from the last decorator
+            let span = pending_decos.iter().rev().find_map(|d| match d {
+                semtree::Decorator::Param(_, v) => Some(v.1.clone()),
+                semtree::Decorator::Deco(v) => Some(v.1.clone()),
+            });
+            if let Some(span) = span {
+                self.error_at(&span, "decorator has no following declaration");
+            }
+        }
+
+        result
+    }
+
+    // --- Decl ---
+
+    fn convert_decl(&mut self, decl: syntree::Decl, span: TokenSpan) -> Option<semtree::Decl> {
+        let decos = self.convert_decorators(decl.decos);
+
+        let main = match decl.main {
+            Some(m) => m,
+            None => {
+                self.error_at(&span, "missing declaration body");
+                return None;
+            }
+        };
+
+        let main = match self.convert_decl_main(main, &span) {
+            Some(m) => m,
+            None => return None,
+        };
+
+        let (with_clauses, where_clauses) = self.convert_clauses(decl.clauses);
+
+        Some(semtree::Decl {
+            decos,
+            main,
+            with_clauses,
+            where_clauses,
+        })
+    }
+
+    fn convert_decl_main(
+        &mut self,
+        main: syntree::DeclMain,
+        parent_span: &TokenSpan,
+    ) -> Option<semtree::DeclMain> {
+        match main {
+            syntree::DeclMain::Unit(unit_a) => {
+                let converted = match unit_a {
+                    A::Accepted(unit, span) => self.convert_decl_unit(unit, &span)
+                        .map(|u| semtree::DeclMain::Unit(u)),
+                    A::Error() => None,
+                };
+                converted.or_else(|| {
+                    // Even if unit conversion fails, we still produce a DeclMain
+                    // but here we return None to filter out the decl
+                    None
+                })
+            }
+            syntree::DeclMain::Mod(mod_a) => match mod_a {
+                A::Accepted(m, span) => {
+                    let converted = m.convert(self);
+                    Some(semtree::DeclMain::Mod(S(converted, span)))
+                }
+                A::Error() => None,
+            },
+            syntree::DeclMain::Dots => {
+                self.error_at(parent_span, "found `...` in declaration");
+                None
+            }
+        }
+    }
+
+    fn convert_decl_unit(
+        &mut self,
+        unit: syntree::DeclUnit,
+        span: &TokenSpan,
+    ) -> Option<semtree::DeclUnit> {
+        let names: Vec<S<semtree::PathDecl>> = unit
+            .names
+            .into_iter()
+            .filter_map(|p| match p {
+                A::Accepted(path, span) => Some(S(self.convert_path_decl(path), span)),
+                A::Error() => None,
+            })
+            .collect();
+
+        let ty = unit.ty.and_then(|v| self.convert_val_a(v));
+
+        // Multiple names only allowed in declaration-only form (no assignment)
+        if names.len() > 1 && unit.assign.is_some() {
+            self.error_at(span, "multiple names are only allowed in declaration-only form");
+        }
+
+        match unit.assign {
+            Some((op_a, val_mod)) => {
+                let op = match op_a {
+                    A::Accepted(op, span) => S(op.convert(self), span),
+                    A::Error() => return None,
+                };
+                let body = Some(self.convert_valmod(val_mod));
+                Some(semtree::DeclUnit {
+                    names,
+                    ty,
+                    op,
+                    body,
+                })
+            }
+            None => {
+                if ty.is_some() {
+                    Some(semtree::DeclUnit {
+                        names,
+                        ty,
+                        op: S(semtree::AssignOp::Decl, span.clone()),
+                        body: None,
+                    })
+                } else {
+                    self.error_at(span, "missing assignment in declaration");
+                    None
+                }
+            }
+        }
+    }
+
+    fn convert_valmod(&mut self, vm: syntree::ValMod) -> semtree::ValMod {
+        match vm {
+            syntree::ValMod::Val(v) => {
+                semtree::ValMod::Val(self.convert_val_a_or_any(v))
+            }
+            syntree::ValMod::Mod(m) => match m {
+                A::Accepted(m, span) => {
+                    semtree::ValMod::Mod(S(m.convert(self), span))
+                }
+                A::Error() => {
+                    semtree::ValMod::Mod(S(
+                        semtree::Module::Block(vec![]),
+                        Self::dummy_span(),
+                    ))
+                }
+            },
+        }
+    }
+
+    // --- Module ---
+
+    fn convert_module(&mut self, m: syntree::Module) -> semtree::Module {
+        match m {
+            syntree::Module::Block(decls) => semtree::Module::Block(self.convert_decls(decls)),
+            syntree::Module::Import(lit) => match lit {
+                A::Accepted(lit, span) => {
+                    semtree::Module::Import(S(self.convert_lit(lit), span))
+                }
+                A::Error() => semtree::Module::Block(vec![]),
+            },
+        }
+    }
+
+    // --- Clauses ---
+
+    fn convert_clauses(
+        &mut self,
+        clauses: Vec<A<syntree::Clause>>,
+    ) -> (Vec<S<semtree::Module>>, Vec<S<semtree::Module>>) {
+        let mut with_clauses = Vec::new();
+        let mut where_clauses = Vec::new();
+        let mut seen_where = false;
+
+        for clause_a in clauses {
+            match clause_a {
+                A::Accepted(syntree::Clause(ty_a, mod_a), _) => {
+                    let converted = match mod_a {
+                        A::Accepted(m, span) => Some(S(m.convert(self), span)),
+                        A::Error() => None,
+                    };
+                    if let Some(converted) = converted {
+                        match ty_a {
+                            A::Accepted(syntree::ClauseTy::With, ty_span) => {
+                                if seen_where {
+                                    self.error_at(
+                                        &ty_span,
+                                        "`with` clause must come before `where` clause",
+                                    );
+                                }
+                                with_clauses.push(converted);
+                            }
+                            A::Accepted(syntree::ClauseTy::Where, _) => {
+                                seen_where = true;
+                                self.check_where_alias_only(&converted);
+                                where_clauses.push(converted);
+                            }
+                            A::Error() => {}
+                        }
+                    }
+                }
+                A::Error() => {}
+            }
+        }
+
+        (with_clauses, where_clauses)
+    }
+
+    fn check_where_alias_only(&mut self, module: &S<semtree::Module>) {
+        let S(semtree::Module::Block(decls), _) = module else {
+            return;
+        };
+        for decl in decls {
+            match &decl.main {
+                semtree::DeclMain::Unit(unit) => {
+                    let S(ref op, ref span) = unit.op;
+                    let is_alias_with_body = matches!(op, semtree::AssignOp::Alias) && unit.body.is_some();
+                    if !is_alias_with_body {
+                        self.error_at(
+                            span,
+                            "only `=` (alias) is allowed in `where` clause",
+                        );
+                    }
+                    if let Some(semtree::ValMod::Mod(m)) = &unit.body {
+                        self.check_where_alias_only(m);
+                    }
+                }
+                semtree::DeclMain::Mod(m) => {
+                    self.check_where_alias_only(m);
+                }
+            }
+        }
+    }
+
+    // --- Decorators ---
+
+    fn convert_decorators(
+        &mut self,
+        decos: Vec<A<syntree::Decorator>>,
+    ) -> Vec<semtree::Decorator> {
+        let mut result = Vec::new();
+        for deco_a in decos {
+            match deco_a {
+                A::Accepted(syntree::Decorator(_open, params, _close), _) => {
+                    for param_a in params {
+                        match param_a {
+                            A::Accepted(param, param_span) => {
+                                self.convert_decorator_param(param, param_span, &mut result);
+                            }
+                            A::Error() => {}
+                        }
+                    }
+                }
+                A::Error() => {}
+            }
+        }
+        result
+    }
+
+    fn convert_decorator_param(
+        &mut self,
+        param: syntree::Param,
+        span: TokenSpan,
+        result: &mut Vec<semtree::Decorator>,
+    ) {
+        match param.ty {
+            Some(syntree::ParamTy::Decl) => {
+                let val = Rc::new(self.convert_val_a_or_any(param.val));
+                for name_a in param.names {
+                    match name_a {
+                        A::Accepted(name, _) => {
+                            result.push(semtree::Decorator::Param(
+                                name.convert(self),
+                                Rc::clone(&val),
+                            ));
+                        }
+                        A::Error() => {}
+                    }
+                }
+            }
+            Some(syntree::ParamTy::Named) => {
+                self.error_at(&span, "named parameter is not allowed in decorator");
+            }
+            None => {
+                let val = self.convert_val_a_or_any(param.val);
+                result.push(semtree::Decorator::Deco(val));
+            }
+        }
+    }
+
+    // --- Path (declaration context) ---
+
+    fn convert_path_decl(&mut self, path: syntree::Path) -> semtree::PathDecl {
+        let segments: Vec<S<semtree::SegmentDecl>> = path
+            .0
+            .into_iter()
+            .filter_map(|s| match s {
+                A::Accepted(seg, span) => {
+                    self.convert_segment_decl(seg).map(|sd| S(sd, span))
+                }
+                A::Error() => None,
+            })
+            .collect();
+        let val = path.1.and_then(|v| self.convert_val_a(v));
+        semtree::PathDecl(segments, val)
+    }
+
+    fn convert_segment_decl(&mut self, seg: syntree::Segment) -> Option<semtree::SegmentDecl> {
+        let name = match seg.0 {
+            A::Accepted(name, _) => name.convert(self),
+            A::Error() => return None,
+        };
+        let params = match seg.1 {
+            Some(params_a) => match params_a {
+                A::Accepted(params, _) => self.convert_params_decl(params),
+                A::Error() => semtree::ParamsDecl(vec![]),
+            },
+            None => semtree::ParamsDecl(vec![]),
+        };
+        Some(semtree::SegmentDecl(name, params))
+    }
+
+    fn convert_params_decl(&mut self, params: syntree::Params) -> semtree::ParamsDecl {
+        let syntree::Params(_open, param_list, _close) = params;
+        let mut result = Vec::new();
+        for param_a in param_list {
+            match param_a {
+                A::Accepted(param, span) => match param.ty {
+                    Some(syntree::ParamTy::Decl) => {
+                        let ty = Rc::new(self.convert_val_a_or_any(param.val));
+                        for name_a in param.names {
+                            match name_a {
+                                A::Accepted(name, _) => {
+                                    result.push(semtree::ParamDecl {
+                                        name: name.convert(self),
+                                        ty: Rc::clone(&ty),
+                                    });
+                                }
+                                A::Error() => {}
+                            }
+                        }
+                    }
+                    Some(syntree::ParamTy::Named) => {
+                        self.error_at(
+                            &span,
+                            "named parameter is not allowed in declaration context",
+                        );
+                    }
+                    None => {
+                        self.error_at(
+                            &span,
+                            "type annotation is required for declaration parameter",
+                        );
+                    }
+                },
+                A::Error() => {}
+            }
+        }
+        semtree::ParamsDecl(result)
+    }
+
+    // --- Path (value context) ---
+
+    fn convert_path_val(&mut self, path: syntree::Path) -> semtree::Path {
+        let segments: Vec<S<semtree::Segment>> = path
+            .0
+            .into_iter()
+            .filter_map(|s| match s {
+                A::Accepted(seg, span) => {
+                    self.convert_segment_val(seg).map(|sv| S(sv, span))
+                }
+                A::Error() => None,
+            })
+            .collect();
+        let val = path.1.and_then(|v| self.convert_val_a(v));
+        semtree::Path(segments, val)
+    }
+
+    fn convert_segment_val(&mut self, seg: syntree::Segment) -> Option<semtree::Segment> {
+        let name = match seg.0 {
+            A::Accepted(name, _) => name.convert(self),
+            A::Error() => return None,
+        };
+        let params = match seg.1 {
+            Some(params_a) => match params_a {
+                A::Accepted(params, _) => self.convert_params_val(params),
+                A::Error() => semtree::ParamsVal(vec![]),
+            },
+            None => semtree::ParamsVal(vec![]),
+        };
+        Some(semtree::Segment(name, params))
+    }
+
+    fn convert_params_val(&mut self, params: syntree::Params) -> semtree::ParamsVal {
+        let syntree::Params(_open, param_list, _close) = params;
+        let mut result = Vec::new();
+        for param_a in param_list {
+            match param_a {
+                A::Accepted(param, span) => match param.ty {
+                    Some(syntree::ParamTy::Named) => {
+                        if param.names.len() != 1 {
+                            self.error_at(
+                                &span,
+                                "named parameter must have exactly one name",
+                            );
+                        }
+                        let name = param
+                            .names
+                            .into_iter()
+                            .next()
+                            .and_then(|n| match n {
+                                A::Accepted(n, _) => Some(n.convert(self)),
+                                A::Error() => None,
+                            });
+                        let val = self.convert_val_a_or_any(param.val);
+                        result.push(semtree::ParamVal { name, val });
+                    }
+                    None => {
+                        let val = self.convert_val_a_or_any(param.val);
+                        result.push(semtree::ParamVal { name: None, val });
+                    }
+                    Some(syntree::ParamTy::Decl) => {
+                        self.error_at(
+                            &span,
+                            "declaration parameter is not allowed in value context",
+                        );
+                    }
+                },
+                A::Error() => {}
+            }
+        }
+        semtree::ParamsVal(result)
+    }
+}
+
+impl Convert for syntree::Module {
+    type Output = semtree::Module;
+    fn convert(self, c: &mut Converter<'_>) -> semtree::Module {
+        c.convert_module(self)
+    }
 }
 
 pub fn is_number_str(s: &str) -> bool {
@@ -711,8 +776,13 @@ fn try_as_number_literal(path: &syntree::Path) -> Option<String> {
 pub fn convert<'a>(
     program: A<syntree::Program>,
     tokens: &[Token<'a>],
-) -> (A<semtree::Program>, Vec<Error>) {
+) -> (semtree::Program, Vec<Error>) {
     let mut converter = Converter::new(tokens);
-    let result = program.convert(&mut converter);
+    let result = match program {
+        A::Accepted(prog, _) => {
+            semtree::Program(converter.convert_decls(prog.0))
+        }
+        A::Error() => semtree::Program(vec![]),
+    };
     (result, converter.errors)
 }

@@ -301,7 +301,7 @@ pub fn tokenize_example(code: &str) -> (Vec<TokenData>, Vec<Diagnostic>) {
         diags.push(to_diag(pos, msg, "[convert]"));
     }
 
-    // resolve（名前解決）を実行
+    // resolve（名前解決）を実行 — convert の出力は A なしの semtree::Program
     let (_module, resolve_errors) = donut_lang::resolve::resolve(sem_program, &tokens);
     for (pos, msg) in &resolve_errors {
         diags.push(to_diag(pos, msg, "[resolve]"));

@@ -1,7 +1,7 @@
 use crate::convert::convert;
 use crate::parse::parse;
 use crate::tokenize::tokenize;
-use crate::types::common::A;
+use crate::types::common::S;
 use crate::types::semtree;
 
 // --- Minimal pretty printer for semtree ---
@@ -13,9 +13,9 @@ impl PP {
 
 trait Fmt { fn fmt(&self, p: &mut PP); }
 
-impl<T: Fmt> Fmt for A<T> {
+impl<T: Fmt> Fmt for S<T> {
     fn fmt(&self, p: &mut PP) {
-        match self { A::Accepted(v, _) => v.fmt(p), A::Error() => p.s("?") }
+        self.0.fmt(p);
     }
 }
 impl Fmt for semtree::Name {
@@ -114,10 +114,11 @@ impl Fmt for semtree::Val {
                 r.fmt(p);
                 p.s(")");
             }
+            semtree::Val::Any => p.s("?"),
         }
     }
 }
-// A<ParamsVal> in Val::Op
+// ParamsVal in Val::Op
 impl Fmt for semtree::ParamsVal {
     fn fmt(&self, p: &mut PP) { fmt_params_val(self, p); }
 }
@@ -185,7 +186,7 @@ impl Fmt for semtree::Program {
     }
 }
 
-fn pretty_sem(prog: &A<semtree::Program>) -> String {
+fn pretty_sem(prog: &semtree::Program) -> String {
     let mut p = PP(String::new());
     prog.fmt(&mut p);
     p.0

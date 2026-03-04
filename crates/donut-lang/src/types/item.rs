@@ -1,9 +1,5 @@
-use crate::types::common::TokenSpan;
+pub use crate::types::common::S;
 use std::collections::HashMap;
-
-/// A::Error のない annotation。値は必ず存在する。
-#[derive(Debug, Clone)]
-pub struct S<T>(pub T, pub TokenSpan);
 
 // --- Val 型 (semtree::Val に対応、A なし、演算子 flat) ---
 

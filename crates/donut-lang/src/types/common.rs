@@ -35,3 +35,7 @@ impl<T> A<T> {
         }
     }
 }
+
+/// A::Error のない annotation。値は必ず存在する。
+#[derive(Debug, Clone)]
+pub struct S<T>(pub T, pub TokenSpan);
