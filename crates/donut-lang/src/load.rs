@@ -26,6 +26,7 @@ pub struct Element {
 pub struct Table {
     pub elements: Vec<Element>,
     pub lookup: HashMap<String, usize>,
+    prefixes: Vec<String>,
 }
 
 impl Table {
@@ -33,7 +34,20 @@ impl Table {
         Table {
             elements: Vec::new(),
             lookup: HashMap::new(),
+            prefixes: Vec::new(),
         }
+    }
+
+    fn resolve(&self, name: &str) -> Option<usize> {
+        // Try with prefixes from innermost to outermost
+        for prefix in self.prefixes.iter().rev() {
+            let qualified = format!("{}.{}", prefix, name);
+            if let Some(&idx) = self.lookup.get(&qualified) {
+                return Some(idx);
+            }
+        }
+        // Try bare name
+        self.lookup.get(name).copied()
     }
 
     fn add(&mut self, e: Element) -> Prim {
@@ -152,26 +166,12 @@ impl Table {
     }
 
     fn load_members(&mut self, prefix: &str, module: &Module) -> Result<()> {
-        // Register short name aliases so inner references resolve
-        let short_names: Vec<String> = module.entries.iter().map(|(n, _)| n.clone()).collect();
+        self.prefixes.push(prefix.to_string());
         for (member_name, item) in &module.entries {
             let full_name = format!("{}.{}", prefix, member_name);
             self.load_item(&full_name, item)?;
-            // Add short alias pointing to the same index
-            if let Some(&idx) = self.lookup.get(full_name.as_str()) {
-                self.lookup.insert(member_name.clone(), idx);
-            }
         }
-        // Remove short aliases to avoid polluting the global namespace
-        for name in &short_names {
-            // Only remove if it still points to a prefixed entry
-            if let Some(&idx) = self.lookup.get(name.as_str()) {
-                let full = format!("{}.{}", prefix, name);
-                if self.lookup.get(full.as_str()) == Some(&idx) {
-                    self.lookup.remove(name.as_str());
-                }
-            }
-        }
+        self.prefixes.pop();
         Ok(())
     }
 
@@ -221,10 +221,9 @@ impl Table {
                     .path_name(path_a)
                     .ok_or_else(|| "invalid path".to_string())?;
                 let index = self
-                    .lookup
-                    .get(&name)
+                    .resolve(&name)
                     .ok_or_else(|| format!("unknown variable: {}", name))?;
-                Ok(self.elements[*index].cell.clone())
+                Ok(self.elements[index].cell.clone())
             }
             semtree::Val::Op(l, op_a, _, r) => {
                 let Some(op) = op_a.inner() else {

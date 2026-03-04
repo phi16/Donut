@@ -102,6 +102,26 @@ fn test_load_members() {
 }
 
 #[test]
+fn test_load_nested_members() {
+    let input = r#"
+        a = {
+            b = {
+                u: *
+                x: u → u
+            }
+            y: b.u → b.u
+        }
+        f: a.b.x a.b.x → a.b.x
+    "#;
+    let table = load(input).unwrap();
+    assert_eq!(table.elements[0].name, "a.b.u");
+    assert_eq!(table.elements[1].name, "a.b.x");
+    assert_eq!(table.elements[2].name, "a.y");
+    assert_eq!(table.elements[3].name, "f");
+    assert_eq!(table.elements[3].cell.pure.dim().in_space, 2);
+}
+
+#[test]
 fn test_load_auto_color() {
     let input = r#"
         u: *
