@@ -20,6 +20,7 @@ pub struct Diagnostic {
     pub end_line: u32,
     pub end_column: u32,
     pub message: String,
+    pub source: &'static str,
 }
 
 pub struct TokenData {
@@ -225,13 +226,14 @@ impl Marking for syntree::Program {
     }
 }
 
-fn to_diag(pos: &types::common::TokenPos, msg: &str) -> Diagnostic {
+fn to_diag(pos: &types::common::TokenPos, msg: &str, source: &'static str) -> Diagnostic {
     Diagnostic {
         begin_line: pos.line as u32,
         begin_column: pos.col as u32,
         end_line: pos.line as u32,
         end_column: (pos.col + pos.len) as u32,
         message: msg.to_string(),
+        source,
     }
 }
 
@@ -282,7 +284,7 @@ pub fn tokenize_example(code: &str) -> (Vec<TokenData>, Vec<Diagnostic>) {
     // tokenize エラーを診断として収集
     let mut diags: Vec<Diagnostic> = tokenize_errors
         .iter()
-        .map(|(pos, msg)| to_diag(pos, msg))
+        .map(|(pos, msg)| to_diag(pos, msg, "[tokenize]"))
         .collect();
 
     // parse は常に実行（エラー回復があるので tokenize エラーがあっても走らせる）
@@ -290,19 +292,19 @@ pub fn tokenize_example(code: &str) -> (Vec<TokenData>, Vec<Diagnostic>) {
     let (program, parse_errors) = donut_lang::parse::parse(&tokens);
     program.mark(&mut ctx);
     for (pos, msg) in &parse_errors {
-        diags.push(to_diag(pos, msg));
+        diags.push(to_diag(pos, msg, "[parse]"));
     }
 
     // convert（意味解析）を実行
     let (sem_program, convert_errors) = donut_lang::convert::convert(program, &tokens);
     for (pos, msg) in &convert_errors {
-        diags.push(to_diag(pos, msg));
+        diags.push(to_diag(pos, msg, "[convert]"));
     }
 
     // check（名前解決）を実行
     let check_errors = donut_lang::check::check(&sem_program, &tokens);
     for (pos, msg) in &check_errors {
-        diags.push(to_diag(pos, msg));
+        diags.push(to_diag(pos, msg, "[check]"));
     }
 
     // コメントトークンを構築

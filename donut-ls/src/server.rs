@@ -175,6 +175,7 @@ impl<'a> Server<'a> {
                     },
                 },
                 severity: Some(DiagnosticSeverity::ERROR),
+                source: Some(d.source.to_string()),
                 message: d.message,
                 ..Default::default()
             });
