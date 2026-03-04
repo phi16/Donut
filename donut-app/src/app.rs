@@ -3,7 +3,6 @@ use std::rc::Rc;
 
 use donut_core::cell::*;
 use donut_core::common::*;
-use donut_core::free_cell::FreeCell;
 use donut_layout::layout_solver::LayoutSolver;
 use donut_renderer::geometry::{Geometry, R};
 use donut_renderer::prim_table::PrimTable;
@@ -25,17 +24,17 @@ impl App {
         mouse: Rc<RefCell<(f64, f64)>>,
     ) -> Self {
         let input = r#"
-            [gray(80)]
+            [gray[80]]
             u: *
-            [hsv(0.6, 1, 1)]
+            [hsv[0.6, 1, 1]]
             x: u → u
-            [hsv(0.1, 1.0, 1)]
+            [hsv[0.1, 1.0, 1]]
             m: x x → x
-            [hsv(0.2, 1.0, 1)]
+            [hsv[0.2, 1.0, 1]]
             a: m x; m → x m; m
-            [gray(200)]
+            [gray[200]]
             chl: (x m; m) x → x m x; m x
-            [gray(200)]
+            [gray[200]]
             chr: x m x; x m → x (m x; m)
             aaa =
                 a x; m ;;
@@ -43,14 +42,14 @@ impl App {
                 x m x; a ;;
                 chr; m ;;
                 x a; m
-            [gray(200)]
+            [gray[200]]
             ch0: m x x; x m → m m
-            [gray(200)]
+            [gray[200]]
             ch1: m m → x x m; m x
 
-            [gray(200)]
+            [gray[200]]
             kl: (m x; m) x → m x x; m x
-            [gray(200)]
+            [gray[200]]
             kr: x x m; x m → x (x m; m)
             oao =
                 kl; m ;;
@@ -59,11 +58,11 @@ impl App {
                 x x m; a ;;
                 kr; m
 
-            [gray(255)]
+            [gray[255]]
             pentagon: aaa → oao
             result = pentagon
         "#;
-        let symbol_table = donut_lang_proto::load::load(input).unwrap();
+        let symbol_table = donut_lang::load::load(input).unwrap();
 
         let mut table = PrimTable::new();
         for (i, e) in symbol_table.elements.iter().enumerate() {
@@ -96,7 +95,7 @@ impl App {
 
     pub fn update_code(&mut self, code: &str) -> Result<()> {
         let symbol_table =
-            donut_lang_proto::load::load(code).map_err(|e| format!("Parse error: {:?}", e))?;
+            donut_lang::load::load(code).map_err(|e| format!("Parse error: {:?}", e))?;
 
         let mut table = PrimTable::new();
         for (i, e) in symbol_table.elements.iter().enumerate() {

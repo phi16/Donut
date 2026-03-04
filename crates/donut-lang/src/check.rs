@@ -25,6 +25,7 @@ pub struct Item {
     pub params: Vec<Param>,
     pub val: Option<Rc<A<semtree::Val>>>,
     pub members: Module,
+    pub decos: Vec<Rc<A<semtree::Val>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -87,6 +88,7 @@ impl Item {
             params: Vec::new(),
             val: None,
             members: Module::new(),
+            decos: Vec::new(),
         }
     }
 
@@ -97,6 +99,7 @@ impl Item {
             params: Vec::new(),
             val: None,
             members: Module::new(),
+            decos: Vec::new(),
         }
     }
 }
@@ -522,7 +525,16 @@ impl<'a> Checker<'a> {
             }
         }
 
-        // 6. Consume main
+        // 6. Extract deco values
+        let deco_vals: Vec<Rc<A<semtree::Val>>> = decos
+            .into_iter()
+            .filter_map(|d| match d {
+                A::Accepted(semtree::Decorator::Deco(val), _) => Some(Rc::new(val)),
+                _ => None,
+            })
+            .collect();
+
+        // 7. Consume main
         match main {
             semtree::DeclMain::Unit(unit_a) => {
                 if let A::Accepted(unit, _) = unit_a {
@@ -583,13 +595,14 @@ impl<'a> Checker<'a> {
                     // 8. Pop scope
                     self.pop_scope();
 
-                    // 9. Register
+                    // 10. Register
                     let item = Item {
                         kind,
                         ty: ty_rc,
                         params,
                         val,
                         members: result,
+                        decos: deco_vals,
                     };
 
                     self.register_unit_results(&names, &op, item);
