@@ -1,9 +1,7 @@
-use crate::check::*;
 use crate::convert::convert;
 use crate::parse::parse;
 use crate::tokenize::tokenize;
-use crate::types::common::A;
-use crate::types::semtree;
+use crate::types::item::*;
 
 fn check_errs(code: &str) -> Vec<String> {
     let (tokens, _, _) = tokenize(code.trim());
@@ -13,7 +11,7 @@ fn check_errs(code: &str) -> Vec<String> {
         conv_errors.is_empty(),
         "unexpected convert errors: {conv_errors:?}"
     );
-    let (_module, errors) = check(sem_prog, &tokens);
+    let (_module, errors) = crate::check::check(sem_prog, &tokens);
     errors.into_iter().map(|(_, msg)| msg).collect()
 }
 
@@ -30,7 +28,7 @@ fn check_module(code: &str) -> Module {
         conv_errors.is_empty(),
         "unexpected convert errors: {conv_errors:?}"
     );
-    let (module, errors) = check(sem_prog, &tokens);
+    let (module, errors) = crate::check::check(sem_prog, &tokens);
     assert!(errors.is_empty(), "unexpected check errors: {errors:?}");
     module
 }
@@ -782,28 +780,24 @@ z := "w"
     assert!(matches!(m.get("z").unwrap().kind, Some(ItemKind::Def)));
 }
 
-/// Extract the single path name from a Val (e.g. Val::Path with one segment "T" → "T")
-fn val_as_path_name(val: &A<semtree::Val>) -> Option<&str> {
-    let v = val.inner()?;
-    match v {
-        semtree::Val::Path(path_a) => {
-            let path = path_a.inner()?;
-            let seg = path.0.first()?.inner()?;
-            let name = seg.0.inner()?;
-            Some(&name.0)
+/// Extract the single path name from a Val (e.g. Path with one segment "T" → "T")
+fn val_as_path_name(val: &S<Val>) -> Option<&str> {
+    match &val.0 {
+        Val::Path(path) => {
+            if path.segments.len() == 1 {
+                Some(&path.segments[0].0.name)
+            } else {
+                None
+            }
         }
         _ => None,
     }
 }
 
 /// Extract the string literal value from a Val
-fn val_as_string(val: &A<semtree::Val>) -> Option<&str> {
-    let v = val.inner()?;
-    match v {
-        semtree::Val::Lit(lit_a) => match lit_a.inner()? {
-            semtree::Lit::String(s) => Some(s),
-            _ => None,
-        },
+fn val_as_string(val: &S<Val>) -> Option<&str> {
+    match &val.0 {
+        Val::Lit(Lit::String(s)) => Some(s),
         _ => None,
     }
 }
@@ -858,9 +852,13 @@ f[x: T, y: U] = "v"
     let f = m.get("f").unwrap();
     assert_eq!(f.params.len(), 2);
     assert_eq!(f.params[0].name, "x");
-    assert_eq!(val_as_path_name(&f.params[0].ty), Some("T"));
+    assert_eq!(val_as_path_name_from_ty(&f.params[0].ty), Some("T"));
     assert_eq!(f.params[1].name, "y");
-    assert_eq!(val_as_path_name(&f.params[1].ty), Some("U"));
+    assert_eq!(val_as_path_name_from_ty(&f.params[1].ty), Some("U"));
+}
+
+fn val_as_path_name_from_ty(val: &S<Val>) -> Option<&str> {
+    val_as_path_name(val)
 }
 
 #[test]
@@ -935,7 +933,7 @@ m[x: T] = {
     let item = m.get("m").unwrap();
     assert_eq!(item.params.len(), 1);
     assert_eq!(item.params[0].name, "x");
-    assert_eq!(val_as_path_name(&item.params[0].ty), Some("T"));
+    assert_eq!(val_as_path_name_from_ty(&item.params[0].ty), Some("T"));
     assert!(item.val().is_none(), "module body should not produce val");
     assert_eq!(names(item.members().unwrap()), vec!["inner"]);
 }
@@ -1079,7 +1077,6 @@ fn functor_app_not_a_functor() {
 
 #[test]
 fn functor_app_mappings_stored() {
-    use crate::check::ItemBody;
     let m = check_module("A = \"a\"\nB = \"b\"\na = \"x\"\nb = \"y\"\nf: A ~> B\nf(a) = \"x\"\nf(b) = \"y\"");
     let f = m.get("f").unwrap();
     match &f.body {

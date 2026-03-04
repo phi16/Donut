@@ -1,11 +1,8 @@
-use crate::check::{Item, ItemBody, ItemKind, Module};
-use crate::types::common::*;
-use crate::types::semtree;
+use crate::types::item::*;
 use donut_core::cell::{check_prim, Diagram, Globular};
 use donut_core::common::{Prim, PrimId};
 use donut_core::free_cell::FreeCell;
 use std::collections::HashMap;
-use std::rc::Rc;
 
 type Result<T> = std::result::Result<T, String>;
 
@@ -83,7 +80,7 @@ impl Table {
 
                 match (&item.ty, body_val) {
                     (Some(ty), None) => {
-                        let (_, ty) = self.eval_ty(ty)?;
+                        let (_, ty) = self.eval_ty(&ty.0)?;
                         let prim = self.fresh_prim();
                         let cell = match &ty {
                             Ty::Zero => FreeCell::zero(prim),
@@ -91,8 +88,8 @@ impl Table {
                         };
                         self.add(name.to_string(), color, cell);
                     }
-                    (dim_ty, Some(body_rc)) => {
-                        let body = self.eval_val(body_rc)?;
+                    (dim_ty, Some(body_s)) => {
+                        let body = self.eval_val(&body_s.0)?;
                         let dim = body.pure.dim().in_space;
                         let body_ty = if dim == 0 {
                             Ty::Zero
@@ -103,8 +100,8 @@ impl Table {
                             )
                         };
 
-                        if let Some(ty_rc) = dim_ty {
-                            let (declared_dim, declared_ty) = self.eval_ty(ty_rc)?;
+                        if let Some(ty_s) = dim_ty {
+                            let (declared_dim, declared_ty) = self.eval_ty(&ty_s.0)?;
                             if declared_dim != dim {
                                 return Err(
                                     "declared type dimension does not match body".to_string(),
@@ -140,96 +137,55 @@ impl Table {
         Ok(())
     }
 
-    fn eval_ty(&self, val: &A<semtree::Val>) -> Result<(u8, Ty)> {
-        let Some(v) = val.inner() else {
-            return Err("invalid type expression".to_string());
-        };
-        match v {
-            semtree::Val::Path(path_a) => {
-                if path_name(path_a).as_deref() == Some("*") {
+    fn eval_ty(&self, val: &Val) -> Result<(u8, Ty)> {
+        match val {
+            Val::Path(path) => {
+                if path_name(path).as_deref() == Some("*") {
                     return Ok((0, Ty::Zero));
                 }
                 Err("expected `*` or arrow type".to_string())
             }
-            semtree::Val::Op(l, op_a, _, r) => {
-                if let Some(semtree::Op::Arrow(
-                    semtree::ArrowTy::To | semtree::ArrowTy::Eq,
-                )) = op_a.inner()
-                {
-                    let mut s = self.eval_val_inner(l)?;
-                    let mut t = self.eval_val_inner(r)?;
-                    let max = s.pure.dim().in_space.max(t.pure.dim().in_space);
-                    s = lift_dim(s, max);
-                    t = lift_dim(t, max);
-                    check_prim(&s.pure, &t.pure)?;
-                    Ok((max + 1, Ty::Succ(s, t)))
-                } else {
-                    Err("expected arrow type".to_string())
-                }
+            Val::Arrow(ArrowKind::To | ArrowKind::Eq, l, r) => {
+                let mut s = self.eval_val(&l.0)?;
+                let mut t = self.eval_val(&r.0)?;
+                let max = s.pure.dim().in_space.max(t.pure.dim().in_space);
+                s = lift_dim(s, max);
+                t = lift_dim(t, max);
+                check_prim(&s.pure, &t.pure)?;
+                Ok((max + 1, Ty::Succ(s, t)))
             }
+            Val::Arrow(ArrowKind::Functor, _, _) => Err("expected arrow type".to_string()),
             _ => Err("expected `*` or arrow type".to_string()),
         }
     }
 
-    fn eval_val(&self, val: &A<semtree::Val>) -> Result<FreeCell> {
-        let Some(v) = val.inner() else {
-            return Err("invalid value expression".to_string());
-        };
-        self.eval_val_inner(v)
-    }
-
-    fn eval_val_inner(&self, val: &semtree::Val) -> Result<FreeCell> {
+    fn eval_val(&self, val: &Val) -> Result<FreeCell> {
         match val {
-            semtree::Val::Path(path_a) => {
-                let name = path_name(path_a).ok_or_else(|| "invalid path".to_string())?;
+            Val::Path(path) => {
+                let name = path_name(path).ok_or_else(|| "invalid path".to_string())?;
                 let index = self
                     .resolve(&name)
                     .ok_or_else(|| format!("unknown variable: {}", name))?;
                 Ok(self.elements[index].cell.clone())
             }
-            semtree::Val::Op(l, op_a, _, r) => {
-                let Some(op) = op_a.inner() else {
-                    return Err("invalid operator".to_string());
-                };
-                match op {
-                    semtree::Op::Comp(n) => {
-                        let mut children = Vec::new();
-                        collect_comp_children(l, *n, &mut children, self)?;
-                        collect_comp_children(r, *n, &mut children, self)?;
-                        let max = children
-                            .iter()
-                            .map(|c| c.pure.dim().in_space)
-                            .max()
-                            .unwrap();
-                        let children = children
-                            .into_iter()
-                            .map(|c| lift_dim(c, max))
-                            .collect();
-                        Ok(FreeCell::comp(*n as u8, children)?)
-                    }
-                    _ => Err("unsupported operator in value".to_string()),
-                }
+            Val::Comp(axis, children) => {
+                let mut cells: Vec<FreeCell> = children
+                    .iter()
+                    .map(|c| self.eval_val(&c.0))
+                    .collect::<Result<_>>()?;
+                let max = cells
+                    .iter()
+                    .map(|c| c.pure.dim().in_space)
+                    .max()
+                    .unwrap();
+                cells = cells.into_iter().map(|c| lift_dim(c, max)).collect();
+                Ok(FreeCell::comp(*axis as u8, cells)?)
             }
-            semtree::Val::Lit(_) => Err("literal in value position".to_string()),
+            Val::Lit(_) => Err("literal in value position".to_string()),
+            Val::CompStar(_) => Err("unsupported operator in value".to_string()),
+            Val::Arrow(_, _, _) => Err("unsupported operator in value".to_string()),
         }
     }
-}
-
-fn collect_comp_children(
-    val: &semtree::Val,
-    axis: u32,
-    out: &mut Vec<FreeCell>,
-    table: &Table,
-) -> Result<()> {
-    if let semtree::Val::Op(l, op_a, _, r) = val {
-        if matches!(op_a.inner(), Some(semtree::Op::Comp(n)) if *n == axis) {
-            collect_comp_children(l, axis, out, table)?;
-            collect_comp_children(r, axis, out, table)?;
-            return Ok(());
-        }
-    }
-    out.push(table.eval_val_inner(val)?);
-    Ok(())
 }
 
 fn match_ty(x: &Ty, y: &Ty) -> Result<()> {
@@ -271,40 +227,27 @@ fn lift_dim(mut cell: FreeCell, target: u8) -> FreeCell {
     cell
 }
 
-fn path_name(path_a: &A<semtree::Path>) -> Option<String> {
-    let path = path_a.inner()?;
-    let parts: Option<Vec<_>> = path
-        .0
-        .iter()
-        .map(|seg_a| Some(seg_a.inner()?.0.inner()?.0.clone()))
-        .collect();
-    let parts = parts?;
+fn path_name(path: &Path) -> Option<String> {
+    let parts: Vec<_> = path.segments.iter().map(|s| s.0.name.clone()).collect();
     if parts.is_empty() {
         return None;
     }
     Some(parts.join("."))
 }
 
-fn extract_color(decos: &[Rc<A<semtree::Val>>]) -> Option<(u8, u8, u8)> {
+fn extract_color(decos: &[S<Val>]) -> Option<(u8, u8, u8)> {
     for deco in decos {
-        let Some(semtree::Val::Path(path_a)) = deco.inner() else {
+        let Val::Path(path) = &deco.0 else {
             continue;
         };
-        let Some(path) = path_a.inner() else {
-            continue;
-        };
-        if path.0.len() != 1 {
+        if path.segments.len() != 1 {
             continue;
         }
-        let Some(seg) = path.0[0].inner() else {
-            continue;
-        };
-        let Some(name) = seg.0.inner() else {
-            continue;
-        };
-        let args = &seg.1 .0;
+        let seg = &path.segments[0].0;
+        let name = &seg.name;
+        let args = &seg.params;
 
-        match name.0.as_str() {
+        match name.as_str() {
             "gray" if args.len() == 1 => {
                 let g = extract_number(&args[0])? as u8;
                 return Some((g, g, g));
@@ -327,56 +270,46 @@ fn extract_color(decos: &[Rc<A<semtree::Val>>]) -> Option<(u8, u8, u8)> {
     None
 }
 
-fn extract_number(param_a: &A<semtree::ParamVal>) -> Option<f64> {
-    let val = param_a.inner()?.val.inner()?;
-    match val {
-        semtree::Val::Lit(lit_a) => match lit_a.inner()? {
-            semtree::Lit::Number(s) => s.parse().ok(),
-            _ => None,
-        },
+fn extract_number(param: &ParamVal) -> Option<f64> {
+    match &param.val.0 {
+        Val::Lit(Lit::Number(s)) => s.parse().ok(),
         _ => None,
     }
 }
 
-fn extract_rational(param_a: &A<semtree::ParamVal>) -> Option<f64> {
-    let val = param_a.inner()?.val.inner()?;
-    match val {
-        semtree::Val::Lit(lit_a) => match lit_a.inner()? {
-            semtree::Lit::Number(s) => s.parse().ok(),
-            semtree::Lit::String(s) => match s.as_str() {
-                "1-" => Some(0.01),
-                "1" => Some(0.05),
-                "1+" => Some(0.09),
-                "2+" => Some(0.52),
-                "2" => Some(0.56),
-                "2-" => Some(0.60),
-                "orange" => Some(0.1),
-                "yellow" => Some(0.16),
-                "green" => Some(0.33),
-                "cyan" => Some(0.5),
-                "blue" => Some(0.6),
-                "purple" => Some(0.75),
-                "pink" => Some(0.9),
-                _ => None,
-            },
+fn extract_rational(param: &ParamVal) -> Option<f64> {
+    match &param.val.0 {
+        Val::Lit(Lit::Number(s)) => s.parse().ok(),
+        Val::Lit(Lit::String(s)) => match s.as_str() {
+            "1-" => Some(0.01),
+            "1" => Some(0.05),
+            "1+" => Some(0.09),
+            "2+" => Some(0.52),
+            "2" => Some(0.56),
+            "2-" => Some(0.60),
+            "orange" => Some(0.1),
+            "yellow" => Some(0.16),
+            "green" => Some(0.33),
+            "cyan" => Some(0.5),
+            "blue" => Some(0.6),
+            "purple" => Some(0.75),
+            "pink" => Some(0.9),
             _ => None,
         },
-        // Dotted number path: 0.6 → Path([Seg("0"), Seg("6")])
-        semtree::Val::Path(path_a) => {
-            let path = path_a.inner()?;
-            if path.1.is_some() {
+        // Dotted number path: 0.6 → Path with segments ["0", "6"]
+        Val::Path(path) => {
+            if path.applicand.is_some() {
                 return None;
             }
             let parts: Option<Vec<_>> = path
-                .0
+                .segments
                 .iter()
-                .map(|seg_a| {
-                    let seg = seg_a.inner()?;
-                    if !seg.1 .0.is_empty() {
+                .map(|seg_s| {
+                    if !seg_s.0.params.is_empty() {
                         return None;
                     }
-                    let name = seg.0.inner()?;
-                    crate::convert::is_number_str(&name.0).then_some(name.0.as_str())
+                    let name = &seg_s.0.name;
+                    crate::convert::is_number_str(name).then_some(name.as_str())
                 })
                 .collect();
             parts?.join(".").parse().ok()

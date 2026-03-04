@@ -1,149 +1,189 @@
 use crate::types::common::*;
+use crate::types::item::*;
 use crate::types::semtree;
 use crate::types::token::Token;
-use std::collections::HashMap;
 use std::rc::Rc;
 
-#[derive(Debug, Clone, Copy)]
-pub enum ItemKind {
-    Decl,  // x: T
-    Alias, // x = ...
-    Def,   // x := ...
-    Param, // [x: T]
+// --- semtree → item conversion ---
+
+fn convert_a_val(a: &A<semtree::Val>) -> Option<S<Val>> {
+    let (v, span) = a.accepted()?;
+    let val = convert_val(v)?;
+    Some(S(val, span.clone()))
 }
 
-#[derive(Debug, Clone)]
-pub struct Param {
-    pub name: String,
-    pub ty: Rc<A<semtree::Val>>,
-}
-
-#[derive(Debug, Clone)]
-pub struct FunctorMapping {
-    pub applicand: Rc<A<semtree::Val>>,
-    pub val: Rc<A<semtree::Val>>,
-}
-
-#[derive(Debug, Clone)]
-pub enum ItemBody {
-    Value {
-        val: Option<Rc<A<semtree::Val>>>,
-        members: Module,
-    },
-    Functor {
-        mappings: Vec<FunctorMapping>,
-    },
-}
-
-#[derive(Debug, Clone)]
-pub struct Item {
-    pub kind: Option<ItemKind>,
-    pub ty: Option<Rc<A<semtree::Val>>>,
-    pub params: Vec<Param>,
-    pub body: ItemBody,
-    pub decos: Vec<Rc<A<semtree::Val>>>,
-}
-
-#[derive(Debug, Clone)]
-pub struct Module {
-    pub entries: Vec<(String, Item)>,
-    index: HashMap<String, usize>,
-}
-
-impl Module {
-    fn new() -> Self {
-        Module {
-            entries: Vec::new(),
-            index: HashMap::new(),
+fn convert_val(val: &semtree::Val) -> Option<Val> {
+    match val {
+        semtree::Val::Path(path_a) => {
+            let path = convert_path(path_a)?;
+            Some(Val::Path(path))
         }
-    }
-
-    fn define(&mut self, name: String, item: Item) {
-        if let Some(&idx) = self.index.get(&name) {
-            self.entries[idx].1 = item;
-        } else {
-            let idx = self.entries.len();
-            self.index.insert(name.clone(), idx);
-            self.entries.push((name, item));
+        semtree::Val::Lit(lit_a) => {
+            let lit = convert_lit(lit_a)?;
+            Some(Val::Lit(lit))
         }
-    }
-
-    pub fn get(&self, name: &str) -> Option<&Item> {
-        let &idx = self.index.get(name)?;
-        Some(&self.entries[idx].1)
-    }
-
-    fn get_mut(&mut self, name: &str) -> Option<&mut Item> {
-        let &idx = self.index.get(name)?;
-        Some(&mut self.entries[idx].1)
-    }
-
-    fn contains_key(&self, name: &str) -> bool {
-        self.index.contains_key(name)
-    }
-
-    /// Merge source entries into self. Returns conflicting key names.
-    fn merge(&mut self, source: Module) -> Vec<String> {
-        let mut conflicts = Vec::new();
-        for (key, item) in source.entries {
-            if self.contains_key(&key) {
-                conflicts.push(key);
-            } else {
-                self.define(key, item);
+        semtree::Val::Op(l, op_a, _params, r) => {
+            let op = op_a.inner()?;
+            match op {
+                semtree::Op::Comp(axis) => {
+                    let mut children = Vec::new();
+                    collect_comp_flat(l, *axis, &mut children);
+                    collect_comp_flat(r, *axis, &mut children);
+                    Some(Val::Comp(*axis, children))
+                }
+                semtree::Op::CompStar => {
+                    let mut children = Vec::new();
+                    collect_comp_star_flat(l, &mut children);
+                    collect_comp_star_flat(r, &mut children);
+                    Some(Val::CompStar(children))
+                }
+                semtree::Op::Arrow(arrow_ty) => {
+                    let kind = match arrow_ty {
+                        semtree::ArrowTy::To => ArrowKind::To,
+                        semtree::ArrowTy::Eq => ArrowKind::Eq,
+                        semtree::ArrowTy::Functor => ArrowKind::Functor,
+                    };
+                    let l_s = convert_val_with_span(l)?;
+                    let r_s = convert_val_with_span(r)?;
+                    Some(Val::Arrow(kind, Box::new(l_s), Box::new(r_s)))
+                }
             }
         }
-        conflicts
     }
 }
 
-impl Item {
-    fn new(kind: Option<ItemKind>) -> Self {
-        Item {
-            kind,
-            ty: None,
-            params: Vec::new(),
-            body: ItemBody::Value {
-                val: None,
-                members: Module::new(),
-            },
-            decos: Vec::new(),
-        }
-    }
+fn convert_val_with_span(val: &semtree::Val) -> Option<S<Val>> {
+    let span = val_span(val)?;
+    let v = convert_val(val)?;
+    Some(S(v, span))
+}
 
-    fn param(ty: Rc<A<semtree::Val>>) -> Self {
-        Item {
-            kind: Some(ItemKind::Param),
-            ty: Some(ty),
-            params: Vec::new(),
-            body: ItemBody::Value {
-                val: None,
-                members: Module::new(),
-            },
-            decos: Vec::new(),
+fn val_span(val: &semtree::Val) -> Option<TokenSpan> {
+    match val {
+        semtree::Val::Path(path_a) => {
+            let (_, span) = path_a.accepted()?;
+            Some(span.clone())
         }
-    }
-
-    pub fn members(&self) -> Option<&Module> {
-        match &self.body {
-            ItemBody::Value { members, .. } => Some(members),
-            _ => None,
+        semtree::Val::Lit(lit_a) => {
+            let (_, span) = lit_a.accepted()?;
+            Some(span.clone())
         }
-    }
-
-    pub fn members_mut(&mut self) -> Option<&mut Module> {
-        match &mut self.body {
-            ItemBody::Value { members, .. } => Some(members),
-            _ => None,
-        }
-    }
-
-    pub fn val(&self) -> Option<&Rc<A<semtree::Val>>> {
-        match &self.body {
-            ItemBody::Value { val, .. } => val.as_ref(),
-            _ => None,
+        semtree::Val::Op(l, _, _, r) => {
+            let l_span = val_span(l)?;
+            let r_span = val_span(r)?;
+            Some(TokenSpan {
+                start: l_span.start,
+                end: r_span.end,
+            })
         }
     }
 }
+
+fn convert_path(path_a: &A<semtree::Path>) -> Option<Path> {
+    let (path, _) = path_a.accepted()?;
+    let segments: Vec<S<Segment>> = path
+        .0
+        .iter()
+        .filter_map(|seg_a| convert_segment(seg_a))
+        .collect();
+    let applicand = match &path.1 {
+        Some(v) => Some(Box::new(convert_a_val(v)?)),
+        None => None,
+    };
+    Some(Path {
+        segments,
+        applicand,
+    })
+}
+
+fn convert_segment(seg_a: &A<semtree::Segment>) -> Option<S<Segment>> {
+    let (seg, span) = seg_a.accepted()?;
+    let (name, _) = seg.0.accepted()?;
+    let params: Vec<ParamVal> = seg
+        .1
+         .0
+        .iter()
+        .filter_map(|pv_a| convert_param_val(pv_a))
+        .collect();
+    Some(S(
+        Segment {
+            name: name.0.clone(),
+            params,
+        },
+        span.clone(),
+    ))
+}
+
+fn convert_param_val(pv_a: &A<semtree::ParamVal>) -> Option<ParamVal> {
+    let (pv, _) = pv_a.accepted()?;
+    let name = pv
+        .name
+        .as_ref()
+        .and_then(|n| n.accepted())
+        .map(|(n, _)| n.0.clone());
+    let val = convert_a_val(&pv.val)?;
+    Some(ParamVal { name, val })
+}
+
+fn convert_lit(lit_a: &A<semtree::Lit>) -> Option<Lit> {
+    let (lit, _) = lit_a.accepted()?;
+    match lit {
+        semtree::Lit::Number(s) => Some(Lit::Number(s.clone())),
+        semtree::Lit::String(s) => Some(Lit::String(s.clone())),
+        semtree::Lit::Array(vs) => {
+            let items: Vec<S<Val>> = vs.iter().filter_map(|v| convert_a_val(v)).collect();
+            Some(Lit::Array(items))
+        }
+        semtree::Lit::Object(kvs) => {
+            let items: Vec<(String, S<Val>)> = kvs
+                .iter()
+                .filter_map(|(k, v)| {
+                    let key = match k {
+                        A::Accepted(semtree::Key::Name(n), _) => n.inner()?.0.clone(),
+                        A::Accepted(semtree::Key::String(s), _) => s.inner()?.clone(),
+                        _ => return None,
+                    };
+                    let val = convert_a_val(v)?;
+                    Some((key, val))
+                })
+                .collect();
+            Some(Lit::Object(items))
+        }
+    }
+}
+
+fn collect_comp_flat(val: &semtree::Val, axis: u32, out: &mut Vec<S<Val>>) {
+    if let semtree::Val::Op(l, op_a, _, r) = val {
+        if matches!(op_a.inner(), Some(semtree::Op::Comp(n)) if *n == axis) {
+            collect_comp_flat(l, axis, out);
+            collect_comp_flat(r, axis, out);
+            return;
+        }
+    }
+    if let Some(s) = convert_val_with_span(val) {
+        out.push(s);
+    }
+}
+
+fn collect_comp_star_flat(val: &semtree::Val, out: &mut Vec<S<Val>>) {
+    if let semtree::Val::Op(l, op_a, _, r) = val {
+        if matches!(op_a.inner(), Some(semtree::Op::CompStar)) {
+            collect_comp_star_flat(l, out);
+            collect_comp_star_flat(r, out);
+            return;
+        }
+    }
+    if let Some(s) = convert_val_with_span(val) {
+        out.push(s);
+    }
+}
+
+/// Convert semtree ParamDecl ty (Rc<A<Val>>) to item::S<Val>
+fn convert_param_ty(ty: &Rc<A<semtree::Val>>) -> Option<S<Val>> {
+    convert_a_val(ty)
+}
+
+// --- Checker internals (using item types for scope) ---
 
 fn is_functor_type(val: &A<semtree::Val>) -> bool {
     if let Some(semtree::Val::Op(_, op_a, _, _)) = val.inner() {
@@ -260,9 +300,6 @@ impl<'a> Checker<'a> {
                 match self.lookup(name) {
                     Some(item) => current = Some(item.clone()),
                     None => {
-                        // TODO: temporary suppression — `*` and numeric names are
-                        // not yet resolvable in the checker; remove once proper
-                        // built-in name handling is implemented.
                         if name != "*" && !crate::convert::is_number_str(name) {
                             self.error_at(span, format!("undefined name `{}`", name));
                         }
@@ -353,7 +390,7 @@ impl<'a> Checker<'a> {
                         return;
                     };
                     if !members.contains_key(name) {
-                        return; // Error already reported in check phase
+                        return;
                     }
                     current = members.get_mut(name).unwrap();
                 }
@@ -379,12 +416,10 @@ impl<'a> Checker<'a> {
     ) {
         let members_to_merge = match item.body {
             ItemBody::Value { val, members } => {
-                if let Some(val_rc) = &val {
-                    // Body was Val - resolve the val path to get members
-                    self.resolve_val_as_members(val_rc)
+                if let Some(ref val_s) = val {
+                    self.resolve_val_as_members(val_s)
                         .unwrap_or_else(Module::new)
                 } else {
-                    // Body was Mod or None - use the collected members
                     members
                 }
             }
@@ -398,20 +433,19 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn resolve_val_as_members(&self, val_a: &A<semtree::Val>) -> Option<Module> {
-        let path = match val_a.inner() {
-            Some(semtree::Val::Path(path_a)) => path_a.inner()?,
+    fn resolve_val_as_members(&self, val_s: &S<Val>) -> Option<Module> {
+        let path = match &val_s.0 {
+            Val::Path(path) => path,
             _ => return None,
         };
         let mut current: Option<&Item> = None;
-        for (i, seg_a) in path.0.iter().enumerate() {
-            if let Some((name, _)) = seg_val_name(seg_a) {
-                if i == 0 {
-                    current = self.lookup(name);
-                } else {
-                    current =
-                        current.and_then(|item| item.members().and_then(|m| m.get(name)));
-                }
+        for (i, seg_s) in path.segments.iter().enumerate() {
+            let name = &seg_s.0.name;
+            if i == 0 {
+                current = self.lookup(name);
+            } else {
+                current =
+                    current.and_then(|item| item.members().and_then(|m| m.get(name)));
             }
         }
         Some(current?.members()?.clone())
@@ -457,9 +491,19 @@ impl<'a> Checker<'a> {
                         for param_a in &seg.1.0 {
                             if let A::Accepted(param, _) = param_a {
                                 if let A::Accepted(name, _) = &param.name {
+                                    let ty = convert_param_ty(&param.ty)
+                                        .unwrap_or_else(|| {
+                                            S(
+                                                Val::Path(Path {
+                                                    segments: Vec::new(),
+                                                    applicand: None,
+                                                }),
+                                                TokenSpan { start: 0, end: 0 },
+                                            )
+                                        });
                                     self.define(
                                         name.0.clone(),
-                                        Item::param(Rc::clone(&param.ty)),
+                                        Item::param(ty),
                                     );
                                 }
                             }
@@ -523,10 +567,12 @@ impl<'a> Checker<'a> {
                         for param_a in &seg.1.0 {
                             if let A::Accepted(param, _) = param_a {
                                 if let A::Accepted(name, _) = &param.name {
-                                    params.push(Param {
-                                        name: name.0.clone(),
-                                        ty: Rc::clone(&param.ty),
-                                    });
+                                    if let Some(ty) = convert_param_ty(&param.ty) {
+                                        params.push(Param {
+                                            name: name.0.clone(),
+                                            ty,
+                                        });
+                                    }
                                 }
                             }
                         }
@@ -567,7 +613,17 @@ impl<'a> Checker<'a> {
         for deco_a in &decos {
             if let A::Accepted(semtree::Decorator::Param(name_a, ty), _) = deco_a {
                 if let A::Accepted(name, _) = name_a {
-                    self.define(name.0.clone(), Item::param(Rc::clone(ty)));
+                    let ty = convert_param_ty(ty)
+                        .unwrap_or_else(|| {
+                            S(
+                                Val::Path(Path {
+                                    segments: Vec::new(),
+                                    applicand: None,
+                                }),
+                                TokenSpan { start: 0, end: 0 },
+                            )
+                        });
+                    self.define(name.0.clone(), Item::param(ty));
                 }
             }
         }
@@ -597,11 +653,11 @@ impl<'a> Checker<'a> {
             }
         }
 
-        // 6. Extract deco values
-        let deco_vals: Vec<Rc<A<semtree::Val>>> = decos
+        // 6. Extract deco values (convert to item::Val)
+        let deco_vals: Vec<S<Val>> = decos
             .into_iter()
             .filter_map(|d| match d {
-                A::Accepted(semtree::Decorator::Deco(val), _) => Some(Rc::new(val)),
+                A::Accepted(semtree::Decorator::Deco(val), _) => convert_a_val(&val),
                 _ => None,
             })
             .collect();
@@ -651,10 +707,10 @@ impl<'a> Checker<'a> {
 
                     let params = Self::extract_params(&names);
 
-                    let ty_rc = ty.map(|t| Rc::new(t));
+                    let ty_converted = ty.as_ref().and_then(|t| convert_a_val(t));
 
                     let (val, body_members) = match body {
-                        Some(semtree::ValMod::Val(v)) => (Some(Rc::new(v)), Module::new()),
+                        Some(semtree::ValMod::Val(v)) => (convert_a_val(&v), Module::new()),
                         Some(semtree::ValMod::Mod(m)) => {
                             (None, self.collect_module_members_owned(m))
                         }
@@ -696,10 +752,14 @@ impl<'a> Checker<'a> {
                                                 &mut existing.body
                                             {
                                                 if let Some(v) = &val {
-                                                    mappings.push(FunctorMapping {
-                                                        applicand: Rc::new(applicand),
-                                                        val: Rc::clone(v),
-                                                    });
+                                                    if let Some(app_s) =
+                                                        convert_a_val(&applicand)
+                                                    {
+                                                        mappings.push(FunctorMapping {
+                                                            applicand: app_s,
+                                                            val: v.clone(),
+                                                        });
+                                                    }
                                                 }
                                             } else {
                                                 self.error_at(
@@ -718,7 +778,7 @@ impl<'a> Checker<'a> {
                             }
                         }
                     } else {
-                        let is_functor = ty_rc
+                        let is_functor = ty
                             .as_ref()
                             .map_or(false, |t| is_functor_type(t));
                         let body = if is_functor {
@@ -733,7 +793,7 @@ impl<'a> Checker<'a> {
                         };
                         let item = Item {
                             kind,
-                            ty: ty_rc,
+                            ty: ty_converted,
                             params,
                             body,
                             decos: deco_vals,
