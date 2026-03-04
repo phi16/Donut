@@ -43,6 +43,25 @@ fn seg_val_name(seg_a: &A<semtree::Segment>) -> Option<(&str, &TokenSpan)> {
     Some((&name.0, span))
 }
 
+fn decl_item_type(unit: &semtree::DeclUnit) -> Option<ItemType> {
+    let item_type = match &unit.body {
+        Some(vm) => match vm {
+            semtree::ValMod::Val(_) => match unit.op.inner()? {
+                semtree::AssignOp::Alias => ItemType::Alias,
+                semtree::AssignOp::Def => ItemType::Def,
+                semtree::AssignOp::Decl => ItemType::Decl,
+                semtree::AssignOp::Add => return None,
+            },
+            semtree::ValMod::Mod(_) => return None,
+        },
+        None => match unit.op.inner()? {
+            semtree::AssignOp::Decl => ItemType::Decl,
+            _ => return None,
+        },
+    };
+    Some(item_type)
+}
+
 trait Check {
     fn check(&self, c: &mut Checker<'_>);
 }
@@ -139,7 +158,7 @@ impl<'a> Checker<'a> {
             } else {
                 let next = current
                     .take()
-                    .and_then(|item| item.members.get(name).cloned());
+                    .and_then(|mut item| item.members.remove(name));
                 if next.is_none() {
                     self.error_at(span, format!("undefined member `{}`", name));
                     return None;
@@ -159,9 +178,7 @@ impl<'a> Checker<'a> {
                 for d in decls {
                     d.check(self);
                 }
-                let members = self.scopes.last().cloned().unwrap_or_default();
-                self.pop_scope();
-                members
+                self.scopes.pop().unwrap_or_default()
             }
             _ => HashMap::new(), // Import: TODO
         }
@@ -169,7 +186,11 @@ impl<'a> Checker<'a> {
 
     // --- Registration ---
 
-    fn register_unit_results(&mut self, unit: &semtree::DeclUnit, body_members: HashMap<String, Item>) {
+    fn register_unit_results(
+        &mut self,
+        unit: &semtree::DeclUnit,
+        body_members: HashMap<String, Item>,
+    ) {
         // For +=, merge into existing item
         if matches!(unit.op.inner(), Some(semtree::AssignOp::Add)) {
             self.register_add(unit, body_members);
@@ -177,7 +198,7 @@ impl<'a> Checker<'a> {
         }
 
         // Build the item and register each declared name
-        let item_type = Self::decl_item_type(unit);
+        let item_type = decl_item_type(unit);
         let item = Item::with_members(item_type, body_members);
         for name_a in &unit.names {
             if let Some((pd, _)) = name_a.accepted() {
@@ -236,7 +257,9 @@ impl<'a> Checker<'a> {
     fn register_add(&mut self, unit: &semtree::DeclUnit, body_members: HashMap<String, Item>) {
         let members_to_merge = match &unit.body {
             Some(semtree::ValMod::Mod(_)) => body_members,
-            Some(semtree::ValMod::Val(val_a)) => self.resolve_val_as_members(val_a),
+            Some(semtree::ValMod::Val(val_a)) => {
+                self.resolve_val_as_members(val_a).unwrap_or_default()
+            }
             None => HashMap::new(),
         };
 
@@ -247,13 +270,10 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn resolve_val_as_members(&self, val_a: &A<semtree::Val>) -> HashMap<String, Item> {
+    fn resolve_val_as_members(&self, val_a: &A<semtree::Val>) -> Option<HashMap<String, Item>> {
         let path = match val_a.inner() {
-            Some(semtree::Val::Path(path_a)) => match path_a.inner() {
-                Some(path) => path,
-                None => return HashMap::new(),
-            },
-            _ => return HashMap::new(),
+            Some(semtree::Val::Path(path_a)) => path_a.inner()?,
+            _ => return None,
         };
         let mut current: Option<&Item> = None;
         for (i, seg_a) in path.0.iter().enumerate() {
@@ -265,9 +285,7 @@ impl<'a> Checker<'a> {
                 }
             }
         }
-        current
-            .map(|item| item.members.clone())
-            .unwrap_or_default()
+        Some(current?.members.clone())
     }
 
     fn merge_into_path(&mut self, pd: &semtree::PathDecl, new_members: HashMap<String, Item>) {
@@ -294,39 +312,19 @@ impl<'a> Checker<'a> {
         // TODO: multi-segment += / with paths
     }
 
-    fn decl_item_type(unit: &semtree::DeclUnit) -> Option<ItemType> {
-        match &unit.body {
-            Some(semtree::ValMod::Mod(_)) => None,
-            Some(semtree::ValMod::Val(_)) => match unit.op.inner() {
-                Some(semtree::AssignOp::Alias) => Some(ItemType::Alias),
-                Some(semtree::AssignOp::Def) => Some(ItemType::Def),
-                Some(semtree::AssignOp::Decl) => Some(ItemType::Decl),
-                Some(semtree::AssignOp::Add) => None,
-                None => None,
-            },
-            None => match unit.op.inner() {
-                Some(semtree::AssignOp::Decl) => Some(ItemType::Decl),
-                _ => None,
-            },
-        }
-    }
-
     // --- Unit locals ---
 
     fn register_unit_locals(&mut self, unit: &semtree::DeclUnit) {
         let is_add = matches!(unit.op.inner(), Some(semtree::AssignOp::Add));
-        let item_type = Self::decl_item_type(unit);
+        let item_type = decl_item_type(unit);
         for name_a in &unit.names {
             if let A::Accepted(pd, _) = name_a {
                 for seg_a in &pd.0 {
                     if let A::Accepted(seg, _) = seg_a {
-                        for param_a in &seg.1 .0 {
+                        for param_a in &seg.1.0 {
                             if let A::Accepted(param, _) = param_a {
                                 if let A::Accepted(name, _) = &param.name {
-                                    self.define(
-                                        name.0.clone(),
-                                        Item::new(Some(ItemType::Param)),
-                                    );
+                                    self.define(name.0.clone(), Item::new(Some(ItemType::Param)));
                                 }
                             }
                         }
@@ -340,7 +338,6 @@ impl<'a> Checker<'a> {
             }
         }
     }
-
 }
 
 // --- Check impls ---
@@ -550,7 +547,7 @@ impl Check for semtree::PathDecl {
 
         for seg_a in segs {
             if let A::Accepted(seg, _) = seg_a {
-                for param_a in &seg.1 .0 {
+                for param_a in &seg.1.0 {
                     if let A::Accepted(param, _) = param_a {
                         param.ty.check(c);
                     }
@@ -607,7 +604,8 @@ mod tests {
     fn undefined_name() {
         let errs = check_errs("x = y");
         assert!(
-            errs.iter().any(|e| e.contains("undefined") && e.contains("y")),
+            errs.iter()
+                .any(|e| e.contains("undefined") && e.contains("y")),
             "{errs:?}"
         );
     }
@@ -617,7 +615,8 @@ mod tests {
         // y is not yet defined when x is checked
         let errs = check_errs("x = y\ny = \"a\"");
         assert!(
-            errs.iter().any(|e| e.contains("undefined") && e.contains("y")),
+            errs.iter()
+                .any(|e| e.contains("undefined") && e.contains("y")),
             "{errs:?}"
         );
     }
@@ -646,7 +645,8 @@ mod tests {
     fn param_not_visible_outside() {
         let errs = check_errs("T = \"t\"\nf[x: T] = \"a\"\ny = x");
         assert!(
-            errs.iter().any(|e| e.contains("undefined") && e.contains("x")),
+            errs.iter()
+                .any(|e| e.contains("undefined") && e.contains("x")),
             "{errs:?}"
         );
     }
@@ -668,7 +668,8 @@ mod tests {
         // g is defined in where, not visible outside
         let errs = check_errs("x = \"a\"\n  where {\n    g = \"b\"\n  }\ny = g");
         assert!(
-            errs.iter().any(|e| e.contains("undefined") && e.contains("g")),
+            errs.iter()
+                .any(|e| e.contains("undefined") && e.contains("g")),
             "{errs:?}"
         );
     }
@@ -678,7 +679,8 @@ mod tests {
         // within where, top-to-bottom
         let errs = check_errs("x = g\n  where {\n    g = h\n    h = \"a\"\n  }");
         assert!(
-            errs.iter().any(|e| e.contains("undefined") && e.contains("h")),
+            errs.iter()
+                .any(|e| e.contains("undefined") && e.contains("h")),
             "{errs:?}"
         );
     }
@@ -687,7 +689,8 @@ mod tests {
     fn where_reverse_order() {
         // With reverse processing, the second where's binding is registered first,
         // making it visible in the first where clause
-        check_ok(r#"
+        check_ok(
+            r#"
 x = "val"
   where {
     a = b
@@ -695,7 +698,8 @@ x = "val"
   where {
     b = "inner"
   }
-"#);
+"#,
+        );
     }
 
     // --- Module ---
@@ -715,7 +719,8 @@ x = "val"
         // x is defined inside m, not visible outside
         let errs = check_errs("m = {\n    x = \"a\"\n}\ny = x");
         assert!(
-            errs.iter().any(|e| e.contains("undefined") && e.contains("x")),
+            errs.iter()
+                .any(|e| e.contains("undefined") && e.contains("x")),
             "{errs:?}"
         );
     }
@@ -860,7 +865,10 @@ x = "val"
     #[test]
     fn op_both_sides_checked() {
         let errs = check_errs("x = a ; b");
-        assert!(errs.len() >= 2, "expected errors for both a and b: {errs:?}");
+        assert!(
+            errs.len() >= 2,
+            "expected errors for both a and b: {errs:?}"
+        );
     }
 
     #[test]
@@ -872,17 +880,20 @@ x = "val"
 
     #[test]
     fn compound_nested_module_with_params() {
-        check_ok(r#"
+        check_ok(
+            r#"
 T = "t"
 m[x: T] = {
     inner = x
 }
-"#);
+"#,
+        );
     }
 
     #[test]
     fn compound_deep_dotted_ref_through_modules() {
-        check_ok(r#"
+        check_ok(
+            r#"
 a = {
     b = {
         c = {
@@ -891,33 +902,39 @@ a = {
     }
 }
 r = a.b.c.val
-"#);
+"#,
+        );
     }
 
     #[test]
     fn compound_dotted_decl_with_params() {
-        check_ok(r#"
+        check_ok(
+            r#"
 T = "t"
 m = "base"
 m.f[x: T] = x
-"#);
+"#,
+        );
     }
 
     #[test]
     fn compound_dotted_decl_then_ref() {
-        check_ok(r#"
+        check_ok(
+            r#"
 m = "root"
 m.a = "1"
 m.b = "2"
 x = m.a
 y = m.b
-"#);
+"#,
+        );
     }
 
     #[test]
     fn compound_with_where_combined() {
         // with must come before where in Donut syntax
-        check_ok(r#"
+        check_ok(
+            r#"
 x = g
   with {
     a = "member"
@@ -926,24 +943,28 @@ x = g
     g = "val"
   }
 r = x.a
-"#);
+"#,
+        );
     }
 
     #[test]
     fn compound_where_module_in_body() {
-        check_ok(r#"
+        check_ok(
+            r#"
 x = helper.val
   where {
     helper = {
         val = "x"
     }
   }
-"#);
+"#,
+        );
     }
 
     #[test]
     fn compound_with_nested_with() {
-        check_ok(r#"
+        check_ok(
+            r#"
 x = "val"
   with {
     a = "inner"
@@ -953,13 +974,15 @@ x = "val"
   }
 r1 = x.a
 r2 = x.a.b
-"#);
+"#,
+        );
     }
 
     #[test]
     fn compound_add_with_and_dotted_combined() {
         // Module body + with + dotted decl + += all contributing members
-        check_ok(r#"
+        check_ok(
+            r#"
 m = {
     a = "1"
 }
@@ -974,12 +997,14 @@ r1 = m.a
 r2 = m.b
 r3 = m.c
 r4 = m.d
-"#);
+"#,
+        );
     }
 
     #[test]
     fn compound_add_transfers_deep_members() {
-        check_ok(r#"
+        check_ok(
+            r#"
 src = {
     inner = {
         val = "deep"
@@ -990,50 +1015,59 @@ dst = {
 }
 dst += src
 r = dst.inner.val
-"#);
+"#,
+        );
     }
 
     #[test]
     fn compound_decorator_param_with_module() {
-        check_ok(r#"
+        check_ok(
+            r#"
 T = "t"
 [p: T] m = {
     x = p
 }
-"#);
+"#,
+        );
     }
 
     #[test]
     fn compound_param_visible_in_with() {
         // Params are visible in with clauses (with is part of the RHS)
-        check_ok(r#"
+        check_ok(
+            r#"
 T = "t"
 f[x: T] = "a"
   with {
     y = x
   }
-"#);
+"#,
+        );
     }
 
     #[test]
     fn compound_name_visible_in_where() {
         // Declared name is visible in its own where clause
-        check_ok(r#"
+        check_ok(
+            r#"
 f = g
   where {
     g = f
   }
-"#);
+"#,
+        );
     }
 
     #[test]
     fn compound_dotted_decl_duplicate_member() {
-        let errs = check_errs(r#"
+        let errs = check_errs(
+            r#"
 m = {
     x = "1"
 }
 m.x = "2"
-"#);
+"#,
+        );
         assert!(
             errs.iter()
                 .any(|e| e.contains("duplicate member") && e.contains("x")),
@@ -1043,7 +1077,8 @@ m.x = "2"
 
     #[test]
     fn compound_with_on_both_decls() {
-        check_ok(r#"
+        check_ok(
+            r#"
 a = "v1"
   with {
     x = "m1"
@@ -1054,23 +1089,27 @@ b = "v2"
   }
 r1 = a.x
 r2 = b.y
-"#);
+"#,
+        );
     }
 
     #[test]
     fn compound_multi_name_decl_only() {
         // Multiple names allowed in declaration-only form
-        check_ok(r#"
+        check_ok(
+            r#"
 T = "t"
 a b: T
 r1 = a
 r2 = b
-"#);
+"#,
+        );
     }
 
     #[test]
     fn compound_kitchen_sink() {
-        check_ok(r#"
+        check_ok(
+            r#"
 T = "type"
 U = "type2"
 
@@ -1094,19 +1133,22 @@ ext.extra = "e"
 r1 = ext.sub
 r2 = ext.extra
 r3 = base.core.v
-"#);
+"#,
+        );
     }
 
     #[test]
     fn compound_error_deep_undefined_member() {
-        let errs = check_errs(r#"
+        let errs = check_errs(
+            r#"
 a = {
     b = {
         c = "x"
     }
 }
 r = a.b.missing.c
-"#);
+"#,
+        );
         assert!(
             errs.iter()
                 .any(|e| e.contains("undefined member") && e.contains("missing")),
@@ -1116,13 +1158,15 @@ r = a.b.missing.c
 
     #[test]
     fn compound_error_add_then_duplicate_via_dotted() {
-        let errs = check_errs(r#"
+        let errs = check_errs(
+            r#"
 m = "base"
 m += {
     x = "1"
 }
 m.x = "2"
-"#);
+"#,
+        );
         assert!(
             errs.iter()
                 .any(|e| e.contains("duplicate member") && e.contains("x")),
@@ -1134,31 +1178,36 @@ m.x = "2"
 
     #[test]
     fn anon_block_names_visible_outside() {
-        check_ok(r#"
+        check_ok(
+            r#"
 {
     x = "a"
     y = "b"
 }
 r1 = x
 r2 = y
-"#);
+"#,
+        );
     }
 
     #[test]
     fn anon_block_with_decorator() {
-        check_ok(r#"
+        check_ok(
+            r#"
 T = "t"
 [T] {
     x = "a"
     y = "b"
 }
 r = x
-"#);
+"#,
+        );
     }
 
     #[test]
     fn anon_block_where() {
-        check_ok(r#"
+        check_ok(
+            r#"
 {
     x = g
 }
@@ -1166,38 +1215,45 @@ r = x
     g = "val"
   }
 r = x
-"#);
+"#,
+        );
     }
 
     #[test]
     fn anon_block_deco_param_visible() {
-        check_ok(r#"
+        check_ok(
+            r#"
 T = "t"
 [p: T] {
     x = p
 }
 r = x
-"#);
+"#,
+        );
     }
 
     #[test]
     fn anon_block_deco_param_not_leaking() {
-        let errs = check_errs(r#"
+        let errs = check_errs(
+            r#"
 T = "t"
 [p: T] {
     x = p
 }
 r = p
-"#);
+"#,
+        );
         assert!(
-            errs.iter().any(|e| e.contains("undefined") && e.contains("p")),
+            errs.iter()
+                .any(|e| e.contains("undefined") && e.contains("p")),
             "{errs:?}"
         );
     }
 
     #[test]
     fn anon_block_where_not_leaking() {
-        let errs = check_errs(r#"
+        let errs = check_errs(
+            r#"
 {
     x = g
 }
@@ -1205,16 +1261,19 @@ r = p
     g = "val"
   }
 r = g
-"#);
+"#,
+        );
         assert!(
-            errs.iter().any(|e| e.contains("undefined") && e.contains("g")),
+            errs.iter()
+                .any(|e| e.contains("undefined") && e.contains("g")),
             "{errs:?}"
         );
     }
 
     #[test]
     fn anon_block_with() {
-        check_ok(r#"
+        check_ok(
+            r#"
 {
     x = "a"
 }
@@ -1223,20 +1282,24 @@ r = g
   }
 r1 = x
 r2 = y
-"#);
+"#,
+        );
     }
 
     #[test]
     fn anon_block_ordering() {
         // Top-to-bottom within the block
-        let errs = check_errs(r#"
+        let errs = check_errs(
+            r#"
 {
     x = y
     y = "a"
 }
-"#);
+"#,
+        );
         assert!(
-            errs.iter().any(|e| e.contains("undefined") && e.contains("y")),
+            errs.iter()
+                .any(|e| e.contains("undefined") && e.contains("y")),
             "{errs:?}"
         );
     }
