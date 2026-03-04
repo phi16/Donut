@@ -91,57 +91,45 @@ impl<'a> Converter<'a> {
 
     // --- Val conversion ---
 
-    /// Convert A<syntree::Val> → Option<S<semtree::Val>>. None on error.
-    fn convert_val_a(&mut self, val_a: A<syntree::Val>) -> Option<S<semtree::Val>> {
-        match val_a {
-            A::Accepted(val, _) => self.convert_val(val),
-            A::Error(_) => None,
-        }
-    }
-
     /// Convert A<syntree::Val> → S<semtree::Val>, using Val::Any for errors.
-    fn convert_val_a_or_any(&mut self, val_a: A<syntree::Val>) -> S<semtree::Val> {
+    fn convert_val_a(&mut self, val_a: A<syntree::Val>) -> S<semtree::Val> {
         match val_a {
-            A::Accepted(val, span) => self.convert_val(val)
-                .unwrap_or_else(|| S(semtree::Val::Any, span)),
+            A::Accepted(val, span) => self.convert_val(val, &span),
             A::Error(span) => S(semtree::Val::Any, span),
         }
     }
 
-    fn convert_val(&mut self, val: syntree::Val) -> Option<S<semtree::Val>> {
-        self.build_val_tree(val.vs, val.ops)
+    fn convert_val(&mut self, val: syntree::Val, span: &TokenSpan) -> S<semtree::Val> {
+        self.build_val_tree(val.vs, val.ops, span)
     }
 
-    fn convert_val0(&mut self, val0: syntree::Val0, span: &TokenSpan) -> Option<semtree::Val> {
+    fn convert_val0(&mut self, val0: syntree::Val0, span: &TokenSpan) -> semtree::Val {
         match val0 {
             syntree::Val0::Path(path_a) => match *path_a {
                 A::Accepted(path, path_span) => {
                     if let Some(num_str) = try_as_number_literal(&path) {
-                        Some(semtree::Val::Lit(S(
-                            semtree::Lit::Number(num_str),
-                            path_span,
-                        )))
+                        semtree::Val::Lit(S(semtree::Lit::Number(num_str), path_span))
                     } else {
                         let converted = self.convert_path_val(path);
-                        Some(semtree::Val::Path(Box::new(S(converted, path_span))))
+                        semtree::Val::Path(Box::new(S(converted, path_span)))
                     }
                 }
-                A::Error(_) => None,
+                A::Error(_) => semtree::Val::Any,
             }
             syntree::Val0::Lit(lit_a) => match lit_a {
                 A::Accepted(lit, lit_span) => {
                     let converted = self.convert_lit(lit);
-                    Some(semtree::Val::Lit(S(converted, lit_span)))
+                    semtree::Val::Lit(S(converted, lit_span))
                 }
-                A::Error(_) => None,
+                A::Error(_) => semtree::Val::Any,
             },
             syntree::Val0::Paren(val_a) => match *val_a {
-                A::Accepted(inner, _) => self.convert_val(inner).map(|s| s.0),
-                A::Error(_) => None,
+                A::Accepted(inner, inner_span) => self.convert_val(inner, &inner_span).0,
+                A::Error(_) => semtree::Val::Any,
             },
             syntree::Val0::Dots => {
                 self.error_at(span, "found `...` in value");
-                None
+                semtree::Val::Any
             }
         }
     }
@@ -151,7 +139,7 @@ impl<'a> Converter<'a> {
             syntree::Lit::Number(s) => semtree::Lit::Number(s),
             syntree::Lit::String(s) => semtree::Lit::String(s),
             syntree::Lit::Array(vs) => {
-                semtree::Lit::Array(vs.into_iter().map(|v| self.convert_val_a_or_any(v)).collect())
+                semtree::Lit::Array(vs.into_iter().map(|v| self.convert_val_a(v)).collect())
             }
             syntree::Lit::Object(kvs) => semtree::Lit::Object(
                 kvs.into_iter()
@@ -172,7 +160,7 @@ impl<'a> Converter<'a> {
                             }
                             A::Error(_) => return None,
                         };
-                        let val = self.convert_val_a_or_any(v);
+                        let val = self.convert_val_a(v);
                         Some((key, val))
                     })
                     .collect(),
@@ -184,30 +172,30 @@ impl<'a> Converter<'a> {
         &mut self,
         mut vs: Vec<A<syntree::Val0>>,
         mut ops: Vec<(A<syntree::Op>, Option<A<syntree::Params>>)>,
-    ) -> Option<S<semtree::Val>> {
+        fallback: &TokenSpan,
+    ) -> S<semtree::Val> {
         if ops.is_empty() {
-            let v0_a = vs.into_iter().next()?;
-            return match v0_a {
-                A::Accepted(v0, span) => {
-                    let val = self.convert_val0(v0, &span)?;
-                    Some(S(val, span))
-                }
-                A::Error(_) => None,
+            return match vs.into_iter().next() {
+                Some(A::Accepted(v0, span)) => S(self.convert_val0(v0, &span), span),
+                Some(A::Error(span)) => S(semtree::Val::Any, span),
+                None => S(semtree::Val::Any, fallback.clone()),
             };
         }
 
-        let split = self.find_weakest_op(&ops)?;
+        let Some(split) = self.find_weakest_op(&ops) else {
+            return S(semtree::Val::Any, fallback.clone());
+        };
 
         let right_vs = vs.split_off(split + 1);
         let right_ops = ops.split_off(split + 1);
         let (op_a, params_a) = ops.pop().unwrap();
 
-        let left = self.build_val_tree(vs, ops)?;
-        let right = self.build_val_tree(right_vs, right_ops)?;
+        let left = self.build_val_tree(vs, ops, fallback);
+        let right = self.build_val_tree(right_vs, right_ops, fallback);
 
         let op = match op_a {
             A::Accepted(op, span) => S(op.convert(self), span),
-            A::Error(_) => return None,
+            A::Error(_) => return S(semtree::Val::Any, fallback.clone()),
         };
         let params = params_a.and_then(|p| match p {
             A::Accepted(params, _) => Some(self.convert_params_val(params)),
@@ -218,10 +206,10 @@ impl<'a> Converter<'a> {
             start: left.1.start,
             end: right.1.end,
         };
-        Some(S(
+        S(
             semtree::Val::Op(Box::new(left), op, params, Box::new(right)),
             span,
-        ))
+        )
     }
 
     /// Find the index of the weakest (lowest-precedence) operator.
@@ -394,7 +382,7 @@ impl<'a> Converter<'a> {
             })
             .collect();
 
-        let ty = unit.ty.and_then(|v| self.convert_val_a(v));
+        let ty = unit.ty.map(|v| self.convert_val_a(v));
 
         // Multiple names only allowed in declaration-only form (no assignment)
         if names.len() > 1 && unit.assign.is_some() {
@@ -434,7 +422,7 @@ impl<'a> Converter<'a> {
     fn convert_valmod(&mut self, vm: syntree::ValMod) -> semtree::ValMod {
         match vm {
             syntree::ValMod::Val(v) => {
-                semtree::ValMod::Val(self.convert_val_a_or_any(v))
+                semtree::ValMod::Val(self.convert_val_a(v))
             }
             syntree::ValMod::Mod(m) => match m {
                 A::Accepted(m, span) => {
@@ -464,27 +452,25 @@ impl<'a> Converter<'a> {
             match clause_a {
                 A::Accepted(syntree::Clause(ty_a, mod_a), _) => {
                     let converted = match mod_a {
-                        A::Accepted(m, span) => Some(S(m.convert(self), span)),
-                        A::Error(_) => None,
+                        A::Accepted(m, span) => S(m.convert(self), span),
+                        A::Error(span) => S(semtree::Module::Block(vec![]), span),
                     };
-                    if let Some(converted) = converted {
-                        match ty_a {
-                            A::Accepted(syntree::ClauseTy::With, ty_span) => {
-                                if seen_where {
-                                    self.error_at(
-                                        &ty_span,
-                                        "`with` clause must come before `where` clause",
-                                    );
-                                }
-                                with_clauses.push(converted);
+                    match ty_a {
+                        A::Accepted(syntree::ClauseTy::With, ty_span) => {
+                            if seen_where {
+                                self.error_at(
+                                    &ty_span,
+                                    "`with` clause must come before `where` clause",
+                                );
                             }
-                            A::Accepted(syntree::ClauseTy::Where, _) => {
-                                seen_where = true;
-                                self.check_where_alias_only(&converted);
-                                where_clauses.push(converted);
-                            }
-                            A::Error(_) => {}
+                            with_clauses.push(converted);
                         }
+                        A::Accepted(syntree::ClauseTy::Where, _) => {
+                            seen_where = true;
+                            self.check_where_alias_only(&converted);
+                            where_clauses.push(converted);
+                        }
+                        A::Error(_) => {}
                     }
                 }
                 A::Error(_) => {}
@@ -553,7 +539,7 @@ impl<'a> Converter<'a> {
     ) {
         match param.ty {
             Some(syntree::ParamTy::Decl) => {
-                let val = Rc::new(self.convert_val_a_or_any(param.val));
+                let val = Rc::new(self.convert_val_a(param.val));
                 for name_a in param.names {
                     match name_a {
                         A::Accepted(name, _) => {
@@ -570,7 +556,7 @@ impl<'a> Converter<'a> {
                 self.error_at(&span, "named parameter is not allowed in decorator");
             }
             None => {
-                let val = self.convert_val_a_or_any(param.val);
+                let val = self.convert_val_a(param.val);
                 result.push(semtree::Decorator::Deco(val));
             }
         }
@@ -591,7 +577,7 @@ impl<'a> Converter<'a> {
                 A::Error(_) => None,
             })
             .collect();
-        let val = path.1.and_then(|v| self.convert_val_a(v));
+        let val = path.1.map(|v| self.convert_val_a(v));
         semtree::Path(segments, val)
     }
 
@@ -642,7 +628,7 @@ impl<'a> Converter<'a> {
             match param_a {
                 A::Accepted(param, span) => match param.ty {
                     Some(syntree::ParamTy::Decl) => {
-                        let ty = Rc::new(self.convert_val_a_or_any(param.val));
+                        let ty = Rc::new(self.convert_val_a(param.val));
                         for name_a in param.names {
                             match name_a {
                                 A::Accepted(name, _) => {
@@ -695,11 +681,11 @@ impl<'a> Converter<'a> {
                                 A::Accepted(n, _) => Some(n.convert(self)),
                                 A::Error(_) => None,
                             });
-                        let val = self.convert_val_a_or_any(param.val);
+                        let val = self.convert_val_a(param.val);
                         result.push(semtree::ParamVal { name, val });
                     }
                     None => {
-                        let val = self.convert_val_a_or_any(param.val);
+                        let val = self.convert_val_a(param.val);
                         result.push(semtree::ParamVal { name: None, val });
                     }
                     Some(syntree::ParamTy::Decl) => {
