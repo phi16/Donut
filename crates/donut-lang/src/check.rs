@@ -43,6 +43,18 @@ fn seg_val_name(seg_a: &A<semtree::Segment>) -> Option<(&str, &TokenSpan)> {
     Some((&name.0, span))
 }
 
+trait Check {
+    fn check(&self, c: &mut Checker<'_>);
+}
+
+impl<T: Check> Check for A<T> {
+    fn check(&self, c: &mut Checker<'_>) {
+        if let Some(v) = self.inner() {
+            v.check(c);
+        }
+    }
+}
+
 struct Checker<'a> {
     tokens: &'a [Token<'a>],
     scopes: Vec<HashMap<String, Item>>,
@@ -138,31 +150,15 @@ impl<'a> Checker<'a> {
         current
     }
 
-    // --- Program & Module ---
+    // --- Module ---
 
-    fn check_program(&mut self, program: &A<semtree::Program>) {
-        if let A::Accepted(prog, _) = program {
-            self.check_decls(&prog.0);
-        }
-    }
-
-    fn check_decls(&mut self, decls: &[A<semtree::Decl>]) {
-        for decl_a in decls {
-            if let A::Accepted(decl, _) = decl_a {
-                // Phase 1: Check body (declared name NOT yet in scope)
-                let body_members = self.check_decl_core(decl);
-                // Phase 2: Register the declaration
-                self.register_decl(decl, body_members);
-            }
-        }
-    }
-
-    /// Process a module and return its member map.
     fn collect_module_members(&mut self, module: &A<semtree::Module>) -> HashMap<String, Item> {
         match module.inner() {
             Some(semtree::Module::Block(decls)) => {
                 self.push_scope();
-                self.check_decls(decls);
+                for d in decls {
+                    d.check(self);
+                }
                 let members = self.scopes.last().cloned().unwrap_or_default();
                 self.pop_scope();
                 members
@@ -173,15 +169,7 @@ impl<'a> Checker<'a> {
 
     // --- Registration ---
 
-    fn register_decl(&mut self, decl: &semtree::Decl, body_members: HashMap<String, Item>) {
-        let unit = match &decl.main {
-            semtree::DeclMain::Unit(unit_a) => match unit_a.inner() {
-                Some(unit) => unit,
-                None => return,
-            },
-            semtree::DeclMain::Mod(_) => return, // anonymous, nothing to register
-        };
-
+    fn register_unit_results(&mut self, unit: &semtree::DeclUnit, body_members: HashMap<String, Item>) {
         // For +=, merge into existing item
         if matches!(unit.op.inner(), Some(semtree::AssignOp::Add)) {
             self.register_add(unit, body_members);
@@ -323,41 +311,11 @@ impl<'a> Checker<'a> {
         }
     }
 
-    // --- Decl checking ---
+    // --- Unit locals ---
 
-    fn check_decl_core(&mut self, decl: &semtree::Decl) -> HashMap<String, Item> {
-        for deco in &decl.decos {
-            self.check_decorator(deco);
-        }
-        match &decl.main {
-            semtree::DeclMain::Unit(unit_a) => match unit_a.inner() {
-                Some(unit) => self.check_decl_unit(
-                    unit,
-                    &decl.decos,
-                    &decl.with_clauses,
-                    &decl.where_clauses,
-                ),
-                None => HashMap::new(),
-            },
-            semtree::DeclMain::Mod(mod_a) => {
-                self.collect_module_members(mod_a);
-                HashMap::new()
-            }
-        }
-    }
-
-    fn register_params(
-        &mut self,
-        unit: &semtree::DeclUnit,
-        decos: &[A<semtree::Decorator>],
-    ) {
-        for deco_a in decos {
-            if let A::Accepted(semtree::Decorator::Param(name_a, _), _) = deco_a {
-                if let A::Accepted(name, _) = name_a {
-                    self.define(name.0.clone(), Item::new(Some(ItemType::Param)));
-                }
-            }
-        }
+    fn register_unit_locals(&mut self, unit: &semtree::DeclUnit) {
+        let is_add = matches!(unit.op.inner(), Some(semtree::AssignOp::Add));
+        let item_type = Self::decl_item_type(unit);
         for name_a in &unit.names {
             if let A::Accepted(pd, _) = name_a {
                 for seg_a in &pd.0 {
@@ -374,35 +332,129 @@ impl<'a> Checker<'a> {
                         }
                     }
                 }
+                if !is_add && pd.0.len() == 1 {
+                    if let Some((name, _)) = pd.0.first().and_then(seg_decl_name) {
+                        self.define(name.to_owned(), Item::new(item_type));
+                    }
+                }
             }
         }
     }
 
-    fn check_decl_unit(
-        &mut self,
-        unit: &semtree::DeclUnit,
-        decos: &[A<semtree::Decorator>],
-        with_clauses: &[A<semtree::Module>],
-        where_clauses: &[A<semtree::Module>],
-    ) -> HashMap<String, Item> {
-        // 1. Check path declarations and type annotation in current (outer) scope
-        for name_a in &unit.names {
-            if let Some((pd, _)) = name_a.accepted() {
-                self.check_path_decl_refs(pd);
-            }
+}
+
+// --- Check impls ---
+
+impl Check for semtree::Program {
+    fn check(&self, c: &mut Checker<'_>) {
+        for d in &self.0 {
+            d.check(c);
         }
-        if let Some(ty) = &unit.ty {
-            self.check_val_a(ty);
+    }
+}
+
+impl Check for semtree::Decl {
+    fn check(&self, c: &mut Checker<'_>) {
+        for deco in &self.decos {
+            deco.check(c);
         }
 
-        // For +=, check that LHS already exists
-        if matches!(unit.op.inner(), Some(semtree::AssignOp::Add)) {
-            for name_a in &unit.names {
+        let unit = match &self.main {
+            semtree::DeclMain::Unit(u) => u.inner(),
+            semtree::DeclMain::Mod(_) => None,
+        };
+
+        // Unit: pre-checks in outer scope
+        if let Some(unit) = unit {
+            unit.check(c);
+        }
+
+        // 1. Local scope (deco params + where bindings)
+        c.push_scope();
+        for deco_a in &self.decos {
+            if let A::Accepted(semtree::Decorator::Param(name_a, _), _) = deco_a {
+                if let A::Accepted(name, _) = name_a {
+                    c.define(name.0.clone(), Item::new(Some(ItemType::Param)));
+                }
+            }
+        }
+        if let Some(unit) = unit {
+            c.register_unit_locals(unit);
+        }
+        for wm in self.where_clauses.iter().rev() {
+            if let A::Accepted(semtree::Module::Block(decls), _) = wm {
+                for d in decls {
+                    d.check(c);
+                }
+            }
+        }
+
+        // 2. Result = body + with
+        let body_members = match &self.main {
+            semtree::DeclMain::Unit(_) => match unit {
+                Some(unit) => match &unit.body {
+                    Some(semtree::ValMod::Val(v)) => {
+                        v.check(c);
+                        HashMap::new()
+                    }
+                    Some(semtree::ValMod::Mod(m)) => c.collect_module_members(m),
+                    None => HashMap::new(),
+                },
+                None => HashMap::new(),
+            },
+            semtree::DeclMain::Mod(mod_a) => c.collect_module_members(mod_a),
+        };
+        let mut result = body_members;
+        for with_mod in &self.with_clauses {
+            let with_members = c.collect_module_members(with_mod);
+            let conflicts = Checker::merge_members(&mut result, with_members);
+            if let A::Accepted(_, span) = with_mod {
+                for key in conflicts {
+                    c.error_at(span, format!("duplicate member `{}`", key));
+                }
+            }
+        }
+
+        c.pop_scope();
+
+        // 3. Unit → register / 4. Mod → promote
+        match &self.main {
+            semtree::DeclMain::Unit(_) => {
+                if let Some(unit) = unit {
+                    c.register_unit_results(unit, result);
+                }
+            }
+            semtree::DeclMain::Mod(mod_a) => {
+                if let Some(scope) = c.scopes.last_mut() {
+                    let conflicts = Checker::merge_members(scope, result);
+                    if let A::Accepted(_, span) = mod_a {
+                        for key in conflicts {
+                            c.error_at(span, format!("duplicate member `{}`", key));
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl Check for semtree::DeclUnit {
+    fn check(&self, c: &mut Checker<'_>) {
+        for name_a in &self.names {
+            if let Some((pd, _)) = name_a.accepted() {
+                pd.check(c);
+            }
+        }
+        if let Some(ty) = &self.ty {
+            ty.check(c);
+        }
+        if matches!(self.op.inner(), Some(semtree::AssignOp::Add)) {
+            for name_a in &self.names {
                 if let Some((pd, _)) = name_a.accepted() {
                     if pd.0.len() == 1 {
                         if let Some((name, span)) = pd.0.first().and_then(seg_decl_name) {
-                            if self.lookup(name).is_none() {
-                                self.error_at(
+                            if c.lookup(name).is_none() {
+                                c.error_at(
                                     span,
                                     format!("`{}` must be declared before `+=`", name),
                                 );
@@ -412,164 +464,71 @@ impl<'a> Checker<'a> {
                 }
             }
         }
-
-        // 2. Push inner scope for params + where
-        self.push_scope();
-        self.register_params(unit, decos);
-
-        // Temporarily register declared name(s) for self-reference in where/body/with
-        if !matches!(unit.op.inner(), Some(semtree::AssignOp::Add)) {
-            let item_type = Self::decl_item_type(unit);
-            for name_a in &unit.names {
-                if let Some((pd, _)) = name_a.accepted() {
-                    if pd.0.len() == 1 {
-                        if let Some((name, _)) = pd.0.first().and_then(seg_decl_name) {
-                            self.define(name.to_owned(), Item::new(item_type));
-                        }
-                    }
-                }
-            }
-        }
-
-        // Check and register where clause names (visible in body)
-        for wm in where_clauses {
-            self.check_and_register_where(wm);
-        }
-
-        // 3. Check body in inner scope and extract members
-        let body_members = match &unit.body {
-            Some(semtree::ValMod::Val(v)) => {
-                self.check_val_a(v);
-                HashMap::new()
-            }
-            Some(semtree::ValMod::Mod(m)) => self.collect_module_members(m),
-            None => HashMap::new(),
-        };
-
-        // 4. Process with clauses in inner scope (params + declared name visible)
-        let mut all_members = body_members;
-        for with_mod in with_clauses {
-            let with_members = self.collect_module_members(with_mod);
-            let conflicts = Self::merge_members(&mut all_members, with_members);
-            if let A::Accepted(_, span) = with_mod {
-                for key in conflicts {
-                    self.error_at(span, format!("duplicate member `{}`", key));
-                }
-            }
-        }
-
-        self.pop_scope();
-        all_members
     }
+}
 
-    fn check_path_decl_refs(&mut self, pd: &semtree::PathDecl) {
-        let segs = &pd.0;
-
-        // For multi-segment paths (a.b.c), check all but last exist
-        if segs.len() > 1 {
-            let prefix: Vec<_> = segs[..segs.len() - 1]
-                .iter()
-                .filter_map(seg_decl_name)
-                .collect();
-            self.resolve_segments(&prefix);
-        }
-
-        // Check param types on all segments
-        for seg_a in segs {
-            if let A::Accepted(seg, _) = seg_a {
-                for param_a in &seg.1 .0 {
-                    if let A::Accepted(param, _) = param_a {
-                        self.check_val_a(&param.ty);
-                    }
-                }
-            }
-        }
-
-        // Check optional val suffix
-        if let Some(v) = &pd.1 {
-            self.check_val_a(v);
+impl Check for semtree::Decorator {
+    fn check(&self, c: &mut Checker<'_>) {
+        match self {
+            semtree::Decorator::Param(_, ty) => ty.check(c),
+            semtree::Decorator::Deco(v) => v.check(c),
         }
     }
+}
 
-    fn check_and_register_where(&mut self, module: &A<semtree::Module>) {
-        if let A::Accepted(semtree::Module::Block(decls), _) = module {
-            self.check_decls(decls);
-        }
-    }
-
-    // --- Decorator ---
-
-    fn check_decorator(&mut self, deco: &A<semtree::Decorator>) {
-        match deco.inner() {
-            Some(semtree::Decorator::Param(_, ty)) => self.check_val_a(ty),
-            Some(semtree::Decorator::Deco(v)) => self.check_val_a(v),
-            None => {}
-        }
-    }
-
-    // --- Val ---
-
-    fn check_val_a(&mut self, val: &A<semtree::Val>) {
-        if let Some(v) = val.inner() {
-            self.check_val(v);
-        }
-    }
-
-    fn check_val(&mut self, val: &semtree::Val) {
-        match val {
-            semtree::Val::Path(path_a) => {
-                if let Some(path) = path_a.inner() {
-                    self.check_path_ref(path);
-                }
-            }
-            semtree::Val::Lit(lit_a) => {
-                if let Some(lit) = lit_a.inner() {
-                    self.check_lit(lit);
-                }
-            }
+impl Check for semtree::Val {
+    fn check(&self, c: &mut Checker<'_>) {
+        match self {
+            semtree::Val::Path(path_a) => path_a.check(c),
+            semtree::Val::Lit(lit_a) => lit_a.check(c),
             semtree::Val::Op(l, _, params, r) => {
-                self.check_val(l);
-                if let Some(pv) = params.as_ref().and_then(|p| p.inner()) {
-                    self.check_params_val(pv);
+                l.check(c);
+                if let Some(p) = params {
+                    p.check(c);
                 }
-                self.check_val(r);
+                r.check(c);
             }
         }
     }
+}
 
-    fn check_path_ref(&mut self, path: &semtree::Path) {
-        let name_spans: Vec<_> = path.0.iter().filter_map(seg_val_name).collect();
-        self.resolve_segments(&name_spans);
+impl Check for semtree::Path {
+    fn check(&self, c: &mut Checker<'_>) {
+        let name_spans: Vec<_> = self.0.iter().filter_map(seg_val_name).collect();
+        c.resolve_segments(&name_spans);
 
-        // Check params on all segments (even if resolution failed)
-        for seg_a in &path.0 {
+        for seg_a in &self.0 {
             if let A::Accepted(seg, _) = seg_a {
-                self.check_params_val(&seg.1);
+                seg.1.check(c);
             }
         }
-        if let Some(v) = &path.1 {
-            self.check_val_a(v);
+        if let Some(v) = &self.1 {
+            v.check(c);
         }
     }
+}
 
-    fn check_params_val(&mut self, params: &semtree::ParamsVal) {
-        for param_a in &params.0 {
+impl Check for semtree::ParamsVal {
+    fn check(&self, c: &mut Checker<'_>) {
+        for param_a in &self.0 {
             if let A::Accepted(param, _) = param_a {
-                self.check_val_a(&param.val);
+                param.val.check(c);
             }
         }
     }
+}
 
-    fn check_lit(&mut self, lit: &semtree::Lit) {
-        match lit {
+impl Check for semtree::Lit {
+    fn check(&self, c: &mut Checker<'_>) {
+        match self {
             semtree::Lit::Array(vs) => {
                 for v in vs {
-                    self.check_val_a(v);
+                    v.check(c);
                 }
             }
             semtree::Lit::Object(kvs) => {
                 for (_, v) in kvs {
-                    self.check_val_a(v);
+                    v.check(c);
                 }
             }
             _ => {}
@@ -577,9 +536,37 @@ impl<'a> Checker<'a> {
     }
 }
 
+impl Check for semtree::PathDecl {
+    fn check(&self, c: &mut Checker<'_>) {
+        let segs = &self.0;
+
+        if segs.len() > 1 {
+            let prefix: Vec<_> = segs[..segs.len() - 1]
+                .iter()
+                .filter_map(seg_decl_name)
+                .collect();
+            c.resolve_segments(&prefix);
+        }
+
+        for seg_a in segs {
+            if let A::Accepted(seg, _) = seg_a {
+                for param_a in &seg.1 .0 {
+                    if let A::Accepted(param, _) = param_a {
+                        param.ty.check(c);
+                    }
+                }
+            }
+        }
+
+        if let Some(v) = &self.1 {
+            v.check(c);
+        }
+    }
+}
+
 pub fn check(program: &A<semtree::Program>, tokens: &[Token]) -> Vec<Error> {
     let mut checker = Checker::new(tokens);
-    checker.check_program(program);
+    program.check(&mut checker);
     checker.errors
 }
 
@@ -694,6 +681,21 @@ mod tests {
             errs.iter().any(|e| e.contains("undefined") && e.contains("h")),
             "{errs:?}"
         );
+    }
+
+    #[test]
+    fn where_reverse_order() {
+        // With reverse processing, the second where's binding is registered first,
+        // making it visible in the first where clause
+        check_ok(r#"
+x = "val"
+  where {
+    a = b
+  }
+  where {
+    b = "inner"
+  }
+"#);
     }
 
     // --- Module ---
@@ -1124,6 +1126,117 @@ m.x = "2"
         assert!(
             errs.iter()
                 .any(|e| e.contains("duplicate member") && e.contains("x")),
+            "{errs:?}"
+        );
+    }
+
+    // --- Anonymous block tests ---
+
+    #[test]
+    fn anon_block_names_visible_outside() {
+        check_ok(r#"
+{
+    x = "a"
+    y = "b"
+}
+r1 = x
+r2 = y
+"#);
+    }
+
+    #[test]
+    fn anon_block_with_decorator() {
+        check_ok(r#"
+T = "t"
+[T] {
+    x = "a"
+    y = "b"
+}
+r = x
+"#);
+    }
+
+    #[test]
+    fn anon_block_where() {
+        check_ok(r#"
+{
+    x = g
+}
+  where {
+    g = "val"
+  }
+r = x
+"#);
+    }
+
+    #[test]
+    fn anon_block_deco_param_visible() {
+        check_ok(r#"
+T = "t"
+[p: T] {
+    x = p
+}
+r = x
+"#);
+    }
+
+    #[test]
+    fn anon_block_deco_param_not_leaking() {
+        let errs = check_errs(r#"
+T = "t"
+[p: T] {
+    x = p
+}
+r = p
+"#);
+        assert!(
+            errs.iter().any(|e| e.contains("undefined") && e.contains("p")),
+            "{errs:?}"
+        );
+    }
+
+    #[test]
+    fn anon_block_where_not_leaking() {
+        let errs = check_errs(r#"
+{
+    x = g
+}
+  where {
+    g = "val"
+  }
+r = g
+"#);
+        assert!(
+            errs.iter().any(|e| e.contains("undefined") && e.contains("g")),
+            "{errs:?}"
+        );
+    }
+
+    #[test]
+    fn anon_block_with() {
+        check_ok(r#"
+{
+    x = "a"
+}
+  with {
+    y = "b"
+  }
+r1 = x
+r2 = y
+"#);
+    }
+
+    #[test]
+    fn anon_block_ordering() {
+        // Top-to-bottom within the block
+        let errs = check_errs(r#"
+{
+    x = y
+    y = "a"
+}
+"#);
+        assert!(
+            errs.iter().any(|e| e.contains("undefined") && e.contains("y")),
             "{errs:?}"
         );
     }
