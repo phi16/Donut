@@ -15,19 +15,12 @@ pub struct ParamVal {
     pub val: S<Val>,
 }
 #[derive(Debug)]
-pub struct ParamsDecl(pub Vec<ParamDecl>);
-#[derive(Debug)]
-pub struct ParamsVal(pub Vec<ParamVal>);
+pub struct Params<T>(pub Vec<T>);
 
 #[derive(Debug)]
-pub struct SegmentDecl(pub Name, pub ParamsDecl);
+pub struct Segment<P>(pub Name, pub Params<P>);
 #[derive(Debug)]
-pub struct PathDecl(pub Vec<S<SegmentDecl>>, pub Option<S<Val>>);
-
-#[derive(Debug)]
-pub struct Segment(pub Name, pub ParamsVal);
-#[derive(Debug)]
-pub struct Path(pub Vec<S<Segment>>, pub Option<S<Val>>);
+pub struct Path<P>(pub Vec<S<Segment<P>>>, pub Option<S<Val>>);
 
 #[derive(Debug)]
 pub enum Key {
@@ -56,9 +49,9 @@ pub enum Op {
 }
 #[derive(Debug)]
 pub enum Val {
-    Path(Box<S<Path>>),
+    Path(Box<S<Path<ParamVal>>>),
     Lit(S<Lit>),
-    Op(Box<Val>, S<Op>, Option<ParamsVal>, Box<Val>),
+    Op(Box<Val>, S<Op>, Option<Params<ParamVal>>, Box<Val>),
     Any,
 }
 
@@ -82,7 +75,7 @@ pub enum ValMod {
 }
 #[derive(Debug)]
 pub struct DeclUnit {
-    pub names: Vec<S<PathDecl>>,
+    pub names: Vec<S<Path<ParamDecl>>>,
     pub ty: Option<S<Val>>,
     pub op: S<AssignOp>,
     pub body: Option<ValMod>,

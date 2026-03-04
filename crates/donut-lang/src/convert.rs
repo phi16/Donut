@@ -357,18 +357,11 @@ impl<'a> Converter<'a> {
         parent_span: &TokenSpan,
     ) -> Option<semtree::DeclMain> {
         match main {
-            syntree::DeclMain::Unit(unit_a) => {
-                let converted = match unit_a {
-                    A::Accepted(unit, span) => self.convert_decl_unit(unit, &span)
-                        .map(|u| semtree::DeclMain::Unit(u)),
-                    A::Error() => None,
-                };
-                converted.or_else(|| {
-                    // Even if unit conversion fails, we still produce a DeclMain
-                    // but here we return None to filter out the decl
-                    None
-                })
-            }
+            syntree::DeclMain::Unit(unit_a) => match unit_a {
+                A::Accepted(unit, span) => self.convert_decl_unit(unit, &span)
+                    .map(semtree::DeclMain::Unit),
+                A::Error() => None,
+            },
             syntree::DeclMain::Mod(mod_a) => match mod_a {
                 A::Accepted(m, span) => {
                     let converted = m.convert(self);
@@ -388,7 +381,7 @@ impl<'a> Converter<'a> {
         unit: syntree::DeclUnit,
         span: &TokenSpan,
     ) -> Option<semtree::DeclUnit> {
-        let names: Vec<S<semtree::PathDecl>> = unit
+        let names: Vec<S<semtree::Path<semtree::ParamDecl>>> = unit
             .names
             .into_iter()
             .filter_map(|p| match p {
@@ -449,20 +442,6 @@ impl<'a> Converter<'a> {
                         Self::dummy_span(),
                     ))
                 }
-            },
-        }
-    }
-
-    // --- Module ---
-
-    fn convert_module(&mut self, m: syntree::Module) -> semtree::Module {
-        match m {
-            syntree::Module::Block(decls) => semtree::Module::Block(self.convert_decls(decls)),
-            syntree::Module::Import(lit) => match lit {
-                A::Accepted(lit, span) => {
-                    semtree::Module::Import(S(self.convert_lit(lit), span))
-                }
-                A::Error() => semtree::Module::Block(vec![]),
             },
         }
     }
@@ -593,39 +572,66 @@ impl<'a> Converter<'a> {
         }
     }
 
-    // --- Path (declaration context) ---
+    // --- Path/Segment (generic) ---
 
-    fn convert_path_decl(&mut self, path: syntree::Path) -> semtree::PathDecl {
-        let segments: Vec<S<semtree::SegmentDecl>> = path
+    fn convert_path<P>(
+        &mut self,
+        path: syntree::Path,
+        mut convert_seg: impl FnMut(&mut Self, syntree::Segment) -> Option<semtree::Segment<P>>,
+    ) -> semtree::Path<P> {
+        let segments = path
             .0
             .into_iter()
             .filter_map(|s| match s {
-                A::Accepted(seg, span) => {
-                    self.convert_segment_decl(seg).map(|sd| S(sd, span))
-                }
+                A::Accepted(seg, span) => convert_seg(self, seg).map(|sd| S(sd, span)),
                 A::Error() => None,
             })
             .collect();
         let val = path.1.and_then(|v| self.convert_val_a(v));
-        semtree::PathDecl(segments, val)
+        semtree::Path(segments, val)
     }
 
-    fn convert_segment_decl(&mut self, seg: syntree::Segment) -> Option<semtree::SegmentDecl> {
+    fn convert_segment<P>(
+        &mut self,
+        seg: syntree::Segment,
+        convert_params: impl FnOnce(&mut Self, syntree::Params) -> semtree::Params<P>,
+        default_params: impl FnOnce() -> semtree::Params<P>,
+    ) -> Option<semtree::Segment<P>> {
         let name = match seg.0 {
             A::Accepted(name, _) => name.convert(self),
             A::Error() => return None,
         };
         let params = match seg.1 {
             Some(params_a) => match params_a {
-                A::Accepted(params, _) => self.convert_params_decl(params),
-                A::Error() => semtree::ParamsDecl(vec![]),
+                A::Accepted(params, _) => convert_params(self, params),
+                A::Error() => default_params(),
             },
-            None => semtree::ParamsDecl(vec![]),
+            None => default_params(),
         };
-        Some(semtree::SegmentDecl(name, params))
+        Some(semtree::Segment(name, params))
     }
 
-    fn convert_params_decl(&mut self, params: syntree::Params) -> semtree::ParamsDecl {
+    fn convert_path_decl(&mut self, path: syntree::Path) -> semtree::Path<semtree::ParamDecl> {
+        self.convert_path(path, |c, seg| {
+            c.convert_segment(
+                seg,
+                |c, p| c.convert_params_decl(p),
+                || semtree::Params(vec![]),
+            )
+        })
+    }
+
+    fn convert_path_val(&mut self, path: syntree::Path) -> semtree::Path<semtree::ParamVal> {
+        self.convert_path(path, |c, seg| {
+            c.convert_segment(
+                seg,
+                |c, p| c.convert_params_val(p),
+                || semtree::Params(vec![]),
+            )
+        })
+    }
+
+    fn convert_params_decl(&mut self, params: syntree::Params) -> semtree::Params<semtree::ParamDecl> {
         let syntree::Params(_open, param_list, _close) = params;
         let mut result = Vec::new();
         for param_a in param_list {
@@ -661,42 +667,10 @@ impl<'a> Converter<'a> {
                 A::Error() => {}
             }
         }
-        semtree::ParamsDecl(result)
+        semtree::Params(result)
     }
 
-    // --- Path (value context) ---
-
-    fn convert_path_val(&mut self, path: syntree::Path) -> semtree::Path {
-        let segments: Vec<S<semtree::Segment>> = path
-            .0
-            .into_iter()
-            .filter_map(|s| match s {
-                A::Accepted(seg, span) => {
-                    self.convert_segment_val(seg).map(|sv| S(sv, span))
-                }
-                A::Error() => None,
-            })
-            .collect();
-        let val = path.1.and_then(|v| self.convert_val_a(v));
-        semtree::Path(segments, val)
-    }
-
-    fn convert_segment_val(&mut self, seg: syntree::Segment) -> Option<semtree::Segment> {
-        let name = match seg.0 {
-            A::Accepted(name, _) => name.convert(self),
-            A::Error() => return None,
-        };
-        let params = match seg.1 {
-            Some(params_a) => match params_a {
-                A::Accepted(params, _) => self.convert_params_val(params),
-                A::Error() => semtree::ParamsVal(vec![]),
-            },
-            None => semtree::ParamsVal(vec![]),
-        };
-        Some(semtree::Segment(name, params))
-    }
-
-    fn convert_params_val(&mut self, params: syntree::Params) -> semtree::ParamsVal {
+    fn convert_params_val(&mut self, params: syntree::Params) -> semtree::Params<semtree::ParamVal> {
         let syntree::Params(_open, param_list, _close) = params;
         let mut result = Vec::new();
         for param_a in param_list {
@@ -734,14 +708,22 @@ impl<'a> Converter<'a> {
                 A::Error() => {}
             }
         }
-        semtree::ParamsVal(result)
+        semtree::Params(result)
     }
 }
 
 impl Convert for syntree::Module {
     type Output = semtree::Module;
     fn convert(self, c: &mut Converter<'_>) -> semtree::Module {
-        c.convert_module(self)
+        match self {
+            syntree::Module::Block(decls) => semtree::Module::Block(c.convert_decls(decls)),
+            syntree::Module::Import(lit) => match lit {
+                A::Accepted(lit, span) => {
+                    semtree::Module::Import(S(c.convert_lit(lit), span))
+                }
+                A::Error() => semtree::Module::Block(vec![]),
+            },
+        }
     }
 }
 

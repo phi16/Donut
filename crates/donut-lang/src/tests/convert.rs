@@ -45,31 +45,18 @@ impl Fmt for semtree::ParamVal {
         self.val.fmt(p);
     }
 }
-fn fmt_params_decl(params: &semtree::ParamsDecl, p: &mut PP) {
-    if params.0.is_empty() { return; }
-    p.s("[");
-    for (i, x) in params.0.iter().enumerate() { if i > 0 { p.s(", "); } x.fmt(p); }
-    p.s("]");
-}
-fn fmt_params_val(params: &semtree::ParamsVal, p: &mut PP) {
-    if params.0.is_empty() { return; }
-    p.s("[");
-    for (i, x) in params.0.iter().enumerate() { if i > 0 { p.s(", "); } x.fmt(p); }
-    p.s("]");
-}
-impl Fmt for semtree::SegmentDecl {
-    fn fmt(&self, p: &mut PP) { self.0.fmt(p); fmt_params_decl(&self.1, p); }
-}
-impl Fmt for semtree::Segment {
-    fn fmt(&self, p: &mut PP) { self.0.fmt(p); fmt_params_val(&self.1, p); }
-}
-impl Fmt for semtree::PathDecl {
+impl<T: Fmt> Fmt for semtree::Params<T> {
     fn fmt(&self, p: &mut PP) {
-        for (i, s) in self.0.iter().enumerate() { if i > 0 { p.s("."); } s.fmt(p); }
-        if let Some(v) = &self.1 { p.s("("); v.fmt(p); p.s(")"); }
+        if self.0.is_empty() { return; }
+        p.s("[");
+        for (i, x) in self.0.iter().enumerate() { if i > 0 { p.s(", "); } x.fmt(p); }
+        p.s("]");
     }
 }
-impl Fmt for semtree::Path {
+impl<P: Fmt> Fmt for semtree::Segment<P> {
+    fn fmt(&self, p: &mut PP) { self.0.fmt(p); self.1.fmt(p); }
+}
+impl<P> Fmt for semtree::Path<P> where semtree::Segment<P>: Fmt {
     fn fmt(&self, p: &mut PP) {
         for (i, s) in self.0.iter().enumerate() { if i > 0 { p.s("."); } s.fmt(p); }
         if let Some(v) = &self.1 { p.s("("); v.fmt(p); p.s(")"); }
@@ -117,10 +104,6 @@ impl Fmt for semtree::Val {
             semtree::Val::Any => p.s("?"),
         }
     }
-}
-// ParamsVal in Val::Op
-impl Fmt for semtree::ParamsVal {
-    fn fmt(&self, p: &mut PP) { fmt_params_val(self, p); }
 }
 impl Fmt for semtree::AssignOp {
     fn fmt(&self, p: &mut PP) {

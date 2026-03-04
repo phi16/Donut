@@ -32,12 +32,7 @@ fn is_functor_type(val: &Val) -> bool {
     matches!(val, Val::Arrow(ArrowKind::Functor, _, _))
 }
 
-fn seg_decl_name(seg_s: &S<semtree::SegmentDecl>) -> (&str, &TokenSpan) {
-    let S(seg, span) = seg_s;
-    (&seg.0 .0, span)
-}
-
-fn seg_val_name(seg_s: &S<semtree::Segment>) -> (&str, &TokenSpan) {
+fn seg_name<P>(seg_s: &S<semtree::Segment<P>>) -> (&str, &TokenSpan) {
     let S(seg, span) = seg_s;
     (&seg.0 .0, span)
 }
@@ -117,13 +112,13 @@ impl Resolve for semtree::Val {
     }
 }
 
-impl Resolve for S<semtree::Path> {
+impl Resolve for S<semtree::Path<semtree::ParamVal>> {
     type Output = Option<Path>;
     fn resolve(self, ctx: &mut Checker) -> Self::Output {
         let S(path, _) = self;
 
         // Name resolution
-        let name_spans: Vec<_> = path.0.iter().map(seg_val_name).collect();
+        let name_spans: Vec<_> = path.0.iter().map(seg_name).collect();
         ctx.resolve_segments(&name_spans);
 
         // Convert segments (resolving param vals recursively)
@@ -145,7 +140,7 @@ impl Resolve for S<semtree::Path> {
     }
 }
 
-impl Resolve for S<semtree::Segment> {
+impl Resolve for S<semtree::Segment<semtree::ParamVal>> {
     type Output = Option<S<Segment>>;
     fn resolve(self, ctx: &mut Checker) -> Self::Output {
         let S(seg, span) = self;
@@ -360,11 +355,11 @@ impl<'a> Checker<'a> {
         Some(S(v, span))
     }
 
-    fn resolve_path(&mut self, path_s: &S<semtree::Path>) -> Option<Path> {
+    fn resolve_path(&mut self, path_s: &S<semtree::Path<semtree::ParamVal>>) -> Option<Path> {
         let S(path, _) = path_s;
 
         // Name resolution
-        let name_spans: Vec<_> = path.0.iter().map(seg_val_name).collect();
+        let name_spans: Vec<_> = path.0.iter().map(seg_name).collect();
         self.resolve_segments(&name_spans);
 
         // Convert segments (resolving param vals recursively)
@@ -385,7 +380,7 @@ impl<'a> Checker<'a> {
         })
     }
 
-    fn resolve_segment(&mut self, seg_s: &S<semtree::Segment>) -> Option<S<Segment>> {
+    fn resolve_segment(&mut self, seg_s: &S<semtree::Segment<semtree::ParamVal>>) -> Option<S<Segment>> {
         let S(seg, span) = seg_s;
         let params: Vec<ParamVal> = seg
             .1
@@ -439,32 +434,34 @@ impl<'a> Checker<'a> {
     // --- Comp flat helpers ---
 
     fn resolve_comp_flat(&mut self, val: semtree::Val, axis: u32, out: &mut Vec<S<Val>>) {
-        if let semtree::Val::Op(ref _l, ref op_s, _, ref _r) = val {
-            if matches!(&op_s.0, semtree::Op::Comp(n) if *n == axis) {
-                if let semtree::Val::Op(l, _, _, r) = val {
-                    self.resolve_comp_flat(*l, axis, out);
-                    self.resolve_comp_flat(*r, axis, out);
-                }
-                return;
+        match val {
+            semtree::Val::Op(l, op_s, _, r)
+                if matches!(&op_s.0, semtree::Op::Comp(n) if *n == axis) =>
+            {
+                self.resolve_comp_flat(*l, axis, out);
+                self.resolve_comp_flat(*r, axis, out);
             }
-        }
-        if let Some(s) = self.resolve_val_with_span(val) {
-            out.push(s);
+            _ => {
+                if let Some(s) = self.resolve_val_with_span(val) {
+                    out.push(s);
+                }
+            }
         }
     }
 
     fn resolve_comp_star_flat(&mut self, val: semtree::Val, out: &mut Vec<S<Val>>) {
-        if let semtree::Val::Op(ref _l, ref op_s, _, ref _r) = val {
-            if matches!(&op_s.0, semtree::Op::CompStar) {
-                if let semtree::Val::Op(l, _, _, r) = val {
-                    self.resolve_comp_star_flat(*l, out);
-                    self.resolve_comp_star_flat(*r, out);
-                }
-                return;
+        match val {
+            semtree::Val::Op(l, op_s, _, r)
+                if matches!(&op_s.0, semtree::Op::CompStar) =>
+            {
+                self.resolve_comp_star_flat(*l, out);
+                self.resolve_comp_star_flat(*r, out);
             }
-        }
-        if let Some(s) = self.resolve_val_with_span(val) {
-            out.push(s);
+            _ => {
+                if let Some(s) = self.resolve_val_with_span(val) {
+                    out.push(s);
+                }
+            }
         }
     }
 
@@ -580,7 +577,7 @@ impl<'a> Checker<'a> {
             if segs.len() > 1 {
                 let prefix: Vec<_> = segs[..segs.len() - 1]
                     .iter()
-                    .map(seg_decl_name)
+                    .map(seg_name)
                     .collect();
                 self.resolve_segments(&prefix);
             }
@@ -614,7 +611,7 @@ impl<'a> Checker<'a> {
             for name_s in &unit.names {
                 let S(pd, _) = name_s;
                 if pd.0.len() == 1 {
-                    let (name, span) = seg_decl_name(&pd.0[0]);
+                    let (name, span) = seg_name(&pd.0[0]);
                     if self.lookup(name).is_none() {
                         self.error_at(
                             span,
@@ -632,7 +629,7 @@ impl<'a> Checker<'a> {
 
     fn register_unit_results(
         &mut self,
-        names: &[S<semtree::PathDecl>],
+        names: &[S<semtree::Path<semtree::ParamDecl>>],
         op: &S<semtree::AssignOp>,
         item: Item,
     ) {
@@ -646,30 +643,30 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn register_path_decl(&mut self, pd: &semtree::PathDecl, item: Item) {
+    fn register_path_decl(&mut self, pd: &semtree::Path<semtree::ParamDecl>, item: Item) {
         let segs = &pd.0;
         match segs.len() {
             0 => {}
             1 => {
-                let (name, _) = seg_decl_name(&segs[0]);
+                let (name, _) = seg_name(&segs[0]);
                 self.define(name.to_owned(), item);
             }
             _ => self.insert_into_dotted(segs, item),
         }
     }
 
-    fn insert_into_dotted(&mut self, segs: &[S<semtree::SegmentDecl>], item: Item) {
+    fn insert_into_dotted(&mut self, segs: &[S<semtree::Segment<semtree::ParamDecl>>], item: Item) {
         if segs.len() < 2 {
             return;
         }
-        let (first_name, _) = seg_decl_name(&segs[0]);
-        let (last_name, last_span) = seg_decl_name(segs.last().unwrap());
+        let (first_name, _) = seg_name(&segs[0]);
+        let (last_name, last_span) = seg_name(segs.last().unwrap());
 
         let mut conflict = false;
         if let Some(root) = self.lookup_mut(first_name) {
             let mut current = root;
             for seg_s in &segs[1..segs.len() - 1] {
-                let (name, _) = seg_decl_name(seg_s);
+                let (name, _) = seg_name(seg_s);
                 let Some(members) = current.members_mut() else {
                     return;
                 };
@@ -692,7 +689,7 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn register_add(&mut self, names: &[S<semtree::PathDecl>], item: Item) {
+    fn register_add(&mut self, names: &[S<semtree::Path<semtree::ParamDecl>>], item: Item) {
         let members_to_merge = match item.body {
             ItemBody::Value { val, members } => {
                 if let Some(ref val_s) = val {
@@ -711,7 +708,7 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn merge_into_path(&mut self, pd: &semtree::PathDecl, new_members: Module) {
+    fn merge_into_path(&mut self, pd: &semtree::Path<semtree::ParamDecl>, new_members: Module) {
         if new_members.entries.is_empty() {
             return;
         }
@@ -721,7 +718,7 @@ impl<'a> Checker<'a> {
         }
 
         if segs.len() == 1 {
-            let (name, span) = seg_decl_name(&segs[0]);
+            let (name, span) = seg_name(&segs[0]);
             let conflicts = if let Some(existing) = self.lookup_mut(name) {
                 if let Some(members) = existing.members_mut() {
                     members.merge(new_members)
@@ -757,7 +754,7 @@ impl<'a> Checker<'a> {
         for name_s in &unit.names {
             let S(pd, _) = name_s;
             if !is_add && pd.0.len() == 1 {
-                let (name, _) = seg_decl_name(&pd.0[0]);
+                let (name, _) = seg_name(&pd.0[0]);
                 self.define(name.to_owned(), Item::new(item_kind));
             }
         }
@@ -866,9 +863,9 @@ impl<'a> Checker<'a> {
         if has_functor_app {
             for name_s in names {
                 let S(pd, _) = name_s;
-                let semtree::PathDecl(segs, applicand) = pd;
+                let semtree::Path(segs, applicand) = pd;
                 if let Some(applicand) = applicand {
-                    let (fname, fspan) = seg_decl_name(&segs[0]);
+                    let (fname, fspan) = seg_name(&segs[0]);
                     let fname = fname.to_owned();
                     let fspan = fspan.clone();
                     let app_resolved = self.resolve_s_val(&applicand);
