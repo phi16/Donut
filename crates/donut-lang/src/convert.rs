@@ -89,17 +89,13 @@ impl<'a> Converter<'a> {
         }
     }
 
-    fn dummy_span() -> TokenSpan {
-        TokenSpan { start: 0, end: 0 }
-    }
-
     // --- Val conversion ---
 
     /// Convert A<syntree::Val> → Option<S<semtree::Val>>. None on error.
     fn convert_val_a(&mut self, val_a: A<syntree::Val>) -> Option<S<semtree::Val>> {
         match val_a {
             A::Accepted(val, _) => self.convert_val(val),
-            A::Error() => None,
+            A::Error(_) => None,
         }
     }
 
@@ -108,7 +104,7 @@ impl<'a> Converter<'a> {
         match val_a {
             A::Accepted(val, span) => self.convert_val(val)
                 .unwrap_or_else(|| S(semtree::Val::Any, span)),
-            A::Error() => S(semtree::Val::Any, Self::dummy_span()),
+            A::Error(span) => S(semtree::Val::Any, span),
         }
     }
 
@@ -130,18 +126,18 @@ impl<'a> Converter<'a> {
                         Some(semtree::Val::Path(Box::new(S(converted, path_span))))
                     }
                 }
-                A::Error() => None,
+                A::Error(_) => None,
             }
             syntree::Val0::Lit(lit_a) => match lit_a {
                 A::Accepted(lit, lit_span) => {
                     let converted = self.convert_lit(lit);
                     Some(semtree::Val::Lit(S(converted, lit_span)))
                 }
-                A::Error() => None,
+                A::Error(_) => None,
             },
             syntree::Val0::Paren(val_a) => match *val_a {
                 A::Accepted(inner, _) => self.convert_val(inner).map(|s| s.0),
-                A::Error() => None,
+                A::Error(_) => None,
             },
             syntree::Val0::Dots => {
                 self.error_at(span, "found `...` in value");
@@ -165,16 +161,16 @@ impl<'a> Converter<'a> {
                                 let sem_key = match k {
                                     syntree::Key::Name(n) => match n {
                                         A::Accepted(n, _) => semtree::Key::Name(semtree::Name(n.0)),
-                                        A::Error() => return None,
+                                        A::Error(_) => return None,
                                     },
                                     syntree::Key::String(s) => match s {
                                         A::Accepted(s, _) => semtree::Key::String(s),
-                                        A::Error() => return None,
+                                        A::Error(_) => return None,
                                     },
                                 };
                                 S(sem_key, span)
                             }
-                            A::Error() => return None,
+                            A::Error(_) => return None,
                         };
                         let val = self.convert_val_a_or_any(v);
                         Some((key, val))
@@ -196,7 +192,7 @@ impl<'a> Converter<'a> {
                     let val = self.convert_val0(v0, &span)?;
                     Some(S(val, span))
                 }
-                A::Error() => None,
+                A::Error(_) => None,
             };
         }
 
@@ -211,11 +207,11 @@ impl<'a> Converter<'a> {
 
         let op = match op_a {
             A::Accepted(op, span) => S(op.convert(self), span),
-            A::Error() => return None,
+            A::Error(_) => return None,
         };
         let params = params_a.and_then(|p| match p {
             A::Accepted(params, _) => Some(self.convert_params_val(params)),
-            A::Error() => None,
+            A::Error(_) => None,
         });
 
         let span = TokenSpan {
@@ -235,7 +231,7 @@ impl<'a> Converter<'a> {
         ops: &[(A<syntree::Op>, Option<A<syntree::Params>>)],
     ) -> Option<usize> {
         // Reject if any op is A::Error
-        if ops.iter().any(|(op_a, _)| matches!(op_a, A::Error())) {
+        if ops.iter().any(|(op_a, _)| matches!(op_a, A::Error(_))) {
             return None;
         }
 
@@ -313,7 +309,7 @@ impl<'a> Converter<'a> {
                         }
                     }
                 }
-                A::Error() => {}
+                A::Error(_) => {}
             }
         }
 
@@ -368,14 +364,14 @@ impl<'a> Converter<'a> {
             syntree::DeclMain::Unit(unit_a) => match unit_a {
                 A::Accepted(unit, span) => self.convert_decl_unit(unit, &span)
                     .map(semtree::DeclMain::Unit),
-                A::Error() => None,
+                A::Error(_) => None,
             },
             syntree::DeclMain::Mod(mod_a) => match mod_a {
                 A::Accepted(m, span) => {
                     let converted = m.convert(self);
                     Some(semtree::DeclMain::Mod(S(converted, span)))
                 }
-                A::Error() => None,
+                A::Error(_) => None,
             },
             syntree::DeclMain::Dots => {
                 self.error_at(parent_span, "found `...` in declaration");
@@ -394,7 +390,7 @@ impl<'a> Converter<'a> {
             .into_iter()
             .filter_map(|p| match p {
                 A::Accepted(path, span) => Some(S(self.convert_path_decl(path), span)),
-                A::Error() => None,
+                A::Error(_) => None,
             })
             .collect();
 
@@ -409,7 +405,7 @@ impl<'a> Converter<'a> {
             Some((op_a, val_mod)) => {
                 let op = match op_a {
                     A::Accepted(op, span) => S(op.convert(self), span),
-                    A::Error() => return None,
+                    A::Error(_) => return None,
                 };
                 let body = Some(self.convert_valmod(val_mod));
                 Some(semtree::DeclUnit {
@@ -444,10 +440,10 @@ impl<'a> Converter<'a> {
                 A::Accepted(m, span) => {
                     semtree::ValMod::Mod(S(m.convert(self), span))
                 }
-                A::Error() => {
+                A::Error(span) => {
                     semtree::ValMod::Mod(S(
                         semtree::Module::Block(vec![]),
-                        Self::dummy_span(),
+                        span,
                     ))
                 }
             },
@@ -469,7 +465,7 @@ impl<'a> Converter<'a> {
                 A::Accepted(syntree::Clause(ty_a, mod_a), _) => {
                     let converted = match mod_a {
                         A::Accepted(m, span) => Some(S(m.convert(self), span)),
-                        A::Error() => None,
+                        A::Error(_) => None,
                     };
                     if let Some(converted) = converted {
                         match ty_a {
@@ -487,11 +483,11 @@ impl<'a> Converter<'a> {
                                 self.check_where_alias_only(&converted);
                                 where_clauses.push(converted);
                             }
-                            A::Error() => {}
+                            A::Error(_) => {}
                         }
                     }
                 }
-                A::Error() => {}
+                A::Error(_) => {}
             }
         }
 
@@ -539,11 +535,11 @@ impl<'a> Converter<'a> {
                             A::Accepted(param, param_span) => {
                                 self.convert_decorator_param(param, param_span, &mut result);
                             }
-                            A::Error() => {}
+                            A::Error(_) => {}
                         }
                     }
                 }
-                A::Error() => {}
+                A::Error(_) => {}
             }
         }
         result
@@ -566,7 +562,7 @@ impl<'a> Converter<'a> {
                                 Rc::clone(&val),
                             ));
                         }
-                        A::Error() => {}
+                        A::Error(_) => {}
                     }
                 }
             }
@@ -592,7 +588,7 @@ impl<'a> Converter<'a> {
             .into_iter()
             .filter_map(|s| match s {
                 A::Accepted(seg, span) => convert_seg(self, seg).map(|sd| S(sd, span)),
-                A::Error() => None,
+                A::Error(_) => None,
             })
             .collect();
         let val = path.1.and_then(|v| self.convert_val_a(v));
@@ -607,12 +603,12 @@ impl<'a> Converter<'a> {
     ) -> Option<semtree::Segment<P>> {
         let name = match seg.0 {
             A::Accepted(name, _) => name.convert(self),
-            A::Error() => return None,
+            A::Error(_) => return None,
         };
         let params = match seg.1 {
             Some(params_a) => match params_a {
                 A::Accepted(params, _) => convert_params(self, params),
-                A::Error() => default_params(),
+                A::Error(_) => default_params(),
             },
             None => default_params(),
         };
@@ -655,7 +651,7 @@ impl<'a> Converter<'a> {
                                         ty: Rc::clone(&ty),
                                     });
                                 }
-                                A::Error() => {}
+                                A::Error(_) => {}
                             }
                         }
                     }
@@ -672,7 +668,7 @@ impl<'a> Converter<'a> {
                         );
                     }
                 },
-                A::Error() => {}
+                A::Error(_) => {}
             }
         }
         semtree::Params(result)
@@ -697,7 +693,7 @@ impl<'a> Converter<'a> {
                             .next()
                             .and_then(|n| match n {
                                 A::Accepted(n, _) => Some(n.convert(self)),
-                                A::Error() => None,
+                                A::Error(_) => None,
                             });
                         let val = self.convert_val_a_or_any(param.val);
                         result.push(semtree::ParamVal { name, val });
@@ -713,7 +709,7 @@ impl<'a> Converter<'a> {
                         );
                     }
                 },
-                A::Error() => {}
+                A::Error(_) => {}
             }
         }
         semtree::Params(result)
@@ -729,7 +725,7 @@ impl Convert for syntree::Module {
                 A::Accepted(lit, span) => {
                     semtree::Module::Import(S(c.convert_lit(lit), span))
                 }
-                A::Error() => semtree::Module::Block(vec![]),
+                A::Error(_) => semtree::Module::Block(vec![]),
             },
         }
     }
@@ -747,14 +743,14 @@ fn try_as_number_literal(path: &syntree::Path) -> Option<String> {
     }
     let seg = match &path.0[0] {
         A::Accepted(seg, _) => seg,
-        A::Error() => return None,
+        A::Error(_) => return None,
     };
     if seg.1.is_some() {
         return None;
     }
     let name = match &seg.0 {
         A::Accepted(name, _) => &name.0,
-        A::Error() => return None,
+        A::Error(_) => return None,
     };
     if is_number_str(name) {
         Some(name.clone())
@@ -772,7 +768,7 @@ pub fn convert<'a>(
         A::Accepted(prog, _) => {
             semtree::Program(converter.convert_decls(prog.0))
         }
-        A::Error() => semtree::Program(vec![]),
+        A::Error(_) => semtree::Program(vec![]),
     };
     (result, converter.errors)
 }

@@ -125,6 +125,11 @@ impl<'a> Tracker<'a> {
         A::Accepted(t, span)
     }
 
+    pub fn error<T>(&self) -> A<T> {
+        let pos = self.pos;
+        A::Error(TokenSpan { start: pos, end: pos })
+    }
+
     pub fn rollback(&mut self, base: NodeBase) {
         self.pos = base.start;
         self.indent = base.indent;
@@ -210,7 +215,7 @@ impl<'a> Tracker<'a> {
         let close = loop {
             let Some(item) = parse_item(self) else {
                 self.expected(name);
-                break A::Error();
+                break self.error();
             };
             items.push(item);
             if self.symbol(",").is_some() {
@@ -232,7 +237,7 @@ impl<'a> Tracker<'a> {
                         break None;
                     }
                 };
-                break recovered.unwrap_or_else(A::Error);
+                break recovered.unwrap_or_else(|| self.error());
             }
         };
         Some((open, items, close))
@@ -269,7 +274,7 @@ impl<'a> Tracker<'a> {
                     ParamTy::Named => "'='",
                 };
                 self.expected_after("value", after);
-                A::Error()
+                self.error()
             }),
             None => {
                 self.rollback(u2);
@@ -317,7 +322,7 @@ impl<'a> Tracker<'a> {
         while self.operator(".").is_some() {
             let n = self.segment().unwrap_or_else(|| {
                 self.expected_after("name", "'.'");
-                A::Error()
+                self.error()
             });
             names.push(n);
         }
@@ -325,7 +330,7 @@ impl<'a> Tracker<'a> {
         let val = if self.symbol_connected("(").is_some() {
             let v = self.val().unwrap_or_else(|| {
                 self.expected_in("value", "functor application");
-                A::Error()
+                self.error()
             });
             if self.symbol_close(")").is_some() {
                 // pass
@@ -358,11 +363,11 @@ impl<'a> Tracker<'a> {
         let val = if self.symbol(":").is_some() {
             self.val().unwrap_or_else(|| {
                 self.expected_after("value", "':'");
-                A::Error()
+                self.error()
             })
         } else {
             self.expected_after("':'", "key");
-            A::Error()
+            self.error()
         };
         Some((key, val))
     }
@@ -427,7 +432,7 @@ impl<'a> Tracker<'a> {
         } else if self.symbol("(").is_some() {
             let inner = self.val().unwrap_or_else(|| {
                 self.expected_in("value", "parentheses");
-                A::Error()
+                self.error()
             });
             if self.symbol_close(")").is_some() {
                 // pass
@@ -492,7 +497,7 @@ impl<'a> Tracker<'a> {
             // import
             let s = self.lit().unwrap_or_else(|| {
                 self.expected_after("literal", "'import'");
-                A::Error()
+                self.error()
             });
             Module::Import(s)
         } else {
@@ -523,7 +528,7 @@ impl<'a> Tracker<'a> {
         while self.peek().is_some_and(|t| t.ty == TokenTy::Name) {
             let n = self.path().unwrap_or_else(|| {
                 self.expected("name");
-                A::Error()
+                self.error()
             });
             names.push(n);
         }
@@ -531,7 +536,7 @@ impl<'a> Tracker<'a> {
         let ty = if self.symbol(":").is_some() {
             let val = self.val().unwrap_or_else(|| {
                 self.expected_after("type", "':'");
-                A::Error()
+                self.error()
             });
             Some(val)
         } else {
@@ -544,7 +549,7 @@ impl<'a> Tracker<'a> {
             } else {
                 let v = self.val().unwrap_or_else(|| {
                     self.expected_after("value or module", "assignment operator");
-                    A::Error()
+                    self.error()
                 });
                 ValMod::Val(v)
             };
@@ -575,7 +580,7 @@ impl<'a> Tracker<'a> {
         let ct = self.clause_ty()?;
         let m = self.module().unwrap_or_else(|| {
             self.expected_after("module", "clause keyword");
-            A::Error()
+            self.error()
         });
 
         let clause = Clause(ct, m);
@@ -638,7 +643,7 @@ impl<'a> Tracker<'a> {
                         // hmmmm
                         if self.consume_indent(last_indent) {
                             // garbage
-                            return Some(A::Error());
+                            return Some(self.error());
                         } else {
                             // no consumption, simple rollback
                             return None;
