@@ -211,6 +211,17 @@ impl LayoutCell {
         let n = children.len();
         assert!(n >= 1);
 
+        let children = children
+            .into_iter()
+            .map(|mut child| {
+                if child.dim().in_space <= axis {
+                    // handles `f; f` where `f` is a 1-cell
+                    child.shift(&X::zero(), &X::zero()) // TODO?
+                }
+                child
+            })
+            .collect::<Vec<_>>();
+
         let last_x = children[n - 1].1.cube.maxs[axis as usize].clone();
 
         let mut cs: Vec<LayoutCell> = vec![];

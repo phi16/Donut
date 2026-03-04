@@ -106,6 +106,18 @@ impl Diagram for PureCell {
         }
         assert!(n >= 1);
 
+        let children = children
+            .into_iter()
+            .map(|child| {
+                if child.dim().in_space <= axis {
+                    // handles `f; f` where `f` is a 1-cell
+                    Self::id(child)
+                } else {
+                    child
+                }
+            })
+            .collect::<Vec<_>>();
+
         let first_source_face = source_face(&children[0], axis);
         let last_target_face = target_face(&children[n - 1], axis);
 

@@ -190,6 +190,17 @@ impl DiagramMap for LayoutSolver {
     }
 
     fn comp(&mut self, axis: Axis, children: Vec2<LayoutCell>) -> LayoutCell {
+        let children = children
+            .into_iter()
+            .map(|mut child| {
+                if child.dim().in_space <= axis {
+                    // handles `f; f` where `f` is a 1-cell
+                    child.shift(&X::zero(), &X::zero()) // TODO?
+                }
+                child
+            })
+            .collect::<Vec<_>>();
+
         let n = children.len();
         for i in 0..n - 1 {
             let t = children[i].face(axis, Side::Target);
