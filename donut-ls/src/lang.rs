@@ -302,7 +302,7 @@ pub fn tokenize_example(code: &str) -> (Vec<TokenData>, Vec<Diagnostic>) {
     }
 
     // check（名前解決）を実行
-    let check_errors = donut_lang::check::check(&sem_program, &tokens);
+    let (_module, check_errors) = donut_lang::check::check(sem_program, &tokens);
     for (pos, msg) in &check_errors {
         diags.push(to_diag(pos, msg, "[check]"));
     }
