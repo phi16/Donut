@@ -31,6 +31,16 @@ pub struct Env {
     pub lookup: HashMap<String, usize>,
 }
 
+// --- Param kind ---
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ParamKind {
+    Cell,
+    Nat,
+}
+
+type ParamInfo = (String, PrimId, ParamKind);
+
 // --- Checker ---
 
 struct Checker<'a> {
@@ -47,11 +57,14 @@ struct Checker<'a> {
     prefixes: Vec<String>,
 
     // Parametric support
-    module_params: HashMap<String, Vec<(String, PrimId)>>,
+    module_params: HashMap<String, Vec<ParamInfo>>,
     module_members: HashMap<String, Vec<(String, Option<usize>)>>,
-    entry_params: HashMap<usize, Vec<(String, PrimId)>>,
+    entry_params: HashMap<usize, Vec<ParamInfo>>,
     accumulated_args: Vec<PrimArg>,
     param_count_stack: Vec<usize>,
+
+    // Special type tracking
+    nat_prim_id: Option<PrimId>,
 
     // Functor support
     functor_maps: HashMap<String, HashMap<PrimId, PureCell>>,
@@ -72,6 +85,7 @@ impl<'a> Checker<'a> {
             entry_params: HashMap::new(),
             accumulated_args: Vec::new(),
             param_count_stack: Vec::new(),
+            nat_prim_id: None,
             functor_maps: HashMap::new(),
         }
     }
@@ -114,6 +128,14 @@ impl<'a> Checker<'a> {
     ) -> usize {
         let color = color.unwrap_or_else(|| auto_color(self.entries.len()));
         let idx = self.entries.len();
+        // Track special parameter type PrimIds
+        if let Some(prim_id) = cell.pure.extract_prim_id() {
+            if cell.pure.dim().in_space == 0 {
+                if name.ends_with(".nat") || name == "nat" {
+                    self.nat_prim_id = Some(prim_id);
+                }
+            }
+        }
         self.lookup.insert(name.clone(), idx);
         self.entries.push(Entry {
             name,
@@ -471,29 +493,57 @@ impl<'a> Checker<'a> {
 
     // --- Params ---
 
-    fn enter_params(&mut self, params: &[Param]) -> Result<Vec<(String, PrimId)>> {
+    fn enter_params(&mut self, params: &[Param]) -> Result<Vec<ParamInfo>> {
         let mut freshes = Vec::new();
         for param in params {
             let ty_s = self.program.val(param.ty);
-            let (_, ty) = self.eval_ty(&ty_s.0)?;
+
+            // Check for special param types (nat)
+            let param_kind = self.detect_param_kind(&ty_s.0);
             let fresh_id = self.fresh_prim_id();
-            let prim = Prim::new(fresh_id);
-            let cell = match &ty {
-                Ty::Zero => FreeCell::zero(prim),
-                Ty::Succ(s, t) => FreeCell::prim(prim, s.clone(), t.clone())?,
-            };
-            let param_name = self.qualified_name(&param.name);
-            self.add_entry(param_name, None, cell.clone(), vec![]);
-            self.accumulated_args.push(PrimArg::Cell(cell.pure.clone()));
-            freshes.push((param.name.clone(), fresh_id));
+
+            match param_kind {
+                ParamKind::Cell => {
+                    let (_, ty) = self.eval_ty(&ty_s.0)?;
+                    let prim = Prim::new(fresh_id);
+                    let cell = match &ty {
+                        Ty::Zero => FreeCell::zero(prim),
+                        Ty::Succ(s, t) => FreeCell::prim(prim, s.clone(), t.clone())?,
+                    };
+                    let param_name = self.qualified_name(&param.name);
+                    self.add_entry(param_name, None, cell.clone(), vec![]);
+                    self.accumulated_args.push(PrimArg::Cell(cell.pure.clone()));
+                }
+                ParamKind::Nat => {
+                    // Nat params don't create cell entries; use App placeholder for substitution
+                    self.accumulated_args.push(PrimArg::App(fresh_id, vec![]));
+                }
+            }
+            freshes.push((param.name.clone(), fresh_id, param_kind));
         }
         Ok(freshes)
     }
 
-    fn exit_params(&mut self, freshes: &[(String, PrimId)]) {
+    fn exit_params(&mut self, freshes: &[ParamInfo]) {
         for _ in freshes {
             self.accumulated_args.pop();
         }
+    }
+
+    fn detect_param_kind(&self, val: &Val) -> ParamKind {
+        if let Val::Path(path) = val {
+            if let Some(name) = path_name(path) {
+                if let Some(index) = self.resolve_name(&name) {
+                    let cell = &self.entries[index].cell;
+                    if let Some(prim_id) = cell.pure.extract_prim_id() {
+                        if Some(prim_id) == self.nat_prim_id {
+                            return ParamKind::Nat;
+                        }
+                    }
+                }
+            }
+        }
+        ParamKind::Cell
     }
 
     // --- Module alias / instantiation ---
@@ -533,11 +583,10 @@ impl<'a> Checker<'a> {
             };
 
             if let Some(params) = self.module_params.get(&resolved_name).cloned() {
-                for (i, (_, fresh_id)) in params.iter().enumerate() {
+                for (i, (_, fresh_id, kind)) in params.iter().enumerate() {
                     if let Some(pv) = seg.params.get(i) {
-                        let val_s = self.program.val(pv.val);
-                        let arg_cell = self.eval_val(&val_s.0)?;
-                        mapping.insert(*fresh_id, PrimArg::Cell(arg_cell.pure.clone()));
+                        let arg = self.resolve_param_arg(pv, *kind)?;
+                        mapping.insert(*fresh_id, arg);
                     }
                 }
             }
@@ -724,6 +773,21 @@ impl<'a> Checker<'a> {
         None
     }
 
+    fn resolve_param_arg(&self, pv: &ParamVal, kind: ParamKind) -> Result<PrimArg> {
+        match kind {
+            ParamKind::Cell => {
+                let val_s = self.program.val(pv.val);
+                let arg_cell = self.eval_val(&val_s.0)?;
+                Ok(PrimArg::Cell(arg_cell.pure.clone()))
+            }
+            ParamKind::Nat => {
+                let n = extract_number(self.program, pv)
+                    .ok_or_else(|| "expected a number literal for nat parameter".to_string())?;
+                Ok(PrimArg::Nat(n as u64))
+            }
+        }
+    }
+
     fn build_path_mapping(&self, path: &Path) -> Result<HashMap<PrimId, PrimArg>> {
         let mut mapping = HashMap::new();
 
@@ -745,22 +809,20 @@ impl<'a> Checker<'a> {
                 .ok_or_else(|| format!("unknown: {}", current))?;
 
             if let Some(params) = self.entry_params.get(&resolved) {
-                for (i, (_, fresh_id)) in params.iter().enumerate() {
+                for (i, (_, fresh_id, kind)) in params.iter().enumerate() {
                     if let Some(pv) = seg.params.get(i) {
-                        let val_s = self.program.val(pv.val);
-                        let arg_cell = self.eval_val(&val_s.0)?;
-                        mapping.insert(*fresh_id, PrimArg::Cell(arg_cell.pure.clone()));
+                        let arg = self.resolve_param_arg(pv, *kind)?;
+                        mapping.insert(*fresh_id, arg);
                     }
                 }
             }
 
             if let Some(resolved_name) = self.resolve_module_name(&current) {
                 if let Some(params) = self.module_params.get(&resolved_name) {
-                    for (i, (_, fresh_id)) in params.iter().enumerate() {
+                    for (i, (_, fresh_id, kind)) in params.iter().enumerate() {
                         if let Some(pv) = seg.params.get(i) {
-                            let val_s = self.program.val(pv.val);
-                            let arg_cell = self.eval_val(&val_s.0)?;
-                            mapping.insert(*fresh_id, PrimArg::Cell(arg_cell.pure.clone()));
+                            let arg = self.resolve_param_arg(pv, *kind)?;
+                            mapping.insert(*fresh_id, arg);
                         }
                     }
                 }
@@ -794,7 +856,6 @@ fn apply_functor(cell: &PureCell, map: &HashMap<PrimId, PureCell>) -> Result<Pur
         }
     }
 }
-
 
 fn match_ty(x: &Ty, y: &Ty) -> Result<()> {
     match (x, y) {

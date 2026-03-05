@@ -1,7 +1,7 @@
 pub mod env;
 
 use donut_core::cell::Globular;
-use donut_core::common::PrimId;
+use donut_core::common::{PrimArg, PrimId};
 use donut_core::free_cell::{Cell, CellF, FreeCell};
 use std::collections::HashMap;
 use std::fmt;
@@ -31,7 +31,7 @@ pub fn format_values(values: &[Value]) -> String {
         .join(", ")
 }
 
-type EvalFn = Box<dyn Fn(&[Value]) -> Vec<Value>>;
+type EvalFn = Box<dyn Fn(&[PrimArg], &[Value]) -> Result<Vec<Value>, String>>;
 
 pub struct Runtime {
     ops: HashMap<PrimId, EvalFn>,
@@ -44,7 +44,7 @@ impl Runtime {
         }
     }
 
-    pub fn register(&mut self, id: PrimId, f: impl Fn(&[Value]) -> Vec<Value> + 'static) {
+    pub fn register(&mut self, id: PrimId, f: impl Fn(&[PrimArg], &[Value]) -> Result<Vec<Value>, String> + 'static) {
         self.ops.insert(id, Box::new(f));
     }
 
@@ -96,7 +96,7 @@ impl Runtime {
                     .ops
                     .get(&prim.id)
                     .ok_or_else(|| format!("no eval function for prim {}", prim.id))?;
-                Ok(f(input))
+                f(&prim.args, input)
             }
             CellF::Id(_) => Ok(input.to_vec()),
             CellF::Comp(1, children) => {

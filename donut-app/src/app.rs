@@ -80,7 +80,8 @@ oao =
 pentagon: aaa → oao
 result = pentagon
 ";
-        let (env, table, runtime, env_entry_count) = Self::load(input).unwrap();
+        let (env, table, runtime) = Self::load(input).unwrap();
+        let env_entry_count = Self::env_entry_count();
         let selected = env.entries.len() - 1;
         let cell = Self::build_geometry(&env.entries[selected].cell);
 
@@ -115,9 +116,7 @@ result = pentagon
         })
     }
 
-    fn load(code: &str) -> Result<(Env, PrimTable, Runtime, usize)> {
-        let env_entry_count = Self::env_entry_count();
-
+    fn load(code: &str) -> Result<(Env, PrimTable, Runtime)> {
         let user_code = dedent(code);
         let full_code = format!("{}\n{}", ENV_SOURCE, user_code);
         let (env, errors) = donut_lang::load::load(&full_code);
@@ -150,7 +149,7 @@ result = pentagon
         let mut runtime = Runtime::new();
         donut_runtime::env::register_env(&mut runtime, &prim_lookup);
 
-        Ok((env, table, runtime, env_entry_count))
+        Ok((env, table, runtime))
     }
 
     fn build_geometry(free_cell: &FreeCell) -> Geometry {
@@ -194,14 +193,13 @@ result = pentagon
     }
 
     pub fn update_code(&mut self, code: &str) -> Result<()> {
-        let (env, table, runtime, env_entry_count) = Self::load(code)?;
+        let (env, table, runtime) = Self::load(code)?;
         let selected = env.entries.len() - 1;
         let cell = Self::build_geometry(&env.entries[selected].cell);
         self.slice_pos = Self::init_slice_pos(&cell.size);
         self.env = env;
         self.table = table;
         self.runtime = runtime;
-        self.env_entry_count = env_entry_count;
         self.selected = selected;
         self.cell = cell;
         self.populate_select();

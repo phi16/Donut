@@ -33,15 +33,21 @@ fn eval_entry(rt: &Runtime, env: &donut_lang::check::Env, name: &str) -> Vec<Val
 
 #[test]
 fn test_constant() {
-    let (rt, env) = setup("x = env.u32_0");
+    let (rt, env) = setup("x = env.u32_lit[0]");
     assert_eq!(eval_entry(&rt, &env, "x"), vec![Value::U32(0)]);
+}
+
+#[test]
+fn test_constant_42() {
+    let (rt, env) = setup("x = env.u32_lit[42]");
+    assert_eq!(eval_entry(&rt, &env, "x"), vec![Value::U32(42)]);
 }
 
 #[test]
 fn test_successor() {
     let (rt, env) = setup("\
-one = env.u32_1
-two = env.u32_1 env.u32_1; env.u32_add
+one = env.u32_lit[1]
+two = env.u32_lit[1] env.u32_lit[1]; env.u32_add
 ");
     assert_eq!(eval_entry(&rt, &env, "one"), vec![Value::U32(1)]);
     assert_eq!(eval_entry(&rt, &env, "two"), vec![Value::U32(2)]);
@@ -50,7 +56,7 @@ two = env.u32_1 env.u32_1; env.u32_add
 #[test]
 fn test_add() {
     let (rt, env) = setup("\
-sum = env.u32_1 env.u32_1; env.u32_add
+sum = env.u32_lit[1] env.u32_lit[1]; env.u32_add
 ");
     assert_eq!(eval_entry(&rt, &env, "sum"), vec![Value::U32(2)]);
 }
@@ -58,8 +64,8 @@ sum = env.u32_1 env.u32_1; env.u32_add
 #[test]
 fn test_mul() {
     let (rt, env) = setup("\
-two = env.u32_1 env.u32_1; env.u32_add
-three = two env.u32_1; env.u32_add
+two = env.u32_lit[1] env.u32_lit[1]; env.u32_add
+three = two env.u32_lit[1]; env.u32_add
 nine = three; env.u32_dup; env.u32_mul
 ");
     assert_eq!(eval_entry(&rt, &env, "three"), vec![Value::U32(3)]);
@@ -70,8 +76,8 @@ nine = three; env.u32_dup; env.u32_mul
 fn test_parallel_and_sequential() {
     // (1 + 1) * (1 + 1 + 1) = 2 * 3 = 6
     let (rt, env) = setup("\
-two = env.u32_1 env.u32_1; env.u32_add
-three = two env.u32_1; env.u32_add
+two = env.u32_lit[1] env.u32_lit[1]; env.u32_add
+three = two env.u32_lit[1]; env.u32_add
 result = two three; env.u32_mul
 ");
     assert_eq!(eval_entry(&rt, &env, "result"), vec![Value::U32(6)]);
@@ -80,11 +86,11 @@ result = two three; env.u32_mul
 #[test]
 fn test_bool() {
     let (rt, env) = setup("\
-t = env.bool_true
-f = env.bool_false
-notf = env.bool_false; env.bool_not
-and_tf = env.bool_true env.bool_false; env.bool_and
-or_tf = env.bool_true env.bool_false; env.bool_or
+t = env.bool_lit[1]
+f = env.bool_lit[0]
+notf = env.bool_lit[0]; env.bool_not
+and_tf = env.bool_lit[1] env.bool_lit[0]; env.bool_and
+or_tf = env.bool_lit[1] env.bool_lit[0]; env.bool_or
 ");
     assert_eq!(eval_entry(&rt, &env, "t"), vec![Value::Bool(true)]);
     assert_eq!(eval_entry(&rt, &env, "f"), vec![Value::Bool(false)]);
@@ -96,8 +102,8 @@ or_tf = env.bool_true env.bool_false; env.bool_or
 #[test]
 fn test_comparison() {
     let (rt, env) = setup("\
-one = env.u32_1
-two = env.u32_1 env.u32_1; env.u32_add
+one = env.u32_lit[1]
+two = env.u32_lit[1] env.u32_lit[1]; env.u32_add
 eq_11 = one; env.u32_dup; env.u32_eq
 lt_12 = one two; env.u32_lt
 lt_21 = two one; env.u32_lt
@@ -110,7 +116,7 @@ lt_21 = two one; env.u32_lt
 #[test]
 fn test_f32() {
     let (rt, env) = setup("\
-x = env.f32_1 env.f32_1; env.f32_add
+x = env.f32_lit[1] env.f32_lit[1]; env.f32_add
 ");
     assert_eq!(eval_entry(&rt, &env, "x"), vec![Value::F32(2.0)]);
 }
@@ -118,7 +124,7 @@ x = env.f32_1 env.f32_1; env.f32_add
 #[test]
 fn test_conversion() {
     let (rt, env) = setup("\
-x = env.u32_1 env.u32_1; env.u32_add; env.u32_to_f32
+x = env.u32_lit[1] env.u32_lit[1]; env.u32_add; env.u32_to_f32
 ");
     assert_eq!(eval_entry(&rt, &env, "x"), vec![Value::F32(2.0)]);
 }
@@ -126,7 +132,7 @@ x = env.u32_1 env.u32_1; env.u32_add; env.u32_to_f32
 #[test]
 fn test_dup() {
     let (rt, env) = setup("\
-x = env.u32_1; env.u32_dup; env.u32_add
+x = env.u32_lit[1]; env.u32_dup; env.u32_add
 ");
     assert_eq!(eval_entry(&rt, &env, "x"), vec![Value::U32(2)]);
 }
@@ -141,36 +147,26 @@ add: x x → x
 
 F: C ~> env.C
 F(x) = env.u32
-F(one) = env.u32_1
+F(one) = env.u32_lit[1]
 F(add) = env.u32_add
 
-two = env.u32_1 env.u32_1; env.u32_add
-three = two env.u32_1; env.u32_add
+two = env.u32_lit[1] env.u32_lit[1]; env.u32_add
+three = two env.u32_lit[1]; env.u32_add
 result = two three; env.u32_mul
 
 result2 = F(add)
 ";
     let (rt, env) = setup(code);
 
-    // Debug: print all entries
-    for (i, entry) in env.entries.iter().enumerate() {
-        let evaluable = rt.is_evaluable(&entry.cell);
-        eprintln!("  entry[{}] = {} (dim={}, evaluable={})", i, entry.name, entry.cell.pure.dim().in_space, evaluable);
-    }
-
-    // result = two three; env.u32_mul → should be evaluable (source width 0)
     assert!(rt.is_evaluable(&env.entries[*env.lookup.get("result").unwrap()].cell), "result should be evaluable");
     assert_eq!(eval_entry(&rt, &env, "result"), vec![Value::U32(6)]);
 
-    // result2 = F(add) → F maps add: x x → x to env.u32_add: u32 u32 → u32
-    // This has source width 2, so NOT evaluable with no input (correct!)
     let result2_cell = &env.entries[*env.lookup.get("result2").unwrap()].cell;
     assert!(!rt.is_evaluable(result2_cell), "result2 needs 2 inputs, should not be evaluable with no input");
 }
 
 #[test]
 fn test_functor_application() {
-    // Define a simple "category" and a functor mapping it to env
     let (rt, env) = setup("\
 mycat = {
     C: *
@@ -183,8 +179,8 @@ mycat = {
 }
 F: mycat.C ~> env.C
 F(mycat.nat) = env.u32
-F(mycat.zero) = env.u32_0
-F(mycat.succ) = env.u32_1 env.u32; env.u32_add
+F(mycat.zero) = env.u32_lit[0]
+F(mycat.succ) = env.u32_lit[1] env.u32; env.u32_add
 F(mycat.add) = env.u32_add
 F(mycat.dup) = env.u32_dup
 one = F(mycat.zero; mycat.succ)
@@ -198,7 +194,6 @@ sum = F(mycat.zero; mycat.succ) F(mycat.zero; mycat.succ); F(mycat.add)
 
 #[test]
 fn test_functor_2cell() {
-    // F(th) where th is a 2-cell should lift the RHS via id
     let (_rt, env) = setup("\
 C: *
 x: C → C
@@ -212,6 +207,5 @@ result = F(th)
 ");
     let result_idx = *env.lookup.get("result").expect("result not found");
     let result_cell = &env.entries[result_idx].cell;
-    // F(th) : env.u32 → env.u32, so it needs 1 input
     assert_eq!(result_cell.pure.dim().in_space, 2);
 }
