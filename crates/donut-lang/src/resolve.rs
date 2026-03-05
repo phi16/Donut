@@ -2,6 +2,7 @@ use crate::types::common::*;
 use crate::types::item::*;
 use crate::types::semtree;
 use crate::types::token::Token;
+use std::collections::HashSet;
 
 // --- Resolve trait ---
 
@@ -101,7 +102,12 @@ impl Resolve for S<semtree::Path<semtree::ParamVal>> {
             .map(|seg_s| seg_s.resolve(ctx))
             .collect();
 
-        let applicand = path.1.map(|v| v.resolve(ctx));
+        let applicand = path.1.map(|v| {
+            ctx.in_applicand = true;
+            let result = v.resolve(ctx);
+            ctx.in_applicand = false;
+            result
+        });
 
         Path {
             segments,
@@ -178,6 +184,8 @@ struct Checker<'a> {
     vals: Vec<S<Val>>,
     scopes: Vec<Module>,
     errors: Vec<Error>,
+    deco_params: HashSet<ItemId>,
+    in_applicand: bool,
 }
 
 impl<'a> Checker<'a> {
@@ -188,6 +196,8 @@ impl<'a> Checker<'a> {
             vals: Vec::new(),
             scopes: Vec::new(),
             errors: Vec::new(),
+            deco_params: HashSet::new(),
+            in_applicand: false,
         }
     }
 
@@ -285,6 +295,15 @@ impl<'a> Checker<'a> {
             }
             return;
         };
+        if self.deco_params.contains(&current) && !self.in_applicand {
+            self.error_at(
+                first_span,
+                format!(
+                    "decorator parameter `{}` can only be used in functor applicand",
+                    first_name
+                ),
+            );
+        }
         for &(name, span) in rest {
             match self.item(current).members().and_then(|m| m.get(name)) {
                 Some(id) => current = id,
@@ -372,6 +391,7 @@ impl<'a> Checker<'a> {
         for (name, val_id) in deco_param_defs {
             let item = Item::param(*val_id);
             let id = self.alloc_item(item);
+            self.deco_params.insert(id);
             self.define(name.clone(), id);
         }
     }
@@ -701,7 +721,9 @@ impl<'a> Checker<'a> {
         for ni in name_infos {
             if let Some(applicand) = ni.applicand {
                 let (fname, fspan) = (&ni.seg_names[0].0, &ni.seg_names[0].1);
+                self.in_applicand = true;
                 let app_resolved = applicand.resolve(self);
+                self.in_applicand = false;
                 let lookup_result = self.lookup(fname);
                 match lookup_result {
                     Some(id) => {

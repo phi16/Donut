@@ -99,7 +99,13 @@ fn param_not_visible_outside() {
 
 #[test]
 fn decorator_param_in_scope() {
-    check_ok("T = \"t\"\n[p: T] f: T = p");
+    // decorator params can only be used in functor applicand
+    let errs = check_errs("T = \"t\"\n[p: T] f: T = p");
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("decorator parameter") && e.contains("p")),
+        "{errs:?}"
+    );
 }
 
 // --- Where ---
@@ -545,13 +551,19 @@ r = dst.inner.val
 
 #[test]
 fn compound_decorator_param_with_module() {
-    check_ok(
+    // decorator params can only be used in functor applicand
+    let errs = check_errs(
         r#"
 T = "t"
 [p: T] m = {
     x = p
 }
 "#,
+    );
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("decorator parameter") && e.contains("p")),
+        "{errs:?}"
     );
 }
 
@@ -745,7 +757,8 @@ r = x
 
 #[test]
 fn anon_block_deco_param_visible() {
-    check_ok(
+    // decorator params can only be used in functor applicand
+    let errs = check_errs(
         r#"
 T = "t"
 [p: T] {
@@ -753,6 +766,11 @@ T = "t"
 }
 r = x
 "#,
+    );
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("decorator parameter") && e.contains("p")),
+        "{errs:?}"
     );
 }
 
