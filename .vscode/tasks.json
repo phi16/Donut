@@ -16,7 +16,10 @@
       "command": "npx vsce package && code --install-extension donut-vscode-0.0.1.vsix",
       "options": {
         "cwd": "${workspaceFolder}/donut-vscode"
-      }
+      },
+      "problemMatcher": [
+        "$rust-panic"
+      ]
     }
   ]
 }

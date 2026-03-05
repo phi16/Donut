@@ -22,6 +22,7 @@ pub struct Entry {
     pub name: String,
     pub color: (u8, u8, u8),
     pub cell: FreeCell,
+    pub param_counts: Vec<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -50,6 +51,7 @@ struct Checker<'a> {
     module_members: HashMap<String, Vec<(String, Option<usize>)>>,
     entry_params: HashMap<usize, Vec<(String, PrimId)>>,
     accumulated_args: Vec<PrimArg>,
+    param_count_stack: Vec<usize>,
 }
 
 impl<'a> Checker<'a> {
@@ -66,6 +68,7 @@ impl<'a> Checker<'a> {
             module_members: HashMap::new(),
             entry_params: HashMap::new(),
             accumulated_args: Vec::new(),
+            param_count_stack: Vec::new(),
         }
     }
 
@@ -98,12 +101,31 @@ impl<'a> Checker<'a> {
 
     // --- Entry management ---
 
-    fn add_entry(&mut self, name: String, color: Option<(u8, u8, u8)>, cell: FreeCell) -> usize {
+    fn add_entry(
+        &mut self,
+        name: String,
+        color: Option<(u8, u8, u8)>,
+        cell: FreeCell,
+        param_counts: Vec<usize>,
+    ) -> usize {
         let color = color.unwrap_or_else(|| auto_color(self.entries.len()));
         let idx = self.entries.len();
         self.lookup.insert(name.clone(), idx);
-        self.entries.push(Entry { name, color, cell });
+        self.entries.push(Entry {
+            name,
+            color,
+            cell,
+            param_counts,
+        });
         idx
+    }
+
+    fn current_param_counts(&self, own_count: usize) -> Vec<usize> {
+        let mut counts = self.param_count_stack.clone();
+        if own_count > 0 {
+            counts.push(own_count);
+        }
+        counts
     }
 
     fn qualified_name(&self, name: &str) -> String {
@@ -197,7 +219,8 @@ impl<'a> Checker<'a> {
                                 };
                                 match cell {
                                     Ok(cell) => {
-                                        let idx = self.add_entry(qname.clone(), color, cell);
+                                        let pc = self.current_param_counts(param_freshes.len());
+                                        let idx = self.add_entry(qname.clone(), color, cell, pc);
                                         if has_params {
                                             self.entry_params
                                                 .insert(idx, param_freshes.clone());
@@ -244,7 +267,8 @@ impl<'a> Checker<'a> {
                                     }
                                 }
 
-                                let idx = self.add_entry(qname.clone(), color, body);
+                                let pc = self.current_param_counts(param_freshes.len());
+                                let idx = self.add_entry(qname.clone(), color, body, pc);
                                 if has_params {
                                     self.entry_params.insert(idx, param_freshes.clone());
                                 }
@@ -256,7 +280,7 @@ impl<'a> Checker<'a> {
                 }
 
                 if !members.entries.is_empty() {
-                    self.check_members(&qname, members, has_params);
+                    self.check_members(&qname, members, param_freshes.len());
                 }
             }
             ItemBody::Functor { mappings } => {
@@ -405,8 +429,9 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn check_members(&mut self, prefix: &str, module: &Module, parent_has_params: bool) {
+    fn check_members(&mut self, prefix: &str, module: &Module, parent_param_count: usize) {
         self.prefixes.push(prefix.to_string());
+        self.param_count_stack.push(parent_param_count);
         let mut members = Vec::new();
         for (member_name, item_id) in &module.entries {
             let full_name = format!("{}.{}", prefix, member_name);
@@ -418,9 +443,10 @@ impl<'a> Checker<'a> {
                 members.push((member_name.clone(), entry_idx));
             }
         }
+        self.param_count_stack.pop();
         self.prefixes.pop();
 
-        if parent_has_params || !members.is_empty() {
+        if parent_param_count > 0 || !members.is_empty() {
             self.module_members.insert(prefix.to_string(), members);
         }
     }
@@ -439,7 +465,7 @@ impl<'a> Checker<'a> {
                 Ty::Succ(s, t) => FreeCell::prim(prim, s.clone(), t.clone())?,
             };
             let param_name = self.qualified_name(&param.name);
-            self.add_entry(param_name, None, cell.clone());
+            self.add_entry(param_name, None, cell.clone(), vec![]);
             self.accumulated_args.push(PrimArg::Cell(cell.pure.clone()));
             freshes.push((param.name.clone(), fresh_id));
         }
@@ -547,7 +573,8 @@ impl<'a> Checker<'a> {
                     src_entry.cell.pure.subst(mapping)
                 };
                 let new_cell = FreeCell::from_pure(&new_pure);
-                let idx = self.add_entry(dest_member.clone(), Some(src_entry.color), new_cell);
+                let src_pc = src_entry.param_counts.clone();
+                let idx = self.add_entry(dest_member.clone(), Some(src_entry.color), new_cell, src_pc);
 
                 if let Some(params) = self.entry_params.get(src_idx).cloned() {
                     self.entry_params.insert(idx, params);

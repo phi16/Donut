@@ -150,31 +150,32 @@ impl Renderer {
     }
 
     pub fn hit_test(&self, cell: &Geometry, mx: R, my: R) -> Option<Prim> {
-        let mut hit: Option<(Prim, usize)> = None; // (prim, dimension)
+        // Reset transform so isPointInPath/isPointInStroke work in local coordinates
+        self.context.save();
+        let _ = self.context.set_transform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0);
 
+        let mut hit: Option<Prim> = None;
+
+        for cubes in cell.cubes.iter() {
+            for (prim, cube) in cubes {
+                if self.hit_test_cube(cube, mx, my) {
+                    hit = Some(prim.clone());
+                }
+            }
+        }
+
+        // Spheres are drawn on top of cubes, so they take priority
         for (prim, center, r2) in &cell.spheres {
             assert_eq!(center.len(), 2);
             let dx = center[0] - mx;
             let dy = center[1] - my;
             if dx * dx + dy * dy < *r2 {
-                let dim = 0; // spheres come from sliced points
-                if hit.as_ref().map_or(true, |h| dim <= h.1) {
-                    hit = Some((prim.clone(), dim));
-                }
+                hit = Some(prim.clone());
             }
         }
 
-        for (dim, cubes) in cell.cubes.iter().enumerate() {
-            for (prim, cube) in cubes {
-                if self.hit_test_cube(cube, mx, my) {
-                    if hit.as_ref().map_or(true, |h| dim >= h.1) {
-                        hit = Some((prim.clone(), dim));
-                    }
-                }
-            }
-        }
-
-        hit.map(|h| h.0)
+        self.context.restore();
+        hit
     }
 
     fn hit_test_cube(&self, cube: &Cuboid, mx: R, my: R) -> bool {

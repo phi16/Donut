@@ -137,11 +137,17 @@ impl<'a, I: Iterator<Item = LocChar<'a>>> Iterator for Tokenizer<'a, I> {
 
     fn next(&mut self) -> Option<Self::Item> {
         let (l0, c0) = self.iter.peek()?.clone();
-        if c0.is_whitespace() {
+        if c0 == '\r' {
+            // skip carriage return (CRLF support)
+            self.iter.next();
+            return self.next();
+        } else if c0.is_whitespace() {
             // whitespace
             while let Some((l, c)) = self.iter.peek() {
                 if l0.ln == l.ln && c.is_whitespace() {
-                    if *c != ' ' {
+                    if *c == '\r' {
+                        // skip
+                    } else if *c != ' ' {
                         let pos = TokenPos {
                             line: l.ln,
                             col: l.col_chars,

@@ -1,5 +1,7 @@
 use crate::check::Env;
 use donut_core::cell::Globular;
+use donut_core::common::PrimArg;
+use donut_core::pure_cell::PureCell;
 
 fn load(code: &str) -> Env {
     let code = super::dedent(code.trim_matches('\n'));
@@ -77,9 +79,6 @@ fn test_load_pentagon() {
 #[test]
 fn test_load_colors() {
     let input = r#"
-        gray: *
-        hsv: *
-        rgb: *
         [gray[80]]
         u: *
         [hsv[0.6, 1, 1]]
@@ -187,4 +186,46 @@ fn test_load_nat_example() {
 
     // Functor type declaration is not yet loaded as a cell
     assert!(!table.lookup.contains_key("compile"));
+}
+
+#[test]
+fn test_load_parametric_example() {
+    let input = include_str!("../../../../examples/parametric.donut");
+    let env = load(input);
+
+    // Template param and members exist
+    assert!(env.lookup.contains_key("C"));
+    assert!(env.lookup.contains_key("cat.x"));
+    assert!(env.lookup.contains_key("cat.m"));
+    assert!(env.lookup.contains_key("cat.a"));
+
+    // Instantiated members exist
+    assert!(env.lookup.contains_key("c.x"));
+    assert!(env.lookup.contains_key("c.m"));
+    assert!(env.lookup.contains_key("c.a"));
+
+    // c.a is a 3-cell
+    let ca = &env.entries[env.lookup["c.a"]];
+    assert_eq!(ca.cell.pure.dim().in_space, 3);
+
+    // c.x's prim should have args (the substituted u)
+    let cx = &env.entries[env.lookup["c.x"]];
+    match &cx.cell.pure {
+        PureCell::Prim(prim, _, _) => {
+            assert_eq!(prim.args.len(), 1, "c.x should have 1 arg (u)");
+            // The arg should be a Cell containing u's PureCell
+            let u_entry = &env.entries[env.lookup["u"]];
+            match &prim.args[0] {
+                PrimArg::Cell(cell) => {
+                    assert_eq!(cell, &u_entry.cell.pure, "c.x's arg should be u");
+                }
+                _ => panic!("expected Cell arg"),
+            }
+        }
+        _ => panic!("expected Prim"),
+    }
+
+    // result is the last entry
+    let last = env.entries.last().unwrap();
+    assert_eq!(last.name, "result");
 }

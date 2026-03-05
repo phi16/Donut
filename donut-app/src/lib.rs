@@ -35,18 +35,44 @@ fn set_resize_callback(canvas: web_sys::HtmlCanvasElement) -> Option<()> {
     Some(())
 }
 
-fn set_mouse_callback(mouse: Rc<RefCell<(f64, f64)>>) -> Option<()> {
+fn set_mouse_callback(
+    mouse: Rc<RefCell<(f64, f64)>>,
+    pressing: Rc<RefCell<bool>>,
+) -> Option<()> {
     let window = web_sys::window()?;
+
     let on_mouse_move: Closure<dyn Fn(web_sys::MouseEvent)> = {
+        let mouse = Rc::clone(&mouse);
         Closure::new(move |event: web_sys::MouseEvent| {
-            let pos = (event.client_x() as f64, event.client_y() as f64);
-            *mouse.borrow_mut() = pos;
+            *mouse.borrow_mut() = (event.client_x() as f64, event.client_y() as f64);
         })
     };
     window
         .add_event_listener_with_callback("mousemove", on_mouse_move.as_ref().unchecked_ref())
         .ok()?;
     on_mouse_move.forget();
+
+    let on_mouse_down: Closure<dyn Fn(web_sys::MouseEvent)> = {
+        let pressing = Rc::clone(&pressing);
+        Closure::new(move |_: web_sys::MouseEvent| {
+            *pressing.borrow_mut() = true;
+        })
+    };
+    window
+        .add_event_listener_with_callback("mousedown", on_mouse_down.as_ref().unchecked_ref())
+        .ok()?;
+    on_mouse_down.forget();
+
+    let on_mouse_up: Closure<dyn Fn(web_sys::MouseEvent)> = {
+        Closure::new(move |_: web_sys::MouseEvent| {
+            *pressing.borrow_mut() = false;
+        })
+    };
+    window
+        .add_event_listener_with_callback("mouseup", on_mouse_up.as_ref().unchecked_ref())
+        .ok()?;
+    on_mouse_up.forget();
+
     Some(())
 }
 
@@ -86,13 +112,40 @@ pub fn start() -> Option<()> {
         .ok()?;
     set_resize_callback(canvas.clone())?;
     let mouse = Rc::new(RefCell::new((0.0, 0.0)));
-    set_mouse_callback(Rc::clone(&mouse))?;
+    let pressing = Rc::new(RefCell::new(false));
+    set_mouse_callback(Rc::clone(&mouse), Rc::clone(&pressing))?;
     let context = canvas
         .get_context("2d")
         .ok()??
         .dyn_into::<web_sys::CanvasRenderingContext2d>()
         .ok()?;
-    let app = Rc::new(RefCell::new(App::new(canvas, context, mouse)));
+    let entry_select = document
+        .get_element_by_id("entry-select")?
+        .dyn_into::<web_sys::HtmlSelectElement>()
+        .ok()?;
+    let app = Rc::new(RefCell::new(App::new(
+        canvas,
+        context,
+        mouse,
+        pressing,
+        entry_select.clone(),
+    )));
+
+    // Set up entry selection handler
+    {
+        let app_clone = Rc::clone(&app);
+        let select_clone = entry_select.clone();
+        let on_change: Closure<dyn FnMut()> = Closure::new(move || {
+            let index = select_clone.selected_index();
+            if index >= 0 {
+                app_clone.borrow_mut().select_entry(index as usize);
+            }
+        });
+        entry_select
+            .add_event_listener_with_callback("change", on_change.as_ref().unchecked_ref())
+            .ok()?;
+        on_change.forget();
+    }
 
     // Set up button click handler
     let button = document

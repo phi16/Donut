@@ -1,0 +1,23 @@
+// Parametric monoid
+//
+// Expected hover labels:
+//   0-cells: u
+//   1-cells: cat.x[u]
+//   2-cells: cat.m[u]
+//   3-cell:  cat.a[u] (= result)
+
+cat[C: *] = {
+    [hsv[0.6, 1, 1]]
+    x: C → C
+    [hsv[0.1, 1, 1]]
+    m: x x → x
+    [hsv[0.2, 1, 1]]
+    a: m x; m → x m; m
+}
+
+[gray[80]]
+u: *
+
+c = cat[u]
+
+result = c.a

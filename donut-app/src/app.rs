@@ -3,18 +3,28 @@ use std::rc::Rc;
 
 use donut_core::cell::*;
 use donut_core::common::*;
+use donut_core::free_cell::FreeCell;
+use donut_lang::check::Env;
+use wasm_bindgen::JsCast;
 use donut_layout::layout_solver::LayoutSolver;
 use donut_renderer::geometry::{Geometry, R};
 use donut_renderer::prim_table::PrimTable;
 use donut_renderer::render::Renderer;
 
+const MARGIN: R = 100.0;
+const GAP: R = 100.0;
+
 pub struct App {
     canvas: web_sys::HtmlCanvasElement,
     context: web_sys::CanvasRenderingContext2d,
     mouse: Rc<RefCell<(f64, f64)>>,
-    cell: Geometry,
+    pressing: Rc<RefCell<bool>>,
+    entry_select: web_sys::HtmlSelectElement,
+    env: Env,
     table: PrimTable,
-    t: R,
+    selected: usize,
+    cell: Geometry,
+    slice_pos: Vec<R>,
 }
 
 impl App {
@@ -22,6 +32,8 @@ impl App {
         canvas: web_sys::HtmlCanvasElement,
         context: web_sys::CanvasRenderingContext2d,
         mouse: Rc<RefCell<(f64, f64)>>,
+        pressing: Rc<RefCell<bool>>,
+        entry_select: web_sys::HtmlSelectElement,
     ) -> Self {
         let input = "\
 [gray[80]]
@@ -62,7 +74,29 @@ oao =
 pentagon: aaa → oao
 result = pentagon
 ";
-        let (env, errors) = donut_lang::load::load(input);
+        let (env, table) = Self::load(input).unwrap();
+        let selected = env.entries.len() - 1;
+        let cell = Self::build_geometry(&env.entries[selected].cell);
+
+        let mut app = Self {
+            canvas,
+            context,
+            mouse,
+            pressing,
+            entry_select,
+            env,
+            table,
+            selected,
+            cell,
+            slice_pos: vec![],
+        };
+        app.slice_pos = Self::init_slice_pos(&app.cell.size);
+        app.populate_select();
+        app
+    }
+
+    fn load(code: &str) -> Result<(Env, PrimTable)> {
+        let (env, errors) = donut_lang::load::load(code);
         if !errors.is_empty() {
             for (_, msg) in &errors {
                 log::warn!("Load warning: {}", msg);
@@ -72,62 +106,99 @@ result = pentagon
         let mut table = PrimTable::new();
         for (i, e) in env.entries.iter().enumerate() {
             let prim = Prim::new(i as PrimId);
-            table.insert(prim, &e.name, e.cell.pure.dim().in_space, e.color);
+            table.insert(
+                prim,
+                &e.name,
+                e.cell.pure.dim().in_space,
+                e.color,
+                e.param_counts.clone(),
+            );
         }
 
-        let cell = env.entries.last().unwrap().cell.clone();
+        Ok((env, table))
+    }
+
+    fn build_geometry(free_cell: &FreeCell) -> Geometry {
         let mut f = LayoutSolver::new();
-        let cell = f.from_free(cell);
+        let cell = f.from_free(free_cell.clone());
         let sol = f.solve(&cell);
         let cell = sol.convert(&cell);
-        // log::debug!("Cell: {}", cell);
         let mut cell = cell.render();
-        while cell.max.len() < 4 {
+        while cell.max.len() < 4 || cell.max.len() % 2 != 0 {
             cell.shift(&Q::from(0), &Q::from(1));
         }
-        let cell = Geometry::from(&cell);
-        log::debug!("Geometry: {:?}", cell.size);
+        Geometry::from(&cell)
+    }
 
-        Self {
-            canvas,
-            context,
-            mouse,
-            cell,
-            table,
-            t: 0.0,
+    fn init_slice_pos(size: &[R]) -> Vec<R> {
+        size[2..].iter().map(|s| s / 2.0).collect()
+    }
+
+    fn populate_select(&self) {
+        // Clear existing options
+        self.entry_select.set_inner_html("");
+
+        let document = web_sys::window().unwrap().document().unwrap();
+        for (i, entry) in self.env.entries.iter().enumerate() {
+            let option = document
+                .create_element("option")
+                .unwrap()
+                .dyn_into::<web_sys::HtmlOptionElement>()
+                .unwrap();
+            let dim = entry.cell.pure.dim().in_space;
+            let label = format!("{} ({}d)", entry.name, dim);
+            option.set_text_content(Some(&label));
+            option.set_value(&i.to_string());
+            if i == self.selected {
+                option.set_selected(true);
+            }
+            self.entry_select.append_child(&option).unwrap();
         }
     }
 
     pub fn update_code(&mut self, code: &str) -> Result<()> {
-        let (env, errors) = donut_lang::load::load(code);
-        if !errors.is_empty() {
-            return Err(errors
-                .iter()
-                .map(|(_, msg)| msg.as_str())
-                .collect::<Vec<_>>()
-                .join("\n"));
-        }
-
-        let mut table = PrimTable::new();
-        for (i, e) in env.entries.iter().enumerate() {
-            let prim = Prim::new(i as PrimId);
-            table.insert(prim, &e.name, e.cell.pure.dim().in_space, e.color);
-        }
-
-        let cell = env.entries.last().unwrap().cell.clone();
-        let mut f = LayoutSolver::new();
-        let cell = f.from_free(cell);
-        let sol = f.solve(&cell);
-        let cell = sol.convert(&cell);
-        let mut cell = cell.render();
-        while cell.max.len() < 4 {
-            cell.shift(&Q::from(0), &Q::from(1));
-        }
-        let cell = Geometry::from(&cell);
-
-        self.cell = cell;
+        let (env, table) = Self::load(code)?;
+        let selected = env.entries.len() - 1;
+        let cell = Self::build_geometry(&env.entries[selected].cell);
+        self.slice_pos = Self::init_slice_pos(&cell.size);
+        self.env = env;
         self.table = table;
+        self.selected = selected;
+        self.cell = cell;
+        self.populate_select();
         Ok(())
+    }
+
+    pub fn select_entry(&mut self, index: usize) {
+        if index >= self.env.entries.len() {
+            return;
+        }
+        self.selected = index;
+        self.cell = Self::build_geometry(&self.env.entries[index].cell);
+        self.slice_pos = Self::init_slice_pos(&self.cell.size);
+    }
+
+    fn build_squash_view(&self, i: usize) -> Geometry {
+        let d = 2 + 2 * i;
+        let n_extra = self.cell.size.len() - 2;
+
+        let mut rc = self.cell.squashed();
+        for _ in 1..d {
+            rc = rc.squashed();
+        }
+        for k in (2 * (i + 1)..n_extra).rev() {
+            rc = rc.sliced(self.slice_pos[k]);
+        }
+        rc
+    }
+
+    fn build_slice_view(&self) -> Geometry {
+        let n_extra = self.cell.size.len() - 2;
+        let mut rc = self.cell.sliced(self.slice_pos[n_extra - 1]);
+        for k in (0..n_extra - 1).rev() {
+            rc = rc.sliced(self.slice_pos[k]);
+        }
+        rc
     }
 
     pub fn step(&mut self) {
@@ -135,46 +206,110 @@ result = pentagon
         let height = self.canvas.height() as f64;
         self.context.set_fill_style_str("rgb(40 40 40)");
         self.context.fill_rect(0.0, 0.0, width, height);
-        self.context.set_fill_style_str("rgb(50 50 50)");
-        // self.context.fill_rect(50.0, 50.0, 500.0, 400.0);
 
         let size = self.cell.size.clone();
-        let slicer_x = size[0] + 200.0;
-        let slicer_y = 100.0;
-
-        self.context
-            .fill_rect(50.0, 50.0, size[0] + 100.0, size[1] + 100.0);
+        let n_extra = size.len() - 2;
+        let n_views = n_extra / 2;
 
         let mouse = *self.mouse.borrow();
-        self.context.save();
-        self.context.translate(100.0, 100.0).unwrap();
         let renderer = Renderer::new(self.context.clone());
-        let x = (mouse.0 - slicer_x).min(size[2]).max(0.0);
-        let y = (mouse.1 - slicer_y).min(size[3]).max(0.0);
-        let rc = &self.cell;
-        let rc = rc.sliced(y);
-        let rc = rc.sliced(x);
-        renderer.cell(&rc, &self.table);
 
-        let local_mx = mouse.0 - 100.0;
-        let local_my = mouse.1 - 100.0;
-        if let Some(prim) = renderer.hit_test(&rc, local_mx, local_my) {
-            if let Some(entry) = self.table.get(&prim) {
-                self.context.set_fill_style_str("rgb(255 255 255)");
-                self.context.set_font("14px monospace");
-                let _ = self.context.fill_text(&entry.name, local_mx + 12.0, local_my - 8.0);
+        let slice_origin = (MARGIN, MARGIN);
+        let mut squash_origins = vec![];
+        let mut cursor_x = MARGIN + size[0] + GAP;
+        for i in 0..n_views {
+            let d = 2 + 2 * i;
+            squash_origins.push((cursor_x, MARGIN));
+            cursor_x += size[d] + GAP;
+        }
+
+        if *self.pressing.borrow() {
+            for i in 0..n_views {
+                let d = 2 + 2 * i;
+                let (ox, oy) = squash_origins[i];
+                let lx = mouse.0 - ox;
+                let ly = mouse.1 - oy;
+                if lx >= 0.0 && lx <= size[d] && ly >= 0.0 && ly <= size[d + 1] {
+                    self.slice_pos[2 * i] = lx;
+                    self.slice_pos[2 * i + 1] = ly;
+                    break;
+                }
             }
         }
 
-        self.context.restore();
-        self.context.save();
-        self.context.translate(slicer_x, slicer_y).unwrap();
-        let rc = &self.cell;
-        let rc = rc.squashed();
-        let rc = rc.squashed();
-        renderer.cell(&rc, &self.table);
-        self.context.restore();
+        // --- Squashed views ---
+        for i in 0..n_views {
+            let d = 2 + 2 * i;
+            let (ox, oy) = squash_origins[i];
+            let vw = size[d];
+            let vh = size[d + 1];
 
-        self.t += 0.03;
+            self.context.set_fill_style_str("rgb(50 50 50)");
+            self.context
+                .fill_rect(ox - 25.0, oy - 25.0, vw + 50.0, vh + 50.0);
+
+            self.context.save();
+            self.context.translate(ox, oy).unwrap();
+
+            let rc = self.build_squash_view(i);
+            renderer.cell(&rc, &self.table);
+
+            let sx = self.slice_pos[2 * i];
+            let sy = self.slice_pos[2 * i + 1];
+            self.context
+                .set_stroke_style_str("rgba(255 255 255 / 0.4)");
+            self.context.set_line_width(1.0);
+            self.context.begin_path();
+            self.context.move_to(sx, 0.0);
+            self.context.line_to(sx, vh);
+            self.context.move_to(0.0, sy);
+            self.context.line_to(vw, sy);
+            self.context.stroke();
+
+            let lmx = mouse.0 - ox;
+            let lmy = mouse.1 - oy;
+            if lmx >= 0.0 && lmx <= vw && lmy >= 0.0 && lmy <= vh {
+                if let Some(prim) = renderer.hit_test(&rc, lmx, lmy) {
+                    let label = self.table.format_prim(&prim);
+                    self.draw_tooltip(&label, lmx + 12.0, lmy - 8.0);
+                }
+            }
+
+            self.context.restore();
+        }
+
+        // --- Slice view ---
+        {
+            let (ox, oy) = slice_origin;
+            let vw = size[0];
+            let vh = size[1];
+
+            self.context.set_fill_style_str("rgb(50 50 50)");
+            self.context
+                .fill_rect(ox - 25.0, oy - 25.0, vw + 50.0, vh + 50.0);
+
+            self.context.save();
+            self.context.translate(ox, oy).unwrap();
+
+            let rc = self.build_slice_view();
+            renderer.cell(&rc, &self.table);
+
+            let lmx = mouse.0 - ox;
+            let lmy = mouse.1 - oy;
+            if lmx >= 0.0 && lmx <= vw && lmy >= 0.0 && lmy <= vh {
+                if let Some(prim) = renderer.hit_test(&rc, lmx, lmy) {
+                    let label = self.table.format_prim(&prim);
+                    self.draw_tooltip(&label, lmx + 12.0, lmy - 8.0);
+                }
+            }
+
+            self.context.restore();
+        }
+    }
+
+    fn draw_tooltip(&self, text: &str, x: R, y: R) {
+        self.context.set_fill_style_str("rgb(255 255 255)");
+        self.context.set_font("14px monospace");
+        let _ = self.context.fill_text(text, x, y);
     }
 }
