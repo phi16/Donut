@@ -1,11 +1,12 @@
-use crate::env::{register_env, ENV_SOURCE};
+use crate::env::register_env;
 use crate::{Runtime, Value};
 use donut_core::cell::Globular;
 use donut_core::common::PrimId;
 use std::collections::HashMap;
 
 fn setup(user_code: &str) -> (Runtime, donut_lang::check::Env) {
-    let code = format!("{}\n{}", ENV_SOURCE, user_code);
+    let prelude = "import \"base\"\nenv = import \"sys\"\n";
+    let code = format!("{}{}", prelude, user_code);
     let (env, errors) = donut_lang::load::load(&code);
     for (_, msg) in &errors {
         eprintln!("  warning: {}", msg);
@@ -15,8 +16,10 @@ fn setup(user_code: &str) -> (Runtime, donut_lang::check::Env) {
     let mut lookup: HashMap<String, PrimId> = HashMap::new();
     for (name, &idx) in &env.lookup {
         let entry = &env.entries[idx];
-        if let Some(id) = entry.cell.pure.extract_prim_id() {
-            lookup.insert(name.clone(), id);
+        if let Some(cell) = entry.body.as_cell() {
+            if let Some(id) = cell.pure.extract_prim_id() {
+                lookup.insert(name.clone(), id);
+            }
         }
     }
 
@@ -27,7 +30,7 @@ fn setup(user_code: &str) -> (Runtime, donut_lang::check::Env) {
 
 fn eval_entry(rt: &Runtime, env: &donut_lang::check::Env, name: &str) -> Vec<Value> {
     let idx = env.lookup.get(name).unwrap_or_else(|| panic!("entry '{}' not found", name));
-    let cell = &env.entries[*idx].cell;
+    let cell = env.entries[*idx].body.as_cell().unwrap();
     rt.eval(cell, &[]).unwrap()
 }
 
@@ -158,10 +161,10 @@ result2 = F(add)
 ";
     let (rt, env) = setup(code);
 
-    assert!(rt.is_evaluable(&env.entries[*env.lookup.get("result").unwrap()].cell), "result should be evaluable");
+    assert!(rt.is_evaluable(&env.entries[*env.lookup.get("result").unwrap()].body.as_cell().unwrap()), "result should be evaluable");
     assert_eq!(eval_entry(&rt, &env, "result"), vec![Value::U32(6)]);
 
-    let result2_cell = &env.entries[*env.lookup.get("result2").unwrap()].cell;
+    let result2_cell = &env.entries[*env.lookup.get("result2").unwrap()].body.as_cell().unwrap();
     assert!(!rt.is_evaluable(result2_cell), "result2 needs 2 inputs, should not be evaluable with no input");
 }
 
@@ -206,6 +209,6 @@ F(th) = env.u32
 result = F(th)
 ");
     let result_idx = *env.lookup.get("result").expect("result not found");
-    let result_cell = &env.entries[result_idx].cell;
+    let result_cell = &env.entries[result_idx].body.as_cell().unwrap();
     assert_eq!(result_cell.pure.dim().in_space, 2);
 }

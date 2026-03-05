@@ -28,9 +28,9 @@ fn basic_cells() {
     )
     .unwrap();
     assert_eq!(env.entries.len(), 3);
-    assert_eq!(env.entries[0].cell.pure.dim().in_space, 0);
-    assert_eq!(env.entries[1].cell.pure.dim().in_space, 1);
-    assert_eq!(env.entries[2].cell.pure.dim().in_space, 2);
+    assert_eq!(env.entries[0].body.as_cell().unwrap().pure.dim().in_space, 0);
+    assert_eq!(env.entries[1].body.as_cell().unwrap().pure.dim().in_space, 1);
+    assert_eq!(env.entries[2].body.as_cell().unwrap().pure.dim().in_space, 2);
 }
 
 #[test]
@@ -47,7 +47,7 @@ fn basic_alias() {
     )
     .unwrap();
     assert_eq!(env.entries[5].name, "assoc");
-    assert_eq!(env.entries[5].cell.pure.dim().in_space, 3);
+    assert_eq!(env.entries[5].body.as_cell().unwrap().pure.dim().in_space, 3);
 }
 
 #[test]
@@ -81,7 +81,7 @@ fn nat_example() {
     assert!(env.lookup.contains_key("sum_12"));
 
     let add_assoc = &env.entries[env.lookup["add_assoc"]];
-    assert_eq!(add_assoc.cell.pure.dim().in_space, 3);
+    assert_eq!(add_assoc.body.as_cell().unwrap().pure.dim().in_space, 3);
 }
 
 // --- Parametric declaration (cell params) ---
@@ -99,9 +99,9 @@ fn parametric_decl_zero_cell() {
     assert_eq!(env.entries.len(), 2);
     let a = &env.entries[1];
     assert_eq!(a.name, "A");
-    assert_eq!(a.cell.pure.dim().in_space, 1);
+    assert_eq!(a.body.as_cell().unwrap().pure.dim().in_space, 1);
     // A's Prim should have args (the fresh param)
-    match &a.cell.pure {
+    match &a.body.as_cell().unwrap().pure {
         donut_core::pure_cell::PureCell::Prim(prim, _, _) => {
             assert_eq!(prim.args.len(), 1);
         }
@@ -124,7 +124,7 @@ fn parametric_decl_one_cell() {
     let b = &env.entries[2];
     assert_eq!(b.name, "B");
     // f is a 1-cell, f → f creates a 2-cell
-    assert_eq!(b.cell.pure.dim().in_space, 2);
+    assert_eq!(b.body.as_cell().unwrap().pure.dim().in_space, 2);
 }
 
 // --- Instantiation (simple) ---
@@ -148,16 +148,16 @@ fn instantiation_simple() {
     let az = &env.entries[env.lookup["az"]];
 
     // ay's source/target should be y
-    assert_eq!(ay.cell.pure.s(), y.cell.pure);
-    assert_eq!(ay.cell.pure.t(), y.cell.pure);
+    assert_eq!(ay.body.as_cell().unwrap().pure.s(), y.body.as_cell().unwrap().pure);
+    assert_eq!(ay.body.as_cell().unwrap().pure.t(), y.body.as_cell().unwrap().pure);
 
     // az's source/target should be z
     let z = &env.entries[env.lookup["z"]];
-    assert_eq!(az.cell.pure.s(), z.cell.pure);
-    assert_eq!(az.cell.pure.t(), z.cell.pure);
+    assert_eq!(az.body.as_cell().unwrap().pure.s(), z.body.as_cell().unwrap().pure);
+    assert_eq!(az.body.as_cell().unwrap().pure.t(), z.body.as_cell().unwrap().pure);
 
     // ay ≠ az (different args)
-    assert_ne!(ay.cell.pure, az.cell.pure);
+    assert_ne!(ay.body.as_cell().unwrap().pure, az.body.as_cell().unwrap().pure);
 }
 
 // --- Parametric module ---
@@ -183,20 +183,20 @@ fn parametric_module() {
 
     // cu.x should have source/target = u
     let cu_x = &env.entries[env.lookup["cu.x"]];
-    assert_eq!(cu_x.cell.pure.s(), u.cell.pure);
-    assert_eq!(cu_x.cell.pure.t(), u.cell.pure);
+    assert_eq!(cu_x.body.as_cell().unwrap().pure.s(), u.body.as_cell().unwrap().pure);
+    assert_eq!(cu_x.body.as_cell().unwrap().pure.t(), u.body.as_cell().unwrap().pure);
 
     // cv.x should have source/target = v
     let cv_x = &env.entries[env.lookup["cv.x"]];
-    assert_eq!(cv_x.cell.pure.s(), v.cell.pure);
-    assert_eq!(cv_x.cell.pure.t(), v.cell.pure);
+    assert_eq!(cv_x.body.as_cell().unwrap().pure.s(), v.body.as_cell().unwrap().pure);
+    assert_eq!(cv_x.body.as_cell().unwrap().pure.t(), v.body.as_cell().unwrap().pure);
 
     // cu.x ≠ cv.x
-    assert_ne!(cu_x.cell.pure, cv_x.cell.pure);
+    assert_ne!(cu_x.body.as_cell().unwrap().pure, cv_x.body.as_cell().unwrap().pure);
 
     // cu.m should exist and be a 2-cell
     let cu_m = &env.entries[env.lookup["cu.m"]];
-    assert_eq!(cu_m.cell.pure.dim().in_space, 2);
+    assert_eq!(cu_m.body.as_cell().unwrap().pure.dim().in_space, 2);
 }
 
 #[test]
@@ -217,7 +217,7 @@ fn parametric_module_composition() {
 
     // double should be a valid 2-cell
     let double = &env.entries[env.lookup["double"]];
-    assert_eq!(double.cell.pure.dim().in_space, 2);
+    assert_eq!(double.body.as_cell().unwrap().pure.dim().in_space, 2);
 }
 
 // --- Prim args equality ---
@@ -243,14 +243,14 @@ fn prim_args_distinguish_instances() {
     let tb = &env.entries[env.lookup["tb"]];
 
     // ta ≠ tb because different Prim args
-    assert_ne!(ta.cell.pure, tb.cell.pure);
+    assert_ne!(ta.body.as_cell().unwrap().pure, tb.body.as_cell().unwrap().pure);
 
     // Both should be 2-cells
-    assert_eq!(ta.cell.pure.dim().in_space, 2);
-    assert_eq!(tb.cell.pure.dim().in_space, 2);
+    assert_eq!(ta.body.as_cell().unwrap().pure.dim().in_space, 2);
+    assert_eq!(tb.body.as_cell().unwrap().pure.dim().in_space, 2);
 
     // ta and tb have different source: ta.s() = a, tb.s() = b
-    assert_ne!(ta.cell.pure.s(), tb.cell.pure.s());
+    assert_ne!(ta.body.as_cell().unwrap().pure.s(), tb.body.as_cell().unwrap().pure.s());
 }
 
 // --- Functor ---
@@ -447,16 +447,16 @@ fn nested_module_instantiation_two_levels() {
 
     // ou.inner.x should have source/target = u
     let ou_x = &env.entries[env.lookup["ou.inner.x"]];
-    assert_eq!(ou_x.cell.pure.s(), u.cell.pure);
-    assert_eq!(ou_x.cell.pure.t(), u.cell.pure);
+    assert_eq!(ou_x.body.as_cell().unwrap().pure.s(), u.body.as_cell().unwrap().pure);
+    assert_eq!(ou_x.body.as_cell().unwrap().pure.t(), u.body.as_cell().unwrap().pure);
 
     // ov.inner.x should have source/target = v
     let ov_x = &env.entries[env.lookup["ov.inner.x"]];
-    assert_eq!(ov_x.cell.pure.s(), v.cell.pure);
-    assert_eq!(ov_x.cell.pure.t(), v.cell.pure);
+    assert_eq!(ov_x.body.as_cell().unwrap().pure.s(), v.body.as_cell().unwrap().pure);
+    assert_eq!(ov_x.body.as_cell().unwrap().pure.t(), v.body.as_cell().unwrap().pure);
 
     // Different instances
-    assert_ne!(ou_x.cell.pure, ov_x.cell.pure);
+    assert_ne!(ou_x.body.as_cell().unwrap().pure, ov_x.body.as_cell().unwrap().pure);
 }
 
 #[test]
@@ -483,12 +483,12 @@ fn nested_module_instantiation_three_levels() {
     let v = &env.entries[env.lookup["v"]];
 
     let ou_x = &env.entries[env.lookup["ou.mid.inner.x"]];
-    assert_eq!(ou_x.cell.pure.s(), u.cell.pure);
+    assert_eq!(ou_x.body.as_cell().unwrap().pure.s(), u.body.as_cell().unwrap().pure);
 
     let ov_x = &env.entries[env.lookup["ov.mid.inner.x"]];
-    assert_eq!(ov_x.cell.pure.s(), v.cell.pure);
+    assert_eq!(ov_x.body.as_cell().unwrap().pure.s(), v.body.as_cell().unwrap().pure);
 
-    assert_ne!(ou_x.cell.pure, ov_x.cell.pure);
+    assert_ne!(ou_x.body.as_cell().unwrap().pure, ov_x.body.as_cell().unwrap().pure);
 }
 
 #[test]
@@ -510,5 +510,5 @@ fn nested_module_use_after_instantiation() {
     .unwrap();
 
     let double = &env.entries[env.lookup["double"]];
-    assert_eq!(double.cell.pure.dim().in_space, 2);
+    assert_eq!(double.body.as_cell().unwrap().pure.dim().in_space, 2);
 }

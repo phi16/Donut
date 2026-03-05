@@ -158,7 +158,5 @@ fn width_1cell(cell: &Cell) -> usize {
     }
 }
 
-pub use env::ENV_SOURCE;
-
 #[cfg(test)]
 mod tests;

@@ -32,13 +32,13 @@ fn test_load() {
     assert_eq!(table.entries[6].name, "assoc2");
 
     // u is 0-dim
-    assert_eq!(table.entries[0].cell.pure.dim().in_space, 0);
+    assert_eq!(table.entries[0].body.as_cell().unwrap().pure.dim().in_space, 0);
     // x is 1-dim
-    assert_eq!(table.entries[1].cell.pure.dim().in_space, 1);
+    assert_eq!(table.entries[1].body.as_cell().unwrap().pure.dim().in_space, 1);
     // m is 2-dim (x x → x)
-    assert_eq!(table.entries[2].cell.pure.dim().in_space, 2);
+    assert_eq!(table.entries[2].body.as_cell().unwrap().pure.dim().in_space, 2);
     // assoc is 3-dim
-    assert_eq!(table.entries[3].cell.pure.dim().in_space, 3);
+    assert_eq!(table.entries[3].body.as_cell().unwrap().pure.dim().in_space, 3);
 }
 
 #[test]
@@ -130,7 +130,7 @@ fn test_load_nested_members() {
     assert_eq!(table.entries[1].name, "a.b.x");
     assert_eq!(table.entries[2].name, "a.y");
     assert_eq!(table.entries[3].name, "f");
-    assert_eq!(table.entries[3].cell.pure.dim().in_space, 2);
+    assert_eq!(table.entries[3].body.as_cell().unwrap().pure.dim().in_space, 2);
 }
 
 #[test]
@@ -175,14 +175,14 @@ fn test_load_nat_example() {
 
     // Properties (3-cells)
     let add_assoc = &table.entries[table.lookup["add_assoc"]];
-    assert_eq!(add_assoc.cell.pure.dim().in_space, 3);
+    assert_eq!(add_assoc.body.as_cell().unwrap().pure.dim().in_space, 3);
 
     let add_comm = &table.entries[table.lookup["add_comm"]];
-    assert_eq!(add_comm.cell.pure.dim().in_space, 3);
+    assert_eq!(add_comm.body.as_cell().unwrap().pure.dim().in_space, 3);
 
     // Equivalence (~ arrow)
     let succ_add = &table.entries[table.lookup["succ_add"]];
-    assert_eq!(succ_add.cell.pure.dim().in_space, 3);
+    assert_eq!(succ_add.body.as_cell().unwrap().pure.dim().in_space, 3);
 
     // Functor type declaration is not yet loaded as a cell
     assert!(!table.lookup.contains_key("compile"));
@@ -206,18 +206,18 @@ fn test_load_parametric_example() {
 
     // c.a is a 3-cell
     let ca = &env.entries[env.lookup["c.a"]];
-    assert_eq!(ca.cell.pure.dim().in_space, 3);
+    assert_eq!(ca.body.as_cell().unwrap().pure.dim().in_space, 3);
 
     // c.x's prim should have args (the substituted u)
     let cx = &env.entries[env.lookup["c.x"]];
-    match &cx.cell.pure {
+    match &cx.body.as_cell().unwrap().pure {
         PureCell::Prim(prim, _, _) => {
             assert_eq!(prim.args.len(), 1, "c.x should have 1 arg (u)");
             // The arg should be a Cell containing u's PureCell
             let u_entry = &env.entries[env.lookup["u"]];
             match &prim.args[0] {
                 PrimArg::Cell(cell) => {
-                    assert_eq!(cell, &u_entry.cell.pure, "c.x's arg should be u");
+                    assert_eq!(cell, &u_entry.body.as_cell().unwrap().pure, "c.x's arg should be u");
                 }
                 _ => panic!("expected Cell arg"),
             }

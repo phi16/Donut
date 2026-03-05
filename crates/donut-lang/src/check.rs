@@ -15,13 +15,29 @@ type Result<T> = std::result::Result<T, String>;
 enum Ty {
     Zero,
     Succ(FreeCell, FreeCell),
+    Meta,
+}
+
+#[derive(Debug, Clone)]
+pub enum EntryBody {
+    Cell(FreeCell),
+    Meta(Prim),
+}
+
+impl EntryBody {
+    pub fn as_cell(&self) -> Option<&FreeCell> {
+        match self {
+            EntryBody::Cell(c) => Some(c),
+            EntryBody::Meta(_) => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct Entry {
     pub name: String,
     pub color: (u8, u8, u8),
-    pub cell: FreeCell,
+    pub body: EntryBody,
     pub param_counts: Vec<usize>,
 }
 
@@ -123,16 +139,25 @@ impl<'a> Checker<'a> {
         &mut self,
         name: String,
         color: Option<(u8, u8, u8)>,
-        cell: FreeCell,
+        body: EntryBody,
         param_counts: Vec<usize>,
     ) -> usize {
         let color = color.unwrap_or_else(|| auto_color(self.entries.len()));
         let idx = self.entries.len();
         // Track special parameter type PrimIds
-        if let Some(prim_id) = cell.pure.extract_prim_id() {
-            if cell.pure.dim().in_space == 0 {
+        match &body {
+            EntryBody::Cell(cell) => {
+                if let Some(prim_id) = cell.pure.extract_prim_id() {
+                    if cell.pure.dim().in_space == 0 {
+                        if name.ends_with(".nat") || name == "nat" {
+                            self.nat_prim_id = Some(prim_id);
+                        }
+                    }
+                }
+            }
+            EntryBody::Meta(prim) => {
                 if name.ends_with(".nat") || name == "nat" {
-                    self.nat_prim_id = Some(prim_id);
+                    self.nat_prim_id = Some(prim.id);
                 }
             }
         }
@@ -140,7 +165,7 @@ impl<'a> Checker<'a> {
         self.entries.push(Entry {
             name,
             color,
-            cell,
+            body,
             param_counts,
         });
         idx
@@ -237,16 +262,18 @@ impl<'a> Checker<'a> {
                         match self.eval_ty(&ty_s.0) {
                             Ok((_, ty)) => {
                                 let prim = self.make_prim();
-                                let cell = match &ty {
-                                    Ty::Zero => Ok(FreeCell::zero(prim)),
+                                let body = match &ty {
+                                    Ty::Zero => Ok(EntryBody::Cell(FreeCell::zero(prim))),
                                     Ty::Succ(s, t) => {
                                         FreeCell::prim(prim, s.clone(), t.clone())
+                                            .map(EntryBody::Cell)
                                     }
+                                    Ty::Meta => Ok(EntryBody::Meta(prim)),
                                 };
-                                match cell {
-                                    Ok(cell) => {
+                                match body {
+                                    Ok(body) => {
                                         let pc = self.current_param_counts(param_freshes.len());
-                                        let idx = self.add_entry(qname.clone(), color, cell, pc);
+                                        let idx = self.add_entry(qname.clone(), color, body, pc);
                                         if has_params {
                                             self.entry_params
                                                 .insert(idx, param_freshes.clone());
@@ -261,8 +288,8 @@ impl<'a> Checker<'a> {
                     (dim_ty, Some(body_id)) => {
                         let body_s = self.program.val(*body_id);
                         match self.eval_val(&body_s.0) {
-                            Ok(body) => {
-                                let dim = body.pure.dim().in_space;
+                            Ok(cell) => {
+                                let dim = cell.pure.dim().in_space;
 
                                 if let Some(ty_id) = dim_ty {
                                     let ty_s = self.program.val(*ty_id);
@@ -278,8 +305,8 @@ impl<'a> Checker<'a> {
                                                     Ty::Zero
                                                 } else {
                                                     Ty::Succ(
-                                                        FreeCell::from_pure(&body.pure.s()),
-                                                        FreeCell::from_pure(&body.pure.t()),
+                                                        FreeCell::from_pure(&cell.pure.s()),
+                                                        FreeCell::from_pure(&cell.pure.t()),
                                                     )
                                                 };
                                                 if let Err(msg) =
@@ -294,7 +321,7 @@ impl<'a> Checker<'a> {
                                 }
 
                                 let pc = self.current_param_counts(param_freshes.len());
-                                let idx = self.add_entry(qname.clone(), color, body, pc);
+                                let idx = self.add_entry(qname.clone(), color, EntryBody::Cell(cell), pc);
                                 if has_params {
                                     self.entry_params.insert(idx, param_freshes.clone());
                                 }
@@ -509,9 +536,10 @@ impl<'a> Checker<'a> {
                     let cell = match &ty {
                         Ty::Zero => FreeCell::zero(prim),
                         Ty::Succ(s, t) => FreeCell::prim(prim, s.clone(), t.clone())?,
+                        Ty::Meta => return Err("meta type cannot be used as cell parameter".to_string()),
                     };
                     let param_name = self.qualified_name(&param.name);
-                    self.add_entry(param_name, None, cell.clone(), vec![]);
+                    self.add_entry(param_name, None, EntryBody::Cell(cell.clone()), vec![]);
                     self.accumulated_args.push(PrimArg::Cell(cell.pure.clone()));
                 }
                 ParamKind::Nat => {
@@ -534,10 +562,18 @@ impl<'a> Checker<'a> {
         if let Val::Path(path) = val {
             if let Some(name) = path_name(path) {
                 if let Some(index) = self.resolve_name(&name) {
-                    let cell = &self.entries[index].cell;
-                    if let Some(prim_id) = cell.pure.extract_prim_id() {
-                        if Some(prim_id) == self.nat_prim_id {
-                            return ParamKind::Nat;
+                    match &self.entries[index].body {
+                        EntryBody::Meta(prim) => {
+                            if Some(prim.id) == self.nat_prim_id {
+                                return ParamKind::Nat;
+                            }
+                        }
+                        EntryBody::Cell(cell) => {
+                            if let Some(prim_id) = cell.pure.extract_prim_id() {
+                                if Some(prim_id) == self.nat_prim_id {
+                                    return ParamKind::Nat;
+                                }
+                            }
                         }
                     }
                 }
@@ -634,14 +670,19 @@ impl<'a> Checker<'a> {
 
             let new_idx = if let Some(src_idx) = src_idx {
                 let src_entry = &self.entries[*src_idx];
-                let new_pure = if mapping.is_empty() {
-                    src_entry.cell.pure.clone()
-                } else {
-                    src_entry.cell.pure.subst(mapping)
+                let new_body = match &src_entry.body {
+                    EntryBody::Cell(cell) => {
+                        let new_pure = if mapping.is_empty() {
+                            cell.pure.clone()
+                        } else {
+                            cell.pure.subst(mapping)
+                        };
+                        EntryBody::Cell(FreeCell::from_pure(&new_pure))
+                    }
+                    EntryBody::Meta(prim) => EntryBody::Meta(prim.clone()),
                 };
-                let new_cell = FreeCell::from_pure(&new_pure);
                 let src_pc = src_entry.param_counts.clone();
-                let idx = self.add_entry(dest_member.clone(), Some(src_entry.color), new_cell, src_pc);
+                let idx = self.add_entry(dest_member.clone(), Some(src_entry.color), new_body, src_pc);
 
                 if let Some(params) = self.entry_params.get(src_idx).cloned() {
                     self.entry_params.insert(idx, params);
@@ -669,8 +710,17 @@ impl<'a> Checker<'a> {
     fn eval_ty(&self, val: &Val) -> Result<(u8, Ty)> {
         match val {
             Val::Path(path) => {
-                if path_name(path).as_deref() == Some("*") {
+                let name = path_name(path).ok_or_else(|| "invalid type".to_string())?;
+                if name == "*" {
                     return Ok((0, Ty::Zero));
+                }
+                if name == "meta" {
+                    return Ok((0, Ty::Meta));
+                }
+                if let Some(index) = self.resolve_name(&name) {
+                    if let EntryBody::Meta(_) = &self.entries[index].body {
+                        return Ok((0, Ty::Meta));
+                    }
                 }
                 Err("expected `*` or arrow type".to_string())
             }
@@ -730,7 +780,10 @@ impl<'a> Checker<'a> {
             .resolve_name(&name)
             .ok_or_else(|| format!("unknown variable: {}", name))?;
 
-        let base_cell = self.entries[index].cell.clone();
+        let base_cell = match &self.entries[index].body {
+            EntryBody::Cell(cell) => cell.clone(),
+            EntryBody::Meta(_) => return Err(format!("{} is a meta entry, not a cell", name)),
+        };
 
         let mapping = self.build_path_mapping(path)?;
         if mapping.is_empty() {
@@ -869,6 +922,7 @@ fn match_ty(x: &Ty, y: &Ty) -> Result<()> {
             }
             Ok(())
         }
+        (Ty::Meta, Ty::Meta) => Ok(()),
         _ => Err("type mismatch".to_string()),
     }
 }

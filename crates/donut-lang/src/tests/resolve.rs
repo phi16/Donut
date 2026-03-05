@@ -1197,3 +1197,40 @@ fn functor_app_undefined_functor() {
         "expected undefined functor error: {errs:?}"
     );
 }
+
+// --- Import ---
+
+#[test]
+fn import_base() {
+    let p = check_module("import \"base\"\nC: *\nx: C → C");
+    assert!(p.root.get("C").is_some());
+    assert!(p.root.get("nat").is_some());
+    assert!(p.root.get("x").is_some());
+}
+
+#[test]
+fn import_named() {
+    let p = check_module("b = import \"base\"\nC: *\nx: C → C");
+    assert!(p.root.get("b").is_some());
+    assert!(p.root.get("x").is_some());
+}
+
+#[test]
+fn import_sys_after_base() {
+    let p = check_module("\
+import \"base\"
+sys = import \"sys\"
+x = sys.u32_lit[42]
+");
+    assert!(p.root.get("sys").is_some());
+    assert!(p.root.get("x").is_some());
+}
+
+#[test]
+fn import_unknown() {
+    let errs = check_errs("import \"unknown\"");
+    assert!(
+        errs.iter().any(|e| e.contains("unknown import")),
+        "expected unknown import error: {errs:?}"
+    );
+}

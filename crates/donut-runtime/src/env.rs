@@ -2,66 +2,6 @@ use crate::{Runtime, Value};
 use donut_core::common::{PrimArg, PrimId};
 use std::collections::HashMap;
 
-pub const ENV_SOURCE: &str = "\
-env = {
-    [gray[60]]
-    C: *
-    nat: *
-
-    [hsv[0.6]]
-    u32: C → C
-
-    [hsv[0.1]]
-    f32: C → C
-
-    [hsv[0.3]]
-    bool: C → C
-
-    // u32 constants
-    u32_lit[n: nat]: C → u32
-
-    // u32 arithmetic
-    u32_add: u32 u32 → u32
-    u32_sub: u32 u32 → u32
-    u32_mul: u32 u32 → u32
-    u32_div: u32 u32 → u32
-    u32_mod: u32 u32 → u32
-    u32_neg: u32 → u32
-
-    // f32 constants
-    f32_lit[n: nat]: C → f32
-
-    // f32 arithmetic
-    f32_add: f32 f32 → f32
-    f32_sub: f32 f32 → f32
-    f32_mul: f32 f32 → f32
-    f32_div: f32 f32 → f32
-    f32_neg: f32 → f32
-
-    // bool constants
-    bool_lit[n: nat]: C → bool
-
-    // bool operations
-    bool_not: bool → bool
-    bool_and: bool bool → bool
-    bool_or: bool bool → bool
-
-    // comparison
-    u32_eq: u32 u32 → bool
-    u32_lt: u32 u32 → bool
-    u32_le: u32 u32 → bool
-
-    // conversion
-    u32_to_f32: u32 → f32
-
-    // structural
-    u32_dup: u32 → u32 u32
-    f32_dup: f32 → f32 f32
-    bool_dup: bool → bool bool
-}
-
-";
-
 fn extract_nat(args: &[PrimArg]) -> Result<u64, String> {
     match args.first() {
         Some(PrimArg::Nat(n)) => Ok(*n),
@@ -186,7 +126,6 @@ fn ops() -> Vec<Op> {
 }
 
 /// Build a Runtime from a lookup table (entry name → PrimId).
-/// Call this after loading ENV_SOURCE through donut-lang.
 pub fn register_env(rt: &mut Runtime, lookup: &HashMap<String, PrimId>) {
     for op in ops() {
         if let Some(&id) = lookup.get(op.name) {

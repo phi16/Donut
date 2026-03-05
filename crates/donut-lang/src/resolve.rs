@@ -2,7 +2,7 @@ use crate::types::common::*;
 use crate::types::item::*;
 use crate::types::semtree;
 use crate::types::token::Token;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 // --- Resolve trait ---
 
@@ -186,6 +186,7 @@ struct Checker<'a> {
     errors: Vec<Error>,
     deco_params: HashSet<ItemId>,
     in_applicand: bool,
+    import_cache: HashMap<String, Module>,
 }
 
 impl<'a> Checker<'a> {
@@ -198,6 +199,7 @@ impl<'a> Checker<'a> {
             errors: Vec::new(),
             deco_params: HashSet::new(),
             in_applicand: false,
+            import_cache: HashMap::new(),
         }
     }
 
@@ -290,7 +292,7 @@ impl<'a> Checker<'a> {
             return;
         };
         let Some(mut current) = self.lookup(first_name) else {
-            if first_name != "*" && !crate::convert::is_number_str(first_name) {
+            if first_name != "*" && first_name != "meta" && !crate::convert::is_number_str(first_name) {
                 self.error_at(first_span, format!("undefined name `{}`", first_name));
             }
             return;
@@ -327,7 +329,7 @@ impl<'a> Checker<'a> {
     // --- Module / Decl resolution (owned) ---
 
     fn resolve_module(&mut self, mod_s: S<semtree::Module>) -> Module {
-        let S(module, _) = mod_s;
+        let S(module, span) = mod_s;
         match module {
             semtree::Module::Block(decls) => {
                 self.push_scope();
@@ -336,8 +338,42 @@ impl<'a> Checker<'a> {
                 }
                 self.scopes.pop().unwrap()
             }
-            semtree::Module::Import(_) => Module::new(), // TODO
+            semtree::Module::Import(lit_s) => {
+                let name = match &lit_s.0 {
+                    semtree::Lit::String(s) => s.trim_matches('"').to_string(),
+                    _ => {
+                        self.error_at(&span, "import requires a string literal");
+                        return Module::new();
+                    }
+                };
+                if let Some(cached) = self.import_cache.get(&name) {
+                    return cached.clone();
+                }
+                match builtin_source(&name) {
+                    Some(source) => {
+                        let module = self.resolve_import(source);
+                        self.import_cache.insert(name, module.clone());
+                        module
+                    }
+                    None => {
+                        self.error_at(&span, format!("unknown import: \"{}\"", name));
+                        Module::new()
+                    }
+                }
+            }
         }
+    }
+
+    fn resolve_import(&mut self, source: &str) -> Module {
+        let (tokens, _, _) = crate::tokenize::tokenize(source);
+        let (program, _) = crate::parse::parse(&tokens);
+        let (sem_prog, _) = crate::convert::convert(program, &tokens);
+
+        self.push_scope();
+        for d in sem_prog.0 {
+            self.resolve_decl(d);
+        }
+        self.scopes.pop().unwrap()
     }
 
     fn resolve_decl(&mut self, decl: semtree::Decl) {
@@ -808,6 +844,14 @@ impl<'a> Checker<'a> {
                 self.error_at(&span, format!("duplicate member `{}`", key));
             }
         }
+    }
+}
+
+fn builtin_source(name: &str) -> Option<&'static str> {
+    match name {
+        "base" => Some(include_str!("builtins/base.donut")),
+        "sys" => Some(include_str!("builtins/sys.donut")),
+        _ => None,
     }
 }
 

@@ -15,7 +15,20 @@ pub type PrimId = u64;
 pub enum PrimArg {
     Cell(crate::pure_cell::PureCell),
     Nat(u64),
+    Rat(u64), // f64 stored as bits (for Eq)
     App(PrimId, Vec<PrimArg>),
+}
+
+impl PrimArg {
+    pub fn rat(v: f64) -> Self {
+        PrimArg::Rat(v.to_bits())
+    }
+    pub fn as_rat(&self) -> Option<f64> {
+        match self {
+            PrimArg::Rat(bits) => Some(f64::from_bits(*bits)),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

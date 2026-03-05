@@ -166,6 +166,7 @@ impl PrimArg {
         match self {
             PrimArg::Cell(pc) => PrimArg::Cell(pc.subst(mapping)),
             PrimArg::Nat(n) => PrimArg::Nat(*n),
+            PrimArg::Rat(bits) => PrimArg::Rat(*bits),
             PrimArg::App(id, args) => {
                 let new_args: Vec<PrimArg> = args.iter().map(|a| a.subst(mapping)).collect();
                 if new_args.is_empty() {
@@ -233,6 +234,7 @@ impl fmt::Display for PrimArg {
         match self {
             PrimArg::Cell(pc) => write!(f, "{}", pc),
             PrimArg::Nat(n) => write!(f, "{}", n),
+            PrimArg::Rat(bits) => write!(f, "{}", f64::from_bits(*bits)),
             PrimArg::App(id, args) => {
                 write!(f, "P{}", id)?;
                 if !args.is_empty() {

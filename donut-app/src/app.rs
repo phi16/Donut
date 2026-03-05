@@ -6,7 +6,7 @@ use donut_core::cell::*;
 use donut_core::common::*;
 use donut_core::free_cell::FreeCell;
 use donut_lang::check::Env;
-use donut_runtime::{Runtime, ENV_SOURCE};
+use donut_runtime::Runtime;
 use wasm_bindgen::JsCast;
 use donut_layout::layout_solver::LayoutSolver;
 use donut_renderer::geometry::{Geometry, R};
@@ -83,7 +83,7 @@ result = pentagon
         let (env, table, runtime) = Self::load(input).unwrap();
         let env_entry_count = Self::env_entry_count();
         let selected = env.entries.len() - 1;
-        let cell = Self::build_geometry(&env.entries[selected].cell);
+        let cell = Self::build_geometry(env.entries[selected].body.as_cell().unwrap());
 
         let mut app = Self {
             canvas,
@@ -106,19 +106,20 @@ result = pentagon
         app
     }
 
+    const PRELUDE: &str = "import \"base\"\nenv = import \"sys\"\n";
+
     fn env_entry_count() -> usize {
-        // ENV_SOURCE always produces the same number of entries
         use std::sync::OnceLock;
         static COUNT: OnceLock<usize> = OnceLock::new();
         *COUNT.get_or_init(|| {
-            let (env_only, _) = donut_lang::load::load(ENV_SOURCE);
+            let (env_only, _) = donut_lang::load::load(Self::PRELUDE);
             env_only.entries.len()
         })
     }
 
     fn load(code: &str) -> Result<(Env, PrimTable, Runtime)> {
         let user_code = dedent(code);
-        let full_code = format!("{}\n{}", ENV_SOURCE, user_code);
+        let full_code = format!("{}{}", Self::PRELUDE, user_code);
         let (env, errors) = donut_lang::load::load(&full_code);
         if !errors.is_empty() {
             for (_, msg) in &errors {
@@ -128,22 +129,26 @@ result = pentagon
 
         let mut table = PrimTable::new();
         for (i, e) in env.entries.iter().enumerate() {
-            let prim = Prim::new(i as PrimId);
-            table.insert(
-                prim,
-                &e.name,
-                e.cell.pure.dim().in_space,
-                e.color,
-                e.param_counts.clone(),
-            );
+            if let Some(cell) = e.body.as_cell() {
+                let prim = Prim::new(i as PrimId);
+                table.insert(
+                    prim,
+                    &e.name,
+                    cell.pure.dim().in_space,
+                    e.color,
+                    e.param_counts.clone(),
+                );
+            }
         }
 
         // Build runtime
         let mut prim_lookup: HashMap<String, PrimId> = HashMap::new();
         for (name, &idx) in &env.lookup {
             let entry = &env.entries[idx];
-            if let Some(id) = entry.cell.pure.extract_prim_id() {
-                prim_lookup.insert(name.clone(), id);
+            if let Some(cell) = entry.body.as_cell() {
+                if let Some(id) = cell.pure.extract_prim_id() {
+                    prim_lookup.insert(name.clone(), id);
+                }
             }
         }
         let mut runtime = Runtime::new();
@@ -181,7 +186,8 @@ result = pentagon
                 .unwrap()
                 .dyn_into::<web_sys::HtmlOptionElement>()
                 .unwrap();
-            let dim = entry.cell.pure.dim().in_space;
+            let Some(cell) = entry.body.as_cell() else { continue };
+            let dim = cell.pure.dim().in_space;
             let label = format!("{} ({}d)", entry.name, dim);
             option.set_text_content(Some(&label));
             option.set_value(&i.to_string());
@@ -195,7 +201,7 @@ result = pentagon
     pub fn update_code(&mut self, code: &str) -> Result<()> {
         let (env, table, runtime) = Self::load(code)?;
         let selected = env.entries.len() - 1;
-        let cell = Self::build_geometry(&env.entries[selected].cell);
+        let cell = Self::build_geometry(env.entries[selected].body.as_cell().unwrap());
         self.slice_pos = Self::init_slice_pos(&cell.size);
         self.env = env;
         self.table = table;
@@ -212,7 +218,7 @@ result = pentagon
             return;
         }
         self.selected = index;
-        self.cell = Self::build_geometry(&self.env.entries[index].cell);
+        self.cell = Self::build_geometry(self.env.entries[index].body.as_cell().unwrap());
         self.slice_pos = Self::init_slice_pos(&self.cell.size);
         self.update_eval_result();
     }
@@ -356,12 +362,16 @@ result = pentagon
 
     fn update_eval_result(&self) {
         let entry = &self.env.entries[self.selected];
-        let type_str = self.table.format_cell_type(&entry.cell.pure);
+        let Some(cell) = entry.body.as_cell() else {
+            self.eval_result_el.set_inner_text(&format!("{}: meta", entry.name));
+            return;
+        };
+        let type_str = self.table.format_cell_type(&cell.pure);
 
-        let evaluable = self.runtime.is_evaluable(&entry.cell);
-        let eval_str = match self.runtime.eval_check(&entry.cell) {
+        let evaluable = self.runtime.is_evaluable(cell);
+        let eval_str = match self.runtime.eval_check(cell) {
             Some(reason) => reason,
-            None => match self.runtime.eval(&entry.cell, &[]) {
+            None => match self.runtime.eval(cell, &[]) {
                 Ok(values) => format!("= {}", donut_runtime::format_values(&values)),
                 Err(e) => format!("BUG: {}", e),
             },
