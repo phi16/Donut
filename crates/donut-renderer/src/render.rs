@@ -1,5 +1,6 @@
 use crate::geometry::*;
 use crate::prim_table::PrimTable;
+use donut_core::common::Prim;
 
 fn lerp(a: R, b: R, t: R) -> R {
     a * (1.0 - t) + b * t
@@ -145,6 +146,108 @@ impl Renderer {
             self.context.close_path();
             self.context.set_fill_style_str(&str);
             self.context.fill();
+        }
+    }
+
+    pub fn hit_test(&self, cell: &Geometry, mx: R, my: R) -> Option<Prim> {
+        let mut hit: Option<(Prim, usize)> = None; // (prim, dimension)
+
+        for (prim, center, r2) in &cell.spheres {
+            assert_eq!(center.len(), 2);
+            let dx = center[0] - mx;
+            let dy = center[1] - my;
+            if dx * dx + dy * dy < *r2 {
+                let dim = 0; // spheres come from sliced points
+                if hit.as_ref().map_or(true, |h| dim <= h.1) {
+                    hit = Some((prim.clone(), dim));
+                }
+            }
+        }
+
+        for (dim, cubes) in cell.cubes.iter().enumerate() {
+            for (prim, cube) in cubes {
+                if self.hit_test_cube(cube, mx, my) {
+                    if hit.as_ref().map_or(true, |h| dim >= h.1) {
+                        hit = Some((prim.clone(), dim));
+                    }
+                }
+            }
+        }
+
+        hit.map(|h| h.0)
+    }
+
+    fn hit_test_cube(&self, cube: &Cuboid, mx: R, my: R) -> bool {
+        match cube {
+            Cuboid::Point(p) => {
+                assert_eq!(p.len(), 2);
+                let dx = p[0] - mx;
+                let dy = p[1] - my;
+                dx * dx + dy * dy < 8.0 * 8.0
+            }
+            Cuboid::Bridge { source, target } => match (source.0.as_ref(), target.0.as_ref()) {
+                (Cuboid::Point(s), Cuboid::Point(t)) => {
+                    // 1-cell: bezier curve path, use isPointInStroke
+                    assert_eq!(s.len(), 1);
+                    assert_eq!(t.len(), 1);
+                    self.context.begin_path();
+                    self.context.move_to(s[0], source.1);
+                    let (x0t, y0t) = (
+                        lerp(s[0], t[0], source.2[0]),
+                        lerp(source.1, target.1, source.2[1]),
+                    );
+                    let (x1t, y1t) = (
+                        lerp(t[0], s[0], target.2[0]),
+                        lerp(target.1, source.1, target.2[1]),
+                    );
+                    self.context
+                        .bezier_curve_to(x0t, y0t, x1t, y1t, t[0], target.1);
+                    self.context.set_line_width(6.0);
+                    self.context.is_point_in_stroke_with_x_and_y(mx, my)
+                }
+                (
+                    Cuboid::Bridge {
+                        source: ss,
+                        target: st,
+                    },
+                    Cuboid::Bridge {
+                        source: ts,
+                        target: tt,
+                    },
+                ) => {
+                    // 2-cell: filled bezier region, use isPointInPath
+                    let (x0s, y0) = (ss.1, source.1);
+                    let x0t = st.1;
+                    let (x1s, y1) = (ts.1, target.1);
+                    let x1t = tt.1;
+                    let (x0st, y0st) = (
+                        lerp(x0s, x1s, source.2[0]),
+                        lerp(y0, y1, source.2[1]),
+                    );
+                    let (x0tt, y0tt) = (
+                        lerp(x0t, x1t, source.2[0]),
+                        lerp(y0, y1, source.2[1]),
+                    );
+                    let (x1st, y1st) = (
+                        lerp(x1s, x0s, target.2[0]),
+                        lerp(y1, y0, target.2[1]),
+                    );
+                    let (x1tt, y1tt) = (
+                        lerp(x1t, x0t, target.2[0]),
+                        lerp(y1, y0, target.2[1]),
+                    );
+                    self.context.begin_path();
+                    self.context.move_to(x0s, y0);
+                    self.context
+                        .bezier_curve_to(x0st, y0st, x1st, y1st, x1s, y1);
+                    self.context.line_to(x1t, y1);
+                    self.context
+                        .bezier_curve_to(x1tt, y1tt, x0tt, y0tt, x0t, y0);
+                    self.context.close_path();
+                    self.context.is_point_in_path_with_f64(mx, my)
+                }
+                _ => false,
+            },
         }
     }
 }

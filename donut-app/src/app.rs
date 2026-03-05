@@ -155,6 +155,17 @@ result = pentagon
         let rc = rc.sliced(y);
         let rc = rc.sliced(x);
         renderer.cell(&rc, &self.table);
+
+        let local_mx = mouse.0 - 100.0;
+        let local_my = mouse.1 - 100.0;
+        if let Some(prim) = renderer.hit_test(&rc, local_mx, local_my) {
+            if let Some(entry) = self.table.get(&prim) {
+                self.context.set_fill_style_str("rgb(255 255 255)");
+                self.context.set_font("14px monospace");
+                let _ = self.context.fill_text(&entry.name, local_mx + 12.0, local_my - 8.0);
+            }
+        }
+
         self.context.restore();
         self.context.save();
         self.context.translate(slicer_x, slicer_y).unwrap();
