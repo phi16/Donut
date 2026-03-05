@@ -141,9 +141,9 @@ pub fn start() -> Option<()> {
         let app_clone = Rc::clone(&app);
         let select_clone = entry_select.clone();
         let on_change: Closure<dyn FnMut()> = Closure::new(move || {
-            let index = select_clone.selected_index();
-            if index >= 0 {
-                app_clone.borrow_mut().select_entry(index as usize);
+            let value = select_clone.value();
+            if let Ok(index) = value.parse::<usize>() {
+                app_clone.borrow_mut().select_entry(index);
             }
         });
         entry_select

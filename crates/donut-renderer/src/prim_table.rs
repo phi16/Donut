@@ -1,3 +1,4 @@
+use donut_core::cell::Globular;
 use donut_core::common::{Level, Prim, PrimArg, PrimId};
 use donut_core::pure_cell::PureCell;
 use std::collections::HashMap;
@@ -75,6 +76,58 @@ impl PrimTable {
             parts.push(format!("{}[{}]", last, args.join(", ")));
         }
         parts.join(".")
+    }
+
+    pub fn format_cell_type(&self, pure: &PureCell) -> String {
+        let dim = pure.dim().in_space;
+        match dim {
+            0 => "*".to_string(),
+            1 => {
+                let src = self.format_0cell(&pure.s());
+                let tgt = self.format_0cell(&pure.t());
+                format!("{} → {}", src, tgt)
+            }
+            _ => {
+                let src = self.format_1cell(&pure.s());
+                let tgt = self.format_1cell(&pure.t());
+                format!("{} → {}", src, tgt)
+            }
+        }
+    }
+
+    fn format_0cell(&self, pure: &PureCell) -> String {
+        match pure {
+            PureCell::Prim(prim, _, _) => self.format_prim(prim),
+            PureCell::Comp(_, children, _) => {
+                let parts: Vec<String> = children.iter().map(|c| self.format_0cell(c)).collect();
+                if parts.is_empty() { "·".to_string() } else { parts.join(" ") }
+            }
+        }
+    }
+
+    fn format_1cell(&self, pure: &PureCell) -> String {
+        let parts = self.collect_1cell_parts(pure);
+        if parts.is_empty() {
+            let base = self.format_0cell(&pure.s());
+            format!("id[{}]", base)
+        } else {
+            parts.join(" ")
+        }
+    }
+
+    fn collect_1cell_parts(&self, pure: &PureCell) -> Vec<String> {
+        match pure {
+            PureCell::Prim(prim, _, dim) => {
+                if dim.effective < dim.in_space {
+                    vec![]
+                } else {
+                    vec![self.format_prim(prim)]
+                }
+            }
+            PureCell::Comp(_, children, _) => {
+                children.iter().flat_map(|c| self.collect_1cell_parts(c)).collect()
+            }
+        }
     }
 
     fn format_arg(&self, arg: &PrimArg) -> String {

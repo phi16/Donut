@@ -52,6 +52,9 @@ struct Checker<'a> {
     entry_params: HashMap<usize, Vec<(String, PrimId)>>,
     accumulated_args: Vec<PrimArg>,
     param_count_stack: Vec<usize>,
+
+    // Functor support
+    functor_maps: HashMap<String, HashMap<PrimId, PureCell>>,
 }
 
 impl<'a> Checker<'a> {
@@ -69,6 +72,7 @@ impl<'a> Checker<'a> {
             entry_params: HashMap::new(),
             accumulated_args: Vec::new(),
             param_count_stack: Vec::new(),
+            functor_maps: HashMap::new(),
         }
     }
 
@@ -297,7 +301,7 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn check_functor(&mut self, item: &Item, _qname: &str, mappings: &[FunctorMapping]) {
+    fn check_functor(&mut self, item: &Item, qname: &str, mappings: &[FunctorMapping]) {
         let span = &item.span;
 
         let ty_id = match item.ty {
@@ -345,6 +349,12 @@ impl<'a> Checker<'a> {
             let val_span = val_span.clone();
 
             let app_val = &self.program.val(mapping.applicand).0;
+            if let Val::Path(path) = app_val {
+                if path.applicand.is_some() {
+                    self.error_at(&app_span, "functor application cannot be used in mapping left-hand side");
+                    continue;
+                }
+            }
             let app_cell = match self.eval_val(app_val) {
                 Ok(c) => c,
                 Err(msg) => {
@@ -386,9 +396,15 @@ impl<'a> Checker<'a> {
                 );
                 continue;
             }
-            if dim != val_cell.pure.dim().in_space {
+            let val_dim = val_cell.pure.dim().in_space;
+            if val_dim > dim {
                 self.error_at(&val_span, "functor mapping dimension mismatch");
                 continue;
+            }
+            // Lift val_cell to the expected dimension via id
+            let mut val_pure = val_cell.pure.clone();
+            while val_pure.dim().in_space < dim {
+                val_pure = PureCell::id(val_pure);
             }
 
             let expected_s = apply_functor(&app_cell.pure.s(), &functor_map);
@@ -396,8 +412,8 @@ impl<'a> Checker<'a> {
 
             match (expected_s, expected_t) {
                 (Ok(es), Ok(et)) => {
-                    let actual_s = val_cell.pure.s();
-                    let actual_t = val_cell.pure.t();
+                    let actual_s = val_pure.s();
+                    let actual_t = val_pure.t();
                     if !es.is_convertible(&actual_s) {
                         self.error_at(
                             &val_span,
@@ -425,8 +441,10 @@ impl<'a> Checker<'a> {
                 }
             }
 
-            functor_map.insert(app_prim_id, val_cell.pure.clone());
+            functor_map.insert(app_prim_id, val_pure);
         }
+
+        self.functor_maps.insert(qname.to_string(), functor_map);
     }
 
     fn check_members(&mut self, prefix: &str, module: &Module, parent_param_count: usize) {
@@ -655,8 +673,8 @@ impl<'a> Checker<'a> {
     // --- Path resolution ---
 
     fn resolve_path(&self, path: &Path) -> Result<FreeCell> {
-        if path.applicand.is_some() {
-            return Err("functor application cannot be used in applicand".to_string());
+        if let Some(app_id) = path.applicand {
+            return self.resolve_functor_app(path, app_id);
         }
         let name = path_name(path).ok_or_else(|| "invalid path".to_string())?;
         let index = self
@@ -672,6 +690,38 @@ impl<'a> Checker<'a> {
             let new_pure = base_cell.pure.subst(&mapping);
             Ok(FreeCell::from_pure(&new_pure))
         }
+    }
+
+    fn resolve_functor_app(&self, path: &Path, app_id: ValId) -> Result<FreeCell> {
+        let name = path_name(path).ok_or_else(|| "invalid path".to_string())?;
+
+        // Resolve functor name (with prefix search)
+        let functor_name = self.resolve_functor_name(&name)
+            .ok_or_else(|| format!("{} is not a functor", name))?;
+
+        let map = self.functor_maps.get(&functor_name)
+            .ok_or_else(|| format!("{} is not a functor", name))?;
+
+        // Resolve the applicand
+        let app_val = &self.program.val(app_id).0;
+        let arg_cell = self.eval_val(app_val)?;
+
+        // Apply functor
+        let result_pure = apply_functor(&arg_cell.pure, map)?;
+        Ok(FreeCell::from_pure(&result_pure))
+    }
+
+    fn resolve_functor_name(&self, name: &str) -> Option<String> {
+        for prefix in self.prefixes.iter().rev() {
+            let qualified = format!("{}.{}", prefix, name);
+            if self.functor_maps.contains_key(&qualified) {
+                return Some(qualified);
+            }
+        }
+        if self.functor_maps.contains_key(name) {
+            return Some(name.to_string());
+        }
+        None
     }
 
     fn build_path_mapping(&self, path: &Path) -> Result<HashMap<PrimId, PrimArg>> {

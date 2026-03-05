@@ -1,5 +1,6 @@
 use crate::env::{register_env, ENV_SOURCE};
 use crate::{extract_prim_id, Runtime, Value};
+use donut_core::cell::Globular;
 use donut_core::common::PrimId;
 use std::collections::HashMap;
 
@@ -128,4 +129,89 @@ fn test_dup() {
 x = env.u32_1; env.u32_dup; env.u32_add
 ");
     assert_eq!(eval_entry(&rt, &env, "x"), vec![Value::U32(2)]);
+}
+
+#[test]
+fn test_user_scenario() {
+    let code = "\
+C: *
+x: C → C
+one: C → x
+add: x x → x
+
+F: C ~> env.C
+F(x) = env.u32
+F(one) = env.u32_1
+F(add) = env.u32_add
+
+two = env.u32_1 env.u32_1; env.u32_add
+three = two env.u32_1; env.u32_add
+result = two three; env.u32_mul
+
+result2 = F(add)
+";
+    let (rt, env) = setup(code);
+
+    // Debug: print all entries
+    for (i, entry) in env.entries.iter().enumerate() {
+        let evaluable = rt.is_evaluable(&entry.cell);
+        eprintln!("  entry[{}] = {} (dim={}, evaluable={})", i, entry.name, entry.cell.pure.dim().in_space, evaluable);
+    }
+
+    // result = two three; env.u32_mul → should be evaluable (source width 0)
+    assert!(rt.is_evaluable(&env.entries[*env.lookup.get("result").unwrap()].cell), "result should be evaluable");
+    assert_eq!(eval_entry(&rt, &env, "result"), vec![Value::U32(6)]);
+
+    // result2 = F(add) → F maps add: x x → x to env.u32_add: u32 u32 → u32
+    // This has source width 2, so NOT evaluable with no input (correct!)
+    let result2_cell = &env.entries[*env.lookup.get("result2").unwrap()].cell;
+    assert!(!rt.is_evaluable(result2_cell), "result2 needs 2 inputs, should not be evaluable with no input");
+}
+
+#[test]
+fn test_functor_application() {
+    // Define a simple "category" and a functor mapping it to env
+    let (rt, env) = setup("\
+mycat = {
+    C: *
+    [hsv[0.6]]
+    nat: C → C
+    zero: C → nat
+    succ: nat → nat
+    add: nat nat → nat
+    dup: nat → nat nat
+}
+F: mycat.C ~> env.C
+F(mycat.nat) = env.u32
+F(mycat.zero) = env.u32_0
+F(mycat.succ) = env.u32_1 env.u32; env.u32_add
+F(mycat.add) = env.u32_add
+F(mycat.dup) = env.u32_dup
+one = F(mycat.zero; mycat.succ)
+two = F(mycat.zero; mycat.succ; mycat.succ)
+sum = F(mycat.zero; mycat.succ) F(mycat.zero; mycat.succ); F(mycat.add)
+");
+    assert_eq!(eval_entry(&rt, &env, "one"), vec![Value::U32(1)]);
+    assert_eq!(eval_entry(&rt, &env, "two"), vec![Value::U32(2)]);
+    assert_eq!(eval_entry(&rt, &env, "sum"), vec![Value::U32(2)]);
+}
+
+#[test]
+fn test_functor_2cell() {
+    // F(th) where th is a 2-cell should lift the RHS via id
+    let (_rt, env) = setup("\
+C: *
+x: C → C
+th: x → x
+
+F: C ~> env.C
+F(x) = env.u32
+F(th) = env.u32
+
+result = F(th)
+");
+    let result_idx = *env.lookup.get("result").expect("result not found");
+    let result_cell = &env.entries[result_idx].cell;
+    // F(th) : env.u32 → env.u32, so it needs 1 input
+    assert_eq!(result_cell.pure.dim().in_space, 2);
 }

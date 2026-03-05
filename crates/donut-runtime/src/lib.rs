@@ -1,5 +1,6 @@
 pub mod env;
 
+use donut_core::cell::Globular;
 use donut_core::common::PrimId;
 use donut_core::free_cell::{Cell, CellF, FreeCell};
 use donut_core::pure_cell::PureCell;
@@ -53,6 +54,36 @@ impl Runtime {
 
     pub fn register(&mut self, id: PrimId, f: impl Fn(&[Value]) -> Vec<Value> + 'static) {
         self.ops.insert(id, Box::new(f));
+    }
+
+    /// Check if a cell can be evaluated with no input.
+    pub fn is_evaluable(&self, cell: &FreeCell) -> bool {
+        self.eval_check(cell).is_none()
+    }
+
+    /// Returns None if evaluable, or Some(reason) if not.
+    pub fn eval_check(&self, cell: &FreeCell) -> Option<String> {
+        let dim = cell.pure.dim().in_space;
+        if dim < 2 {
+            return Some(format!("{}d cell", dim));
+        }
+        if !self.has_all_ops(&cell.cell) {
+            return Some("contains non-runtime prims".to_string());
+        }
+        let sw = source_width(&cell.cell);
+        if sw > 0 {
+            return Some(format!("needs {} input(s)", sw));
+        }
+        None
+    }
+
+    fn has_all_ops(&self, cell: &Cell) -> bool {
+        match cell.0.as_ref() {
+            CellF::Prim(prim, _, _) => self.ops.contains_key(&prim.id),
+            CellF::Id(_) => true,
+            CellF::Comp(0 | 1, children) => children.iter().all(|c| self.has_all_ops(c)),
+            CellF::Comp(_, _) | CellF::Zero(_) => false,
+        }
     }
 
     pub fn eval(&self, cell: &FreeCell, input: &[Value]) -> Result<Vec<Value>, String> {

@@ -110,7 +110,8 @@ result = pentagon
         let (env_only, _) = donut_lang::load::load(ENV_SOURCE);
         let env_entry_count = env_only.entries.len();
 
-        let full_code = format!("{}\n{}", ENV_SOURCE, code.trim_start());
+        let user_code = dedent(code);
+        let full_code = format!("{}\n{}", ENV_SOURCE, user_code);
         let (env, errors) = donut_lang::load::load(&full_code);
         if !errors.is_empty() {
             for (_, msg) in &errors {
@@ -349,15 +350,20 @@ result = pentagon
 
     fn update_eval_result(&self) {
         let entry = &self.env.entries[self.selected];
-        match self.runtime.eval(&entry.cell, &[]) {
-            Ok(values) => {
-                let text = donut_runtime::format_values(&values);
-                self.eval_result_el.set_inner_text(&format!("= {}", text));
-            }
-            Err(_) => {
-                self.eval_result_el.set_inner_text("");
-            }
-        }
+        let type_str = self.table.format_cell_type(&entry.cell.pure);
+
+        let evaluable = self.runtime.is_evaluable(&entry.cell);
+        let eval_str = match self.runtime.eval_check(&entry.cell) {
+            Some(reason) => reason,
+            None => match self.runtime.eval(&entry.cell, &[]) {
+                Ok(values) => format!("= {}", donut_runtime::format_values(&values)),
+                Err(e) => format!("BUG: {}", e),
+            },
+        };
+
+        let color = if evaluable { "#e0e0e0" } else { "#aaaaaa" };
+        let _ = self.eval_result_el.set_attribute("style", &format!("color: {}", color));
+        self.eval_result_el.set_inner_text(&format!("{}: {}\n{}", entry.name, type_str, eval_str));
     }
 
     fn draw_tooltip(&self, text: &str, x: R, y: R) {
