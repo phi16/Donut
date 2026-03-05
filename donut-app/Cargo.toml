@@ -15,6 +15,7 @@ donut-core = { path = "../crates/donut-core" }
 donut-lang = { path = "../crates/donut-lang" }
 donut-layout = { path = "../crates/donut-layout" }
 donut-renderer = { path = "../crates/donut-renderer" }
+donut-runtime = { path = "../crates/donut-runtime" }
 log = "0.4.29"
 
 [dependencies.web-sys]

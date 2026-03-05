@@ -123,12 +123,17 @@ pub fn start() -> Option<()> {
         .get_element_by_id("entry-select")?
         .dyn_into::<web_sys::HtmlSelectElement>()
         .ok()?;
+    let eval_result_el = document
+        .get_element_by_id("eval-result")?
+        .dyn_into::<web_sys::HtmlElement>()
+        .ok()?;
     let app = Rc::new(RefCell::new(App::new(
         canvas,
         context,
         mouse,
         pressing,
         entry_select.clone(),
+        eval_result_el,
     )));
 
     // Set up entry selection handler

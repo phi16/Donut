@@ -69,6 +69,7 @@ dependencies = [
  "donut-lang",
  "donut-layout",
  "donut-renderer",
+ "donut-runtime",
  "log",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -129,6 +130,10 @@ dependencies = [
 [[package]]
 name = "donut-runtime"
 version = "0.1.0"
+dependencies = [
+ "donut-core",
+ "donut-lang",
+]
 
 [[package]]
 name = "fluent-uri"

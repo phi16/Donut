@@ -1,10 +1,12 @@
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use donut_core::cell::*;
 use donut_core::common::*;
 use donut_core::free_cell::FreeCell;
 use donut_lang::check::Env;
+use donut_runtime::{extract_prim_id, Runtime, ENV_SOURCE};
 use wasm_bindgen::JsCast;
 use donut_layout::layout_solver::LayoutSolver;
 use donut_renderer::geometry::{Geometry, R};
@@ -20,8 +22,11 @@ pub struct App {
     mouse: Rc<RefCell<(f64, f64)>>,
     pressing: Rc<RefCell<bool>>,
     entry_select: web_sys::HtmlSelectElement,
+    eval_result_el: web_sys::HtmlElement,
     env: Env,
     table: PrimTable,
+    runtime: Runtime,
+    env_entry_count: usize,
     selected: usize,
     cell: Geometry,
     slice_pos: Vec<R>,
@@ -34,6 +39,7 @@ impl App {
         mouse: Rc<RefCell<(f64, f64)>>,
         pressing: Rc<RefCell<bool>>,
         entry_select: web_sys::HtmlSelectElement,
+        eval_result_el: web_sys::HtmlElement,
     ) -> Self {
         let input = "\
 [gray[80]]
@@ -74,7 +80,7 @@ oao =
 pentagon: aaa → oao
 result = pentagon
 ";
-        let (env, table) = Self::load(input).unwrap();
+        let (env, table, runtime, env_entry_count) = Self::load(input).unwrap();
         let selected = env.entries.len() - 1;
         let cell = Self::build_geometry(&env.entries[selected].cell);
 
@@ -84,19 +90,28 @@ result = pentagon
             mouse,
             pressing,
             entry_select,
+            eval_result_el,
             env,
             table,
+            runtime,
+            env_entry_count,
             selected,
             cell,
             slice_pos: vec![],
         };
         app.slice_pos = Self::init_slice_pos(&app.cell.size);
         app.populate_select();
+        app.update_eval_result();
         app
     }
 
-    fn load(code: &str) -> Result<(Env, PrimTable)> {
-        let (env, errors) = donut_lang::load::load(code);
+    fn load(code: &str) -> Result<(Env, PrimTable, Runtime, usize)> {
+        // Load env source to count its entries
+        let (env_only, _) = donut_lang::load::load(ENV_SOURCE);
+        let env_entry_count = env_only.entries.len();
+
+        let full_code = format!("{}\n{}", ENV_SOURCE, code.trim_start());
+        let (env, errors) = donut_lang::load::load(&full_code);
         if !errors.is_empty() {
             for (_, msg) in &errors {
                 log::warn!("Load warning: {}", msg);
@@ -115,7 +130,18 @@ result = pentagon
             );
         }
 
-        Ok((env, table))
+        // Build runtime
+        let mut prim_lookup: HashMap<String, PrimId> = HashMap::new();
+        for (name, &idx) in &env.lookup {
+            let entry = &env.entries[idx];
+            if let Some(id) = extract_prim_id(&entry.cell.pure) {
+                prim_lookup.insert(name.clone(), id);
+            }
+        }
+        let mut runtime = Runtime::new();
+        donut_runtime::env::register_env(&mut runtime, &prim_lookup);
+
+        Ok((env, table, runtime, env_entry_count))
     }
 
     fn build_geometry(free_cell: &FreeCell) -> Geometry {
@@ -135,11 +161,13 @@ result = pentagon
     }
 
     fn populate_select(&self) {
-        // Clear existing options
         self.entry_select.set_inner_html("");
 
         let document = web_sys::window().unwrap().document().unwrap();
         for (i, entry) in self.env.entries.iter().enumerate() {
+            if i < self.env_entry_count {
+                continue;
+            }
             let option = document
                 .create_element("option")
                 .unwrap()
@@ -157,15 +185,18 @@ result = pentagon
     }
 
     pub fn update_code(&mut self, code: &str) -> Result<()> {
-        let (env, table) = Self::load(code)?;
+        let (env, table, runtime, env_entry_count) = Self::load(code)?;
         let selected = env.entries.len() - 1;
         let cell = Self::build_geometry(&env.entries[selected].cell);
         self.slice_pos = Self::init_slice_pos(&cell.size);
         self.env = env;
         self.table = table;
+        self.runtime = runtime;
+        self.env_entry_count = env_entry_count;
         self.selected = selected;
         self.cell = cell;
         self.populate_select();
+        self.update_eval_result();
         Ok(())
     }
 
@@ -176,6 +207,7 @@ result = pentagon
         self.selected = index;
         self.cell = Self::build_geometry(&self.env.entries[index].cell);
         self.slice_pos = Self::init_slice_pos(&self.cell.size);
+        self.update_eval_result();
     }
 
     fn build_squash_view(&self, i: usize) -> Geometry {
@@ -312,6 +344,19 @@ result = pentagon
             }
 
             self.context.restore();
+        }
+    }
+
+    fn update_eval_result(&self) {
+        let entry = &self.env.entries[self.selected];
+        match self.runtime.eval(&entry.cell, &[]) {
+            Ok(values) => {
+                let text = donut_runtime::format_values(&values);
+                self.eval_result_el.set_inner_text(&format!("= {}", text));
+            }
+            Err(_) => {
+                self.eval_result_el.set_inner_text("");
+            }
         }
     }
 
