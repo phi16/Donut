@@ -83,6 +83,8 @@ struct Checker<'a> {
 
     // Meta type tracking (short_name → PrimId)
     meta_prim_ids: HashMap<String, PrimId>,
+    // Meta values (entry_idx → evaluated PrimArg)
+    meta_values: HashMap<usize, PrimArg>,
 
     // Functor support
     functor_maps: HashMap<String, HashMap<PrimId, PureCell>>,
@@ -104,6 +106,7 @@ impl<'a> Checker<'a> {
             accumulated_args: Vec::new(),
             param_count_stack: Vec::new(),
             meta_prim_ids: HashMap::new(),
+            meta_values: HashMap::new(),
             functor_maps: HashMap::new(),
         }
     }
@@ -276,47 +279,91 @@ impl<'a> Checker<'a> {
                         }
                     }
                     (dim_ty, Some(body_id)) => {
-                        let body_s = self.program.val(*body_id);
-                        match self.eval_val(&body_s.0) {
-                            Ok(cell) => {
-                                let dim = cell.pure.dim().in_space;
+                        // Check if the type is Meta
+                        let is_meta_ty = if let Some(ty_id) = dim_ty {
+                            let ty_s = self.program.val(*ty_id);
+                            matches!(self.eval_ty(&ty_s.0), Ok((_, Ty::Meta)))
+                        } else {
+                            false
+                        };
 
-                                if let Some(ty_id) = dim_ty {
-                                    let ty_s = self.program.val(*ty_id);
-                                    match self.eval_ty(&ty_s.0) {
-                                        Ok((declared_dim, declared_ty)) => {
-                                            if declared_dim != dim {
-                                                self.error_at(
-                                                    span,
-                                                    "declared type dimension does not match body",
-                                                );
-                                            } else {
-                                                let body_ty = if dim == 0 {
-                                                    Ty::Zero
-                                                } else {
-                                                    Ty::Succ(
-                                                        FreeCell::from_pure(&cell.pure.s()),
-                                                        FreeCell::from_pure(&cell.pure.t()),
-                                                    )
-                                                };
-                                                if let Err(msg) =
-                                                    match_ty(&declared_ty, &body_ty)
-                                                {
-                                                    self.error_at(span, msg);
-                                                }
-                                            }
-                                        }
-                                        Err(msg) => self.error_at(span, msg),
+                        if is_meta_ty {
+                            // Meta-typed body: evaluate as meta expression
+                            let body_s = self.program.val(*body_id);
+                            match self.eval_meta_val(&body_s.0) {
+                                Ok(meta_val) => {
+                                    let prim = self.make_prim();
+                                    let pc = self.current_param_counts(param_freshes.len());
+                                    let idx = self.add_entry(qname.clone(), color, EntryBody::Meta(prim), pc);
+                                    self.meta_values.insert(idx, meta_val);
+                                    if has_params {
+                                        self.entry_params.insert(idx, param_freshes.clone());
                                     }
                                 }
+                                Err(msg) => self.error_at(span, msg),
+                            }
+                        } else {
+                            let body_s = self.program.val(*body_id);
+                            match self.eval_val(&body_s.0) {
+                                Ok(cell) => {
+                                    let dim = cell.pure.dim().in_space;
 
-                                let pc = self.current_param_counts(param_freshes.len());
-                                let idx = self.add_entry(qname.clone(), color, EntryBody::Cell(cell), pc);
-                                if has_params {
-                                    self.entry_params.insert(idx, param_freshes.clone());
+                                    if let Some(ty_id) = dim_ty {
+                                        let ty_s = self.program.val(*ty_id);
+                                        match self.eval_ty(&ty_s.0) {
+                                            Ok((declared_dim, declared_ty)) => {
+                                                if declared_dim != dim {
+                                                    self.error_at(
+                                                        span,
+                                                        "declared type dimension does not match body",
+                                                    );
+                                                } else {
+                                                    let body_ty = if dim == 0 {
+                                                        Ty::Zero
+                                                    } else {
+                                                        Ty::Succ(
+                                                            FreeCell::from_pure(&cell.pure.s()),
+                                                            FreeCell::from_pure(&cell.pure.t()),
+                                                        )
+                                                    };
+                                                    if let Err(msg) =
+                                                        match_ty(&declared_ty, &body_ty)
+                                                    {
+                                                        self.error_at(span, msg);
+                                                    }
+                                                }
+                                            }
+                                            Err(msg) => self.error_at(span, msg),
+                                        }
+                                    }
+
+                                    let pc = self.current_param_counts(param_freshes.len());
+                                    let idx = self.add_entry(qname.clone(), color, EntryBody::Cell(cell), pc);
+                                    if has_params {
+                                        self.entry_params.insert(idx, param_freshes.clone());
+                                    }
+                                }
+                                Err(msg) => {
+                                    // If no explicit type and eval_val fails, try eval_meta_val as fallback
+                                    if dim_ty.is_none() {
+                                        let body_s = self.program.val(*body_id);
+                                        if let Ok(meta_val) = self.eval_meta_val(&body_s.0) {
+                                            let prim = self.make_prim();
+                                            let pc = self.current_param_counts(param_freshes.len());
+                                            let idx = self.add_entry(qname.clone(), color, EntryBody::Meta(prim), pc);
+                                            self.meta_values.insert(idx, meta_val);
+                                            if has_params {
+                                                self.entry_params.insert(idx, param_freshes.clone());
+                                            }
+                                            // Skip the error
+                                        } else {
+                                            self.error_at(span, msg);
+                                        }
+                                    } else {
+                                        self.error_at(span, msg);
+                                    }
                                 }
                             }
-                            Err(msg) => self.error_at(span, msg),
                         }
                     }
                     (None, None) => {}
@@ -533,7 +580,11 @@ impl<'a> Checker<'a> {
                     self.accumulated_args.push(PrimArg::Cell(cell.pure.clone()));
                 }
                 ParamKind::Nat | ParamKind::Rat | ParamKind::Meta => {
-                    // Non-cell params don't create cell entries; use App placeholder for substitution
+                    // Create a meta entry so it can be referenced in meta expressions
+                    let prim = Prim::new(fresh_id);
+                    let param_name = self.qualified_name(&param.name);
+                    let idx = self.add_entry(param_name, None, EntryBody::Meta(prim), vec![]);
+                    self.meta_values.insert(idx, PrimArg::App(fresh_id, vec![]));
                     self.accumulated_args.push(PrimArg::App(fresh_id, vec![]));
                 }
             }
@@ -580,9 +631,20 @@ impl<'a> Checker<'a> {
                 let index = self
                     .resolve_name(&name)
                     .ok_or_else(|| format!("unknown: {}", name))?;
+
                 match &self.entries[index].body {
                     EntryBody::Meta(base_prim) => {
                         let mapping = self.build_meta_mapping(index, path)?;
+
+                        // If this entry has a stored body value, substitute params into it
+                        if let Some(stored) = self.meta_values.get(&index) {
+                            if mapping.is_empty() {
+                                return Ok(stored.clone());
+                            } else {
+                                return Ok(stored.subst(&mapping));
+                            }
+                        }
+
                         let new_args = base_prim
                             .args
                             .iter()
@@ -596,8 +658,13 @@ impl<'a> Checker<'a> {
                 }
             }
             Val::Lit(Lit::Number(s)) => {
-                let n: f64 = s.parse().map_err(|e: std::num::ParseFloatError| e.to_string())?;
-                Ok(PrimArg::Nat(n as u64))
+                if s.contains('.') {
+                    let r: f64 = s.parse().map_err(|e: std::num::ParseFloatError| e.to_string())?;
+                    Ok(PrimArg::rat(r))
+                } else {
+                    let n: f64 = s.parse().map_err(|e: std::num::ParseFloatError| e.to_string())?;
+                    Ok(PrimArg::Nat(n as u64))
+                }
             }
             _ => Err("unsupported in meta context".to_string()),
         }
@@ -617,7 +684,7 @@ impl<'a> Checker<'a> {
                 .unwrap_or(&[]);
             for (i, (_, fresh_id, kind)) in params.iter().enumerate() {
                 if let Some(pv) = seg_params.get(i) {
-                    let arg = self.resolve_param_arg(pv, *kind)?;
+                    let arg = self.resolve_meta_param(pv, *kind)?;
                     mapping.insert(*fresh_id, arg);
                 }
             }
@@ -625,14 +692,40 @@ impl<'a> Checker<'a> {
         Ok(mapping)
     }
 
+    fn resolve_meta_param(&self, pv: &ParamVal, kind: ParamKind) -> Result<PrimArg> {
+        // First try eval_meta_val for variable references and meta expressions
+        let val_s = self.program.val(pv.val);
+        if let Ok(mut arg) = self.eval_meta_val(&val_s.0) {
+            // Nat→Rat coercion when param expects Rat
+            if kind == ParamKind::Rat {
+                if let PrimArg::Nat(n) = arg {
+                    arg = PrimArg::rat(n as f64);
+                }
+            }
+            return Ok(arg);
+        }
+        // Fallback to resolve_param_arg (handles 0.6 path numbers, string color names, etc.)
+        self.resolve_param_arg(pv, kind)
+    }
+
     fn extract_color(&self, decos: &[ValId]) -> Option<(u8, u8, u8)> {
         for &deco_id in decos {
             let deco = self.program.val(deco_id);
             if let Ok(prim_arg) = self.eval_meta_val(&deco.0) {
-                if let Some(color) = self.interpret_color(&prim_arg) {
+                if let Some(color) = self.interpret_decorator(&prim_arg) {
                     return Some(color);
                 }
             }
+        }
+        None
+    }
+
+    fn interpret_decorator(&self, arg: &PrimArg) -> Option<(u8, u8, u8)> {
+        let PrimArg::App(id, args) = arg else {
+            return None;
+        };
+        if self.meta_id("style") == Some(*id) {
+            return args.first().and_then(|a| self.interpret_color(a));
         }
         None
     }
@@ -641,29 +734,10 @@ impl<'a> Checker<'a> {
         let PrimArg::App(id, args) = arg else {
             return None;
         };
-        if self.meta_id("style") == Some(*id) {
-            return args.first().and_then(|a| self.interpret_color(a));
-        }
-        if self.meta_id("gray") == Some(*id) {
-            let g = match args.first()? {
-                PrimArg::Nat(n) => *n as u8,
-                _ => return None,
-            };
-            return Some((g, g, g));
-        }
         if self.meta_id("rgb") == Some(*id) {
-            let r = match args.get(0)? {
-                PrimArg::Nat(n) => *n as u8,
-                _ => return None,
-            };
-            let g = match args.get(1)? {
-                PrimArg::Nat(n) => *n as u8,
-                _ => return None,
-            };
-            let b = match args.get(2)? {
-                PrimArg::Nat(n) => *n as u8,
-                _ => return None,
-            };
+            let r = match args.get(0)? { PrimArg::Nat(n) => *n as u8, _ => return None };
+            let g = match args.get(1)? { PrimArg::Nat(n) => *n as u8, _ => return None };
+            let b = match args.get(2)? { PrimArg::Nat(n) => *n as u8, _ => return None };
             return Some((r, g, b));
         }
         if self.meta_id("hsv") == Some(*id) {

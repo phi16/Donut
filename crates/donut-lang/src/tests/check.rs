@@ -459,6 +459,76 @@ fn nested_module_instantiation_two_levels() {
     assert_ne!(ou_x.body.as_cell().unwrap().pure, ov_x.body.as_cell().unwrap().pure);
 }
 
+// --- Meta evaluation ---
+
+#[test]
+fn meta_variable_reference() {
+    // x = 32 as a meta value, referenced in decorator
+    let env = check_source(
+        r#"
+        import "base"
+        import "ui"
+        g = 80
+        [style[gray[g]]]
+        u: *
+        "#,
+    )
+    .unwrap();
+    let u = &env.entries[env.lookup["u"]];
+    assert_eq!(u.color, (80, 80, 80));
+}
+
+#[test]
+fn meta_typed_body() {
+    // Explicit meta type with body
+    let env = check_source(
+        r#"
+        import "base"
+        import "ui"
+        g: nat = 80
+        [style[gray[g]]]
+        u: *
+        "#,
+    )
+    .unwrap();
+    let u = &env.entries[env.lookup["u"]];
+    assert_eq!(u.color, (80, 80, 80));
+}
+
+#[test]
+fn meta_parametric_function() {
+    // f[x: nat]: nat = x, used in decorator
+    let env = check_source(
+        r#"
+        import "base"
+        import "ui"
+        f[x: nat]: nat = x
+        [style[gray[f[120]]]]
+        u: *
+        "#,
+    )
+    .unwrap();
+    let u = &env.entries[env.lookup["u"]];
+    assert_eq!(u.color, (120, 120, 120));
+}
+
+#[test]
+fn meta_parametric_color_function() {
+    // Custom color function that wraps rgb
+    let env = check_source(
+        r#"
+        import "base"
+        import "ui"
+        mycolor[r g b: nat]: color = rgb[r, g, b]
+        [style[mycolor[10, 20, 30]]]
+        u: *
+        "#,
+    )
+    .unwrap();
+    let u = &env.entries[env.lookup["u"]];
+    assert_eq!(u.color, (10, 20, 30));
+}
+
 #[test]
 fn nested_module_instantiation_three_levels() {
     // 3-level deep nesting: outer > mid > inner
