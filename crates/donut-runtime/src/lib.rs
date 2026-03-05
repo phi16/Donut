@@ -3,7 +3,6 @@ pub mod env;
 use donut_core::cell::Globular;
 use donut_core::common::PrimId;
 use donut_core::free_cell::{Cell, CellF, FreeCell};
-use donut_core::pure_cell::PureCell;
 use std::collections::HashMap;
 use std::fmt;
 
@@ -32,14 +31,7 @@ pub fn format_values(values: &[Value]) -> String {
         .join(", ")
 }
 
-pub fn extract_prim_id(pure: &PureCell) -> Option<PrimId> {
-    match pure {
-        PureCell::Prim(prim, _, dim) if dim.effective == dim.in_space => Some(prim.id),
-        _ => None,
-    }
-}
-
-pub type EvalFn = Box<dyn Fn(&[Value]) -> Vec<Value>>;
+type EvalFn = Box<dyn Fn(&[Value]) -> Vec<Value>>;
 
 pub struct Runtime {
     ops: HashMap<PrimId, EvalFn>,

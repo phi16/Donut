@@ -330,7 +330,7 @@ impl<'a> Checker<'a> {
             }
         };
 
-        let src_prim_id = match extract_prim_id(&src_cell.pure) {
+        let src_prim_id = match src_cell.pure.extract_prim_id() {
             Some(id) => id,
             None => {
                 self.error_at(span, "functor source must be a primitive cell");
@@ -362,7 +362,7 @@ impl<'a> Checker<'a> {
                     continue;
                 }
             };
-            let app_prim_id = match extract_prim_id(&app_cell.pure) {
+            let app_prim_id = match app_cell.pure.extract_prim_id() {
                 Some(id) => id,
                 None => {
                     self.error_at(
@@ -795,12 +795,6 @@ fn apply_functor(cell: &PureCell, map: &HashMap<PrimId, PureCell>) -> Result<Pur
     }
 }
 
-fn extract_prim_id(cell: &PureCell) -> Option<PrimId> {
-    match cell {
-        PureCell::Prim(prim, _, dim) if dim.effective == dim.in_space => Some(prim.id),
-        _ => None,
-    }
-}
 
 fn match_ty(x: &Ty, y: &Ty) -> Result<()> {
     match (x, y) {

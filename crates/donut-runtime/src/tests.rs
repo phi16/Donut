@@ -1,5 +1,5 @@
 use crate::env::{register_env, ENV_SOURCE};
-use crate::{extract_prim_id, Runtime, Value};
+use crate::{Runtime, Value};
 use donut_core::cell::Globular;
 use donut_core::common::PrimId;
 use std::collections::HashMap;
@@ -15,7 +15,7 @@ fn setup(user_code: &str) -> (Runtime, donut_lang::check::Env) {
     let mut lookup: HashMap<String, PrimId> = HashMap::new();
     for (name, &idx) in &env.lookup {
         let entry = &env.entries[idx];
-        if let Some(id) = extract_prim_id(&entry.cell.pure) {
+        if let Some(id) = entry.cell.pure.extract_prim_id() {
             lookup.insert(name.clone(), id);
         }
     }

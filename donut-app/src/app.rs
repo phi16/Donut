@@ -6,7 +6,7 @@ use donut_core::cell::*;
 use donut_core::common::*;
 use donut_core::free_cell::FreeCell;
 use donut_lang::check::Env;
-use donut_runtime::{extract_prim_id, Runtime, ENV_SOURCE};
+use donut_runtime::{Runtime, ENV_SOURCE};
 use wasm_bindgen::JsCast;
 use donut_layout::layout_solver::LayoutSolver;
 use donut_renderer::geometry::{Geometry, R};
@@ -105,10 +105,18 @@ result = pentagon
         app
     }
 
+    fn env_entry_count() -> usize {
+        // ENV_SOURCE always produces the same number of entries
+        use std::sync::OnceLock;
+        static COUNT: OnceLock<usize> = OnceLock::new();
+        *COUNT.get_or_init(|| {
+            let (env_only, _) = donut_lang::load::load(ENV_SOURCE);
+            env_only.entries.len()
+        })
+    }
+
     fn load(code: &str) -> Result<(Env, PrimTable, Runtime, usize)> {
-        // Load env source to count its entries
-        let (env_only, _) = donut_lang::load::load(ENV_SOURCE);
-        let env_entry_count = env_only.entries.len();
+        let env_entry_count = Self::env_entry_count();
 
         let user_code = dedent(code);
         let full_code = format!("{}\n{}", ENV_SOURCE, user_code);
@@ -135,7 +143,7 @@ result = pentagon
         let mut prim_lookup: HashMap<String, PrimId> = HashMap::new();
         for (name, &idx) in &env.lookup {
             let entry = &env.entries[idx];
-            if let Some(id) = extract_prim_id(&entry.cell.pure) {
+            if let Some(id) = entry.cell.pure.extract_prim_id() {
                 prim_lookup.insert(name.clone(), id);
             }
         }
@@ -361,8 +369,11 @@ result = pentagon
             },
         };
 
-        let color = if evaluable { "#e0e0e0" } else { "#aaaaaa" };
-        let _ = self.eval_result_el.set_attribute("style", &format!("color: {}", color));
+        if evaluable {
+            let _ = self.eval_result_el.class_list().add_1("evaluable");
+        } else {
+            let _ = self.eval_result_el.class_list().remove_1("evaluable");
+        }
         self.eval_result_el.set_inner_text(&format!("{}: {}\n{}", entry.name, type_str, eval_str));
     }
 
