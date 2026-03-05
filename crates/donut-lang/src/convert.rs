@@ -3,42 +3,16 @@ use crate::types::semtree;
 use crate::types::syntree;
 use crate::types::token::Token;
 
-trait Convert {
-    type Output;
-    fn convert(self, c: &mut Converter<'_>) -> Self::Output;
-}
+// --- From impls (syntree → semtree) ---
 
-impl<T: Convert> Convert for Vec<T> {
-    type Output = Vec<T::Output>;
-    fn convert(self, c: &mut Converter<'_>) -> Vec<T::Output> {
-        self.into_iter().map(|t| t.convert(c)).collect()
+impl From<syntree::Name> for semtree::Name {
+    fn from(n: syntree::Name) -> Self {
+        semtree::Name(n.0)
     }
 }
-impl<T: Convert> Convert for Option<T> {
-    type Output = Option<T::Output>;
-    fn convert(self, c: &mut Converter<'_>) -> Option<T::Output> {
-        self.map(|t| t.convert(c))
-    }
-}
-impl<T: Convert> Convert for Box<T> {
-    type Output = Box<T::Output>;
-    fn convert(self, c: &mut Converter<'_>) -> Box<T::Output> {
-        Box::new((*self).convert(c))
-    }
-}
-
-// --- Convert impls ---
-
-impl Convert for syntree::Name {
-    type Output = semtree::Name;
-    fn convert(self, _c: &mut Converter<'_>) -> semtree::Name {
-        semtree::Name(self.0)
-    }
-}
-impl Convert for syntree::AssignOp {
-    type Output = semtree::AssignOp;
-    fn convert(self, _c: &mut Converter<'_>) -> semtree::AssignOp {
-        match self {
+impl From<syntree::AssignOp> for semtree::AssignOp {
+    fn from(op: syntree::AssignOp) -> Self {
+        match op {
             syntree::AssignOp::Alias => semtree::AssignOp::Alias,
             syntree::AssignOp::Def => semtree::AssignOp::Def,
             syntree::AssignOp::Add => semtree::AssignOp::Add,
@@ -46,23 +20,21 @@ impl Convert for syntree::AssignOp {
     }
 }
 // Key conversion is handled inline in convert_lit since it needs to handle A<T> unwrapping
-impl Convert for syntree::ArrowTy {
-    type Output = semtree::ArrowTy;
-    fn convert(self, _c: &mut Converter<'_>) -> semtree::ArrowTy {
-        match self {
+impl From<syntree::ArrowTy> for semtree::ArrowTy {
+    fn from(ty: syntree::ArrowTy) -> Self {
+        match ty {
             syntree::ArrowTy::To => semtree::ArrowTy::To,
             syntree::ArrowTy::Eq => semtree::ArrowTy::Eq,
             syntree::ArrowTy::Functor => semtree::ArrowTy::Functor,
         }
     }
 }
-impl Convert for syntree::Op {
-    type Output = semtree::Op;
-    fn convert(self, c: &mut Converter<'_>) -> semtree::Op {
-        match self {
+impl From<syntree::Op> for semtree::Op {
+    fn from(op: syntree::Op) -> Self {
+        match op {
             syntree::Op::CompRep(i) | syntree::Op::CompLit(i) => semtree::Op::Comp(i),
             syntree::Op::CompStar => semtree::Op::CompStar,
-            syntree::Op::Arrow(ty) => semtree::Op::Arrow(ty.convert(c)),
+            syntree::Op::Arrow(ty) => semtree::Op::Arrow(ty.into()),
         }
     }
 }
@@ -81,15 +53,7 @@ impl Parametric for semtree::ParamDecl {
             match param_a {
                 A::Accepted(param, span) => match param.ty {
                     Some(syntree::ParamTy::Decl) => {
-                        let ty = c.convert_val_a(param.val);
-                        let names: Vec<semtree::Name> = param
-                            .names
-                            .into_iter()
-                            .filter_map(|n| match n {
-                                A::Accepted(name, _) => Some(name.convert(c)),
-                                A::Error(_) => None,
-                            })
-                            .collect();
+                        let (names, ty) = c.convert_decl_names_and_ty(param);
                         result.push(semtree::ParamDecl { names, ty });
                     }
                     Some(syntree::ParamTy::Named) => {
@@ -131,7 +95,7 @@ impl Parametric for semtree::ParamVal {
                             .into_iter()
                             .next()
                             .and_then(|n| match n {
-                                A::Accepted(n, _) => Some(n.convert(c)),
+                                A::Accepted(n, _) => Some(n.into()),
                                 A::Error(_) => None,
                             });
                         let val = c.convert_val_a(param.val);
@@ -174,6 +138,24 @@ impl<'a> Converter<'a> {
         if let Some(token) = self.tokens.get(span.start) {
             self.errors.push((token.pos.clone(), msg.into()));
         }
+    }
+
+    // --- Param helpers ---
+
+    fn convert_decl_names_and_ty(
+        &mut self,
+        param: syntree::Param,
+    ) -> (Vec<semtree::Name>, S<semtree::Val>) {
+        let ty = self.convert_val_a(param.val);
+        let names = param
+            .names
+            .into_iter()
+            .filter_map(|n| match n {
+                A::Accepted(name, _) => Some(name.into()),
+                A::Error(_) => None,
+            })
+            .collect();
+        (names, ty)
     }
 
     // --- Val conversion ---
@@ -281,7 +263,7 @@ impl<'a> Converter<'a> {
         let right = self.build_val_tree(right_vs, right_ops, fallback);
 
         let op = match op_a {
-            A::Accepted(op, span) => S(op.convert(self), span),
+            A::Accepted(op, span) => S(op.into(), span),
             A::Error(_) => return S(semtree::Val::Any, fallback.clone()),
         };
         let params = params_a.and_then(|p| match p {
@@ -349,6 +331,20 @@ impl<'a> Converter<'a> {
             }
         }
         Some(max_i)
+    }
+
+    // --- Module ---
+
+    fn convert_module(&mut self, module: syntree::Module) -> semtree::Module {
+        match module {
+            syntree::Module::Block(decls) => semtree::Module::Block(self.convert_decls(decls)),
+            syntree::Module::Import(lit) => match lit {
+                A::Accepted(lit, span) => {
+                    semtree::Module::Import(S(self.convert_lit(lit), span))
+                }
+                A::Error(_) => semtree::Module::Block(vec![]),
+            },
+        }
     }
 
     // --- Decls (main==None: forward decorators to next Decl) ---
@@ -443,7 +439,7 @@ impl<'a> Converter<'a> {
             },
             syntree::DeclMain::Mod(mod_a) => match mod_a {
                 A::Accepted(m, span) => {
-                    let converted = m.convert(self);
+                    let converted = self.convert_module(m);
                     Some(semtree::DeclMain::Mod(S(converted, span)))
                 }
                 A::Error(_) => None,
@@ -479,7 +475,7 @@ impl<'a> Converter<'a> {
         match unit.assign {
             Some((op_a, val_mod)) => {
                 let op = match op_a {
-                    A::Accepted(op, span) => S(op.convert(self), span),
+                    A::Accepted(op, span) => S(op.into(), span),
                     A::Error(_) => return None,
                 };
                 let body = Some(self.convert_valmod(val_mod));
@@ -513,7 +509,7 @@ impl<'a> Converter<'a> {
             }
             syntree::ValMod::Mod(m) => match m {
                 A::Accepted(m, span) => {
-                    semtree::ValMod::Mod(S(m.convert(self), span))
+                    semtree::ValMod::Mod(S(self.convert_module(m), span))
                 }
                 A::Error(span) => {
                     semtree::ValMod::Mod(S(
@@ -539,7 +535,7 @@ impl<'a> Converter<'a> {
             match clause_a {
                 A::Accepted(syntree::Clause(ty_a, mod_a), _) => {
                     let converted = match mod_a {
-                        A::Accepted(m, span) => S(m.convert(self), span),
+                        A::Accepted(m, span) => S(self.convert_module(m), span),
                         A::Error(span) => S(semtree::Module::Block(vec![]), span),
                     };
                     match ty_a {
@@ -626,15 +622,7 @@ impl<'a> Converter<'a> {
     ) {
         match param.ty {
             Some(syntree::ParamTy::Decl) => {
-                let ty = self.convert_val_a(param.val);
-                let names: Vec<semtree::Name> = param
-                    .names
-                    .into_iter()
-                    .filter_map(|n| match n {
-                        A::Accepted(name, _) => Some(name.convert(self)),
-                        A::Error(_) => None,
-                    })
-                    .collect();
+                let (names, ty) = self.convert_decl_names_and_ty(param);
                 result.push(semtree::Decorator::Param(names, ty));
             }
             Some(syntree::ParamTy::Named) => {
@@ -664,7 +652,7 @@ impl<'a> Converter<'a> {
 
     fn convert_segment<P: Parametric>(&mut self, seg: syntree::Segment) -> Option<semtree::Segment<P>> {
         let name = match seg.0 {
-            A::Accepted(name, _) => name.convert(self),
+            A::Accepted(name, _) => name.into(),
             A::Error(_) => return None,
         };
         let params = match seg.1 {
@@ -678,20 +666,6 @@ impl<'a> Converter<'a> {
     }
 }
 
-impl Convert for syntree::Module {
-    type Output = semtree::Module;
-    fn convert(self, c: &mut Converter<'_>) -> semtree::Module {
-        match self {
-            syntree::Module::Block(decls) => semtree::Module::Block(c.convert_decls(decls)),
-            syntree::Module::Import(lit) => match lit {
-                A::Accepted(lit, span) => {
-                    semtree::Module::Import(S(c.convert_lit(lit), span))
-                }
-                A::Error(_) => semtree::Module::Block(vec![]),
-            },
-        }
-    }
-}
 
 pub fn is_number_str(s: &str) -> bool {
     let s = s.strip_prefix('-').unwrap_or(s);

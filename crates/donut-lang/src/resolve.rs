@@ -10,6 +10,13 @@ trait Resolve {
     fn resolve(self, ctx: &mut Checker) -> Self::Output;
 }
 
+// --- Helper types ---
+
+struct NameInfo {
+    seg_names: Vec<(String, TokenSpan)>,
+    applicand: Option<S<semtree::Val>>,
+}
+
 // --- Helper functions ---
 
 fn is_functor_type(val: &Val) -> bool {
@@ -437,7 +444,7 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn register_add(&mut self, all_seg_names: &[Vec<(String, TokenSpan)>], item: Item) {
+    fn register_add(&mut self, all_seg_names: &[&[(String, TokenSpan)]], item: Item) {
         let members_to_merge = match item.body {
             ItemBody::Value { val, members } => {
                 if let Some(ref val_s) = val {
@@ -515,7 +522,7 @@ impl<'a> Checker<'a> {
         };
 
         // --- Outer scope: extract seg_names (borrowing names) ---
-        let all_seg_names: Vec<Vec<(String, TokenSpan)>> = names
+        let name_infos_partial: Vec<Vec<(String, TokenSpan)>> = names
             .iter()
             .map(|name_s| {
                 let S(pd, _) = name_s;
@@ -529,7 +536,7 @@ impl<'a> Checker<'a> {
             .collect();
 
         // --- Resolve prefixes (borrowing seg_names) ---
-        for seg_names in &all_seg_names {
+        for seg_names in &name_infos_partial {
             if seg_names.len() > 1 {
                 let prefix: Vec<_> = seg_names[..seg_names.len() - 1]
                     .iter()
@@ -539,13 +546,12 @@ impl<'a> Checker<'a> {
             }
         }
 
-        // --- Consume names → params + applicands ---
+        // --- Consume names → params + name_infos ---
         let mut params = Vec::new();
-        let mut applicands: Vec<Option<S<semtree::Val>>> = Vec::new();
-        for (i, name_s) in names.into_iter().enumerate() {
+        let mut name_infos: Vec<NameInfo> = Vec::new();
+        for (i, (name_s, seg_names)) in names.into_iter().zip(name_infos_partial).enumerate() {
             let S(pd, _) = name_s;
             let semtree::Path(segs, applicand) = pd;
-            applicands.push(applicand);
             for seg_s in segs {
                 let S(seg, _) = seg_s;
                 for param_decl in seg.1 .0 {
@@ -560,6 +566,10 @@ impl<'a> Checker<'a> {
                     }
                 }
             }
+            name_infos.push(NameInfo {
+                seg_names,
+                applicand,
+            });
         }
 
         // --- Resolve ty (owned) ---
@@ -567,9 +577,9 @@ impl<'a> Checker<'a> {
 
         // --- += pre-check ---
         if matches!(&op.0, semtree::AssignOp::Add) {
-            for seg_names in &all_seg_names {
-                if seg_names.len() == 1 {
-                    let (name, span) = &seg_names[0];
+            for ni in &name_infos {
+                if ni.seg_names.len() == 1 {
+                    let (name, span) = &ni.seg_names[0];
                     if self.lookup(name).is_none() {
                         self.error_at(
                             span,
@@ -590,9 +600,9 @@ impl<'a> Checker<'a> {
 
         // Forward refs
         let is_add = matches!(&op.0, semtree::AssignOp::Add);
-        for seg_names in &all_seg_names {
-            if !is_add && seg_names.len() == 1 {
-                self.define(seg_names[0].0.clone(), Item::new(kind));
+        for ni in &name_infos {
+            if !is_add && ni.seg_names.len() == 1 {
+                self.define(ni.seg_names[0].0.clone(), Item::new(kind));
             }
         }
 
@@ -600,7 +610,7 @@ impl<'a> Checker<'a> {
         self.resolve_where_clauses(where_clauses);
 
         // --- Functor constraints ---
-        let has_functor_app = applicands.iter().any(|a| a.is_some());
+        let has_functor_app = name_infos.iter().any(|ni| ni.applicand.is_some());
         if has_functor_app {
             if !matches!(&op.0, semtree::AssignOp::Alias) {
                 self.error_at(&op.1, "functor application only allows `=`");
@@ -632,32 +642,7 @@ impl<'a> Checker<'a> {
 
         // --- Registration ---
         if has_functor_app {
-            for (seg_names, applicand) in all_seg_names.iter().zip(applicands.into_iter()) {
-                if let Some(applicand) = applicand {
-                    let (fname, fspan) = (&seg_names[0].0, &seg_names[0].1);
-                    let app_resolved = applicand.resolve(self);
-                    if let Some(existing) = self.lookup_mut(fname) {
-                        if let ItemBody::Functor { mappings } = &mut existing.body {
-                            if let Some(v) = &body_val_resolved {
-                                mappings.push(FunctorMapping {
-                                    applicand: app_resolved,
-                                    val: v.clone(),
-                                });
-                            }
-                        } else {
-                            self.error_at(
-                                fspan,
-                                format!("`{}` is not a functor", fname),
-                            );
-                        }
-                    } else {
-                        self.error_at(
-                            fspan,
-                            format!("undefined functor `{}`", fname),
-                        );
-                    }
-                }
-            }
+            self.register_functor_app(name_infos, &body_val_resolved);
         } else {
             let is_functor = ty_resolved
                 .as_ref()
@@ -681,10 +666,45 @@ impl<'a> Checker<'a> {
             };
 
             if is_add {
+                let all_seg_names: Vec<&[(String, TokenSpan)]> =
+                    name_infos.iter().map(|ni| ni.seg_names.as_slice()).collect();
                 self.register_add(&all_seg_names, item);
             } else {
-                for seg_names in &all_seg_names {
-                    self.register_path(seg_names, item.clone());
+                for ni in &name_infos {
+                    self.register_path(&ni.seg_names, item.clone());
+                }
+            }
+        }
+    }
+
+    fn register_functor_app(
+        &mut self,
+        name_infos: Vec<NameInfo>,
+        body_val_resolved: &Option<S<Val>>,
+    ) {
+        for ni in name_infos {
+            if let Some(applicand) = ni.applicand {
+                let (fname, fspan) = (&ni.seg_names[0].0, &ni.seg_names[0].1);
+                let app_resolved = applicand.resolve(self);
+                if let Some(existing) = self.lookup_mut(fname) {
+                    if let ItemBody::Functor { mappings } = &mut existing.body {
+                        if let Some(v) = body_val_resolved {
+                            mappings.push(FunctorMapping {
+                                applicand: app_resolved,
+                                val: v.clone(),
+                            });
+                        }
+                    } else {
+                        self.error_at(
+                            fspan,
+                            format!("`{}` is not a functor", fname),
+                        );
+                    }
+                } else {
+                    self.error_at(
+                        fspan,
+                        format!("undefined functor `{}`", fname),
+                    );
                 }
             }
         }
