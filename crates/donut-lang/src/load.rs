@@ -55,19 +55,20 @@ impl Table {
         self.elements.push(Element { name, color, cell });
     }
 
-    fn load_module(&mut self, module: &Module) -> Result<()> {
-        for (name, item) in &module.entries {
-            self.load_item(name, item)?;
+    fn load_module(&mut self, program: &Program, module: &Module) -> Result<()> {
+        for (name, item_id) in &module.entries {
+            let item = program.item(*item_id);
+            self.load_item(program, name, item)?;
         }
         Ok(())
     }
 
-    fn load_item(&mut self, name: &str, item: &Item) -> Result<()> {
+    fn load_item(&mut self, program: &Program, name: &str, item: &Item) -> Result<()> {
         if matches!(item.kind, Some(ItemKind::Param)) {
             return Ok(());
         }
 
-        let color = extract_color(&item.decos);
+        let color = extract_color(program, &item.decos);
 
         match &item.body {
             ItemBody::Value { val, members } => {
@@ -79,8 +80,9 @@ impl Table {
                 };
 
                 match (&item.ty, body_val) {
-                    (Some(ty), None) => {
-                        let (_, ty) = self.eval_ty(&ty.0)?;
+                    (Some(ty_id), None) => {
+                        let ty_s = program.val(*ty_id);
+                        let (_, ty) = self.eval_ty(program, &ty_s.0)?;
                         let prim = self.fresh_prim();
                         let cell = match &ty {
                             Ty::Zero => FreeCell::zero(prim),
@@ -88,8 +90,9 @@ impl Table {
                         };
                         self.add(name.to_string(), color, cell);
                     }
-                    (dim_ty, Some(body_s)) => {
-                        let body = self.eval_val(&body_s.0)?;
+                    (dim_ty, Some(body_id)) => {
+                        let body_s = program.val(*body_id);
+                        let body = self.eval_val(program, &body_s.0)?;
                         let dim = body.pure.dim().in_space;
                         let body_ty = if dim == 0 {
                             Ty::Zero
@@ -100,8 +103,9 @@ impl Table {
                             )
                         };
 
-                        if let Some(ty_s) = dim_ty {
-                            let (declared_dim, declared_ty) = self.eval_ty(&ty_s.0)?;
+                        if let Some(ty_id) = dim_ty {
+                            let ty_s = program.val(*ty_id);
+                            let (declared_dim, declared_ty) = self.eval_ty(program, &ty_s.0)?;
                             if declared_dim != dim {
                                 return Err(
                                     "declared type dimension does not match body".to_string(),
@@ -116,7 +120,7 @@ impl Table {
                 }
 
                 if !members.entries.is_empty() {
-                    self.load_members(name, members)?;
+                    self.load_members(program, name, members)?;
                 }
             }
             ItemBody::Functor { .. } => {
@@ -127,17 +131,18 @@ impl Table {
         Ok(())
     }
 
-    fn load_members(&mut self, prefix: &str, module: &Module) -> Result<()> {
+    fn load_members(&mut self, program: &Program, prefix: &str, module: &Module) -> Result<()> {
         self.prefixes.push(prefix.to_string());
-        for (member_name, item) in &module.entries {
+        for (member_name, item_id) in &module.entries {
             let full_name = format!("{}.{}", prefix, member_name);
-            self.load_item(&full_name, item)?;
+            let item = program.item(*item_id);
+            self.load_item(program, &full_name, item)?;
         }
         self.prefixes.pop();
         Ok(())
     }
 
-    fn eval_ty(&self, val: &Val) -> Result<(u8, Ty)> {
+    fn eval_ty(&self, program: &Program, val: &Val) -> Result<(u8, Ty)> {
         match val {
             Val::Path(path) => {
                 if path_name(path).as_deref() == Some("*") {
@@ -145,9 +150,11 @@ impl Table {
                 }
                 Err("expected `*` or arrow type".to_string())
             }
-            Val::Arrow(ArrowKind::To | ArrowKind::Eq, l, r) => {
-                let mut s = self.eval_val(&l.0)?;
-                let mut t = self.eval_val(&r.0)?;
+            Val::Arrow(ArrowKind::To | ArrowKind::Eq, l_id, r_id) => {
+                let l = program.val(*l_id);
+                let r = program.val(*r_id);
+                let mut s = self.eval_val(program, &l.0)?;
+                let mut t = self.eval_val(program, &r.0)?;
                 let max = s.pure.dim().in_space.max(t.pure.dim().in_space);
                 s = lift_dim(s, max);
                 t = lift_dim(t, max);
@@ -160,7 +167,7 @@ impl Table {
         }
     }
 
-    fn eval_val(&self, val: &Val) -> Result<FreeCell> {
+    fn eval_val(&self, program: &Program, val: &Val) -> Result<FreeCell> {
         match val {
             Val::Path(path) => {
                 let name = path_name(path).ok_or_else(|| "invalid path".to_string())?;
@@ -172,7 +179,10 @@ impl Table {
             Val::Comp(axis, children) => {
                 let mut cells: Vec<FreeCell> = children
                     .iter()
-                    .map(|c| self.eval_val(&c.0))
+                    .map(|id| {
+                        let child = program.val(*id);
+                        self.eval_val(program, &child.0)
+                    })
                     .collect::<Result<_>>()?;
                 let max = cells
                     .iter()
@@ -237,8 +247,9 @@ fn path_name(path: &Path) -> Option<String> {
     Some(parts.join("."))
 }
 
-fn extract_color(decos: &[S<Val>]) -> Option<(u8, u8, u8)> {
-    for deco in decos {
+fn extract_color(program: &Program, decos: &[ValId]) -> Option<(u8, u8, u8)> {
+    for &deco_id in decos {
+        let deco = program.val(deco_id);
         let Val::Path(path) = &deco.0 else {
             continue;
         };
@@ -251,19 +262,19 @@ fn extract_color(decos: &[S<Val>]) -> Option<(u8, u8, u8)> {
 
         match name.as_str() {
             "gray" if args.len() == 1 => {
-                let g = extract_number(&args[0])? as u8;
+                let g = extract_number(program, &args[0])? as u8;
                 return Some((g, g, g));
             }
             "rgb" if args.len() == 3 => {
-                let r = extract_number(&args[0])? as u8;
-                let g = extract_number(&args[1])? as u8;
-                let b = extract_number(&args[2])? as u8;
+                let r = extract_number(program, &args[0])? as u8;
+                let g = extract_number(program, &args[1])? as u8;
+                let b = extract_number(program, &args[2])? as u8;
                 return Some((r, g, b));
             }
             "hsv" if !args.is_empty() => {
-                let h = extract_rational(&args[0])?;
-                let s = args.get(1).map_or(Some(1.0), extract_rational)?;
-                let v = args.get(2).map_or(Some(1.0), extract_rational)?;
+                let h = extract_rational(program, &args[0])?;
+                let s = args.get(1).map_or(Some(1.0), |a| extract_rational(program, a))?;
+                let v = args.get(2).map_or(Some(1.0), |a| extract_rational(program, a))?;
                 return Some(hsv2rgb(h, s, v));
             }
             _ => {}
@@ -272,15 +283,17 @@ fn extract_color(decos: &[S<Val>]) -> Option<(u8, u8, u8)> {
     None
 }
 
-fn extract_number(param: &ParamVal) -> Option<f64> {
-    match &param.val.0 {
+fn extract_number(program: &Program, param: &ParamVal) -> Option<f64> {
+    let val = program.val(param.val);
+    match &val.0 {
         Val::Lit(Lit::Number(s)) => s.parse().ok(),
         _ => None,
     }
 }
 
-fn extract_rational(param: &ParamVal) -> Option<f64> {
-    match &param.val.0 {
+fn extract_rational(program: &Program, param: &ParamVal) -> Option<f64> {
+    let val = program.val(param.val);
+    match &val.0 {
         Val::Lit(Lit::Number(s)) => s.parse().ok(),
         Val::Lit(Lit::String(s)) => match s.as_str() {
             "1-" => Some(0.01),
@@ -365,11 +378,11 @@ pub fn load(code: &str) -> Result<Table> {
     if !conv_errors.is_empty() {
         return Err(format!("convert errors: {:?}", conv_errors));
     }
-    let (module, check_errors) = crate::resolve::resolve(sem_prog, &tokens);
+    let (resolved, check_errors) = crate::resolve::resolve(sem_prog, &tokens);
     if !check_errors.is_empty() {
         return Err(format!("check errors: {:?}", check_errors));
     }
     let mut table = Table::new();
-    table.load_module(&module)?;
+    table.load_module(&resolved, &resolved.root)?;
     Ok(table)
 }

@@ -34,11 +34,11 @@ fn resolve_arrow_kind(arrow_ty: &semtree::ArrowTy) -> ArrowKind {
 // --- Resolve trait implementations (Val types only, owned) ---
 
 impl Resolve for S<semtree::Val> {
-    type Output = S<Val>;
-    fn resolve(self, ctx: &mut Checker) -> S<Val> {
+    type Output = ValId;
+    fn resolve(self, ctx: &mut Checker) -> ValId {
         let S(v, span) = self;
         let val = v.resolve(ctx);
-        S(val, span)
+        ctx.alloc_val(S(val, span))
     }
 }
 
@@ -71,9 +71,9 @@ impl Resolve for semtree::Val {
                     }
                     semtree::Op::Arrow(arrow_ty) => {
                         let kind = resolve_arrow_kind(&arrow_ty);
-                        let l_s = (*l).resolve(ctx);
-                        let r_s = (*r).resolve(ctx);
-                        Val::Arrow(kind, Box::new(l_s), Box::new(r_s))
+                        let l_id = (*l).resolve(ctx);
+                        let r_id = (*r).resolve(ctx);
+                        Val::Arrow(kind, l_id, r_id)
                     }
                 }
             }
@@ -101,7 +101,7 @@ impl Resolve for S<semtree::Path<semtree::ParamVal>> {
             .map(|seg_s| seg_s.resolve(ctx))
             .collect();
 
-        let applicand = path.1.map(|v| Box::new(v.resolve(ctx)));
+        let applicand = path.1.map(|v| v.resolve(ctx));
 
         Path {
             segments,
@@ -147,12 +147,12 @@ impl Resolve for S<semtree::Lit> {
             semtree::Lit::Number(s) => Lit::Number(s),
             semtree::Lit::String(s) => Lit::String(s),
             semtree::Lit::Array(vs) => {
-                let items: Vec<S<Val>> =
+                let items: Vec<ValId> =
                     vs.into_iter().map(|v| v.resolve(ctx)).collect();
                 Lit::Array(items)
             }
             semtree::Lit::Object(kvs) => {
-                let items: Vec<(String, S<Val>)> = kvs
+                let items: Vec<(String, ValId)> = kvs
                     .into_iter()
                     .map(|(k, v)| {
                         let S(key, _) = k;
@@ -174,6 +174,8 @@ impl Resolve for S<semtree::Lit> {
 
 struct Checker<'a> {
     tokens: &'a [Token<'a>],
+    items: Vec<Item>,
+    vals: Vec<S<Val>>,
     scopes: Vec<Module>,
     errors: Vec<Error>,
 }
@@ -182,9 +184,31 @@ impl<'a> Checker<'a> {
     fn new(tokens: &'a [Token<'a>]) -> Self {
         Checker {
             tokens,
+            items: Vec::new(),
+            vals: Vec::new(),
             scopes: Vec::new(),
             errors: Vec::new(),
         }
+    }
+
+    fn alloc_val(&mut self, val: S<Val>) -> ValId {
+        let id = ValId(self.vals.len());
+        self.vals.push(val);
+        id
+    }
+
+    fn alloc_item(&mut self, item: Item) -> ItemId {
+        let id = ItemId(self.items.len());
+        self.items.push(item);
+        id
+    }
+
+    fn item(&self, id: ItemId) -> &Item {
+        &self.items[id.0]
+    }
+
+    fn item_mut(&mut self, id: ItemId) -> &mut Item {
+        &mut self.items[id.0]
     }
 
     fn error_at(&mut self, span: &TokenSpan, msg: impl Into<String>) {
@@ -200,25 +224,16 @@ impl<'a> Checker<'a> {
         self.scopes.pop();
     }
 
-    fn define(&mut self, name: String, item: Item) {
+    fn define(&mut self, name: String, item: ItemId) {
         if let Some(scope) = self.scopes.last_mut() {
             scope.define(name, item);
         }
     }
 
-    fn lookup(&self, name: &str) -> Option<&Item> {
+    fn lookup(&self, name: &str) -> Option<ItemId> {
         for scope in self.scopes.iter().rev() {
-            if let Some(item) = scope.get(name) {
-                return Some(item);
-            }
-        }
-        None
-    }
-
-    fn lookup_mut(&mut self, name: &str) -> Option<&mut Item> {
-        for scope in self.scopes.iter_mut().rev() {
-            if let Some(item) = scope.get_mut(name) {
-                return Some(item);
+            if let Some(id) = scope.get(name) {
+                return Some(id);
             }
         }
         None
@@ -226,7 +241,7 @@ impl<'a> Checker<'a> {
 
     // --- Comp flat helpers ---
 
-    fn resolve_comp_flat(&mut self, val_s: S<semtree::Val>, axis: u32, out: &mut Vec<S<Val>>) {
+    fn resolve_comp_flat(&mut self, val_s: S<semtree::Val>, axis: u32, out: &mut Vec<ValId>) {
         match val_s {
             S(semtree::Val::Op(l, op_s, _, r), _)
                 if matches!(&op_s.0, semtree::Op::Comp(n) if *n == axis) =>
@@ -240,7 +255,7 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn resolve_comp_star_flat(&mut self, val_s: S<semtree::Val>, out: &mut Vec<S<Val>>) {
+    fn resolve_comp_star_flat(&mut self, val_s: S<semtree::Val>, out: &mut Vec<ValId>) {
         match val_s {
             S(semtree::Val::Op(l, op_s, _, r), _)
                 if matches!(&op_s.0, semtree::Op::CompStar) =>
@@ -256,49 +271,49 @@ impl<'a> Checker<'a> {
 
     // --- Scope resolution ---
 
-    fn resolve_segments(&mut self, segments: &[(&str, &TokenSpan)]) -> Option<Item> {
-        let mut current: Option<Item> = None;
+    fn resolve_segments(&mut self, segments: &[(&str, &TokenSpan)]) {
+        let mut current: Option<ItemId> = None;
         for (i, &(name, span)) in segments.iter().enumerate() {
             if i == 0 {
                 match self.lookup(name) {
-                    Some(item) => current = Some(item.clone()),
+                    Some(id) => current = Some(id),
                     None => {
                         if name != "*" && !crate::convert::is_number_str(name) {
                             self.error_at(span, format!("undefined name `{}`", name));
                         }
-                        return None;
+                        return;
                     }
                 }
             } else {
                 let next = current
-                    .take()
-                    .and_then(|item| item.members().and_then(|m| m.get(name).cloned()));
+                    .and_then(|id| self.item(id).members().and_then(|m| m.get(name)));
                 if next.is_none() {
                     self.error_at(span, format!("undefined member `{}`", name));
-                    return None;
+                    return;
                 }
                 current = next;
             }
         }
-        current
     }
 
-    fn resolve_val_as_members(&self, val_s: &S<Val>) -> Option<Module> {
+    fn resolve_val_as_members(&self, val_id: ValId) -> Option<Module> {
+        let val_s = &self.vals[val_id.0];
         let path = match &val_s.0 {
             Val::Path(path) => path,
             _ => return None,
         };
-        let mut current: Option<&Item> = None;
+        let mut current: Option<ItemId> = None;
         for (i, seg_s) in path.segments.iter().enumerate() {
             let name = &seg_s.0.name;
             if i == 0 {
                 current = self.lookup(name);
             } else {
                 current =
-                    current.and_then(|item| item.members().and_then(|m| m.get(name)));
+                    current.and_then(|id| self.item(id).members().and_then(|m| m.get(name)));
             }
         }
-        Some(current?.members()?.clone())
+        let id = current?;
+        Some(self.item(id).members()?.clone())
     }
 
     // --- Module / Decl resolution (owned) ---
@@ -342,7 +357,7 @@ impl<'a> Checker<'a> {
     fn resolve_decorators(
         &mut self,
         decos: Vec<semtree::Decorator>,
-    ) -> (Vec<(String, S<Val>)>, Vec<S<Val>>) {
+    ) -> (Vec<(String, ValId)>, Vec<ValId>) {
         let mut param_defs = Vec::new();
         let mut deco_vals = Vec::new();
         for deco in decos {
@@ -350,7 +365,7 @@ impl<'a> Checker<'a> {
                 semtree::Decorator::Param(names, ty) => {
                     let resolved_ty = ty.resolve(self);
                     for name in names {
-                        param_defs.push((name.0, resolved_ty.clone()));
+                        param_defs.push((name.0, resolved_ty));
                     }
                 }
                 semtree::Decorator::Deco(v) => {
@@ -363,10 +378,12 @@ impl<'a> Checker<'a> {
 
     // --- Inner scope helpers ---
 
-    fn enter_inner_scope(&mut self, deco_param_defs: &[(String, S<Val>)]) {
+    fn enter_inner_scope(&mut self, deco_param_defs: &[(String, ValId)]) {
         self.push_scope();
-        for (name, ty) in deco_param_defs {
-            self.define(name.clone(), Item::param(ty.clone()));
+        for (name, val_id) in deco_param_defs {
+            let item = Item::param(*val_id);
+            let id = self.alloc_item(item);
+            self.define(name.clone(), id);
         }
     }
 
@@ -401,17 +418,17 @@ impl<'a> Checker<'a> {
 
     // --- Registration ---
 
-    fn register_path(&mut self, segs: &[(String, TokenSpan)], item: Item) {
+    fn register_path(&mut self, segs: &[(String, TokenSpan)], item_id: ItemId) {
         match segs.len() {
             0 => {}
             1 => {
-                self.define(segs[0].0.clone(), item);
+                self.define(segs[0].0.clone(), item_id);
             }
-            _ => self.insert_into_dotted(segs, item),
+            _ => self.insert_into_dotted(segs, item_id),
         }
     }
 
-    fn insert_into_dotted(&mut self, segs: &[(String, TokenSpan)], item: Item) {
+    fn insert_into_dotted(&mut self, segs: &[(String, TokenSpan)], item_id: ItemId) {
         if segs.len() < 2 {
             return;
         }
@@ -419,22 +436,19 @@ impl<'a> Checker<'a> {
         let (last_name, last_span) = &segs[segs.len() - 1];
 
         let mut conflict = false;
-        if let Some(root) = self.lookup_mut(first_name) {
-            let mut current = root;
+        if let Some(mut current_id) = self.lookup(first_name) {
             for (name, _) in &segs[1..segs.len() - 1] {
-                let Some(members) = current.members_mut() else {
-                    return;
-                };
-                if !members.contains_key(name) {
-                    return;
+                let next = self.item(current_id).members().and_then(|m| m.get(name));
+                match next {
+                    Some(id) => current_id = id,
+                    None => return,
                 }
-                current = members.get_mut(name).unwrap();
             }
-            if let Some(members) = current.members_mut() {
+            if let Some(members) = self.item_mut(current_id).members_mut() {
                 if members.contains_key(last_name) {
                     conflict = true;
                 } else {
-                    members.define(last_name.clone(), item);
+                    members.define(last_name.clone(), item_id);
                 }
             }
         }
@@ -444,17 +458,22 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn register_add(&mut self, all_seg_names: &[&[(String, TokenSpan)]], item: Item) {
-        let members_to_merge = match item.body {
-            ItemBody::Value { val, members } => {
-                if let Some(ref val_s) = val {
-                    self.resolve_val_as_members(val_s)
-                        .unwrap_or_else(Module::new)
-                } else {
-                    members
-                }
+    fn register_add(&mut self, all_seg_names: &[&[(String, TokenSpan)]], item_id: ItemId) {
+        let (val_opt, members_opt) = {
+            let item = &self.items[item_id.0];
+            match &item.body {
+                ItemBody::Value { val, members } => (*val, Some(members.clone())),
+                ItemBody::Functor { .. } => (None, None),
             }
-            ItemBody::Functor { .. } => Module::new(),
+        };
+
+        let members_to_merge = if let Some(val_id) = val_opt {
+            self.resolve_val_as_members(val_id)
+                .unwrap_or_else(Module::new)
+        } else if let Some(members) = members_opt {
+            members
+        } else {
+            Module::new()
         };
 
         for seg_names in all_seg_names {
@@ -469,8 +488,8 @@ impl<'a> Checker<'a> {
 
         if segs.len() == 1 {
             let (name, span) = &segs[0];
-            let conflicts = if let Some(existing) = self.lookup_mut(name) {
-                if let Some(members) = existing.members_mut() {
+            let conflicts = if let Some(id) = self.lookup(name) {
+                if let Some(members) = self.item_mut(id).members_mut() {
                     members.merge(new_members)
                 } else {
                     Vec::new()
@@ -490,8 +509,8 @@ impl<'a> Checker<'a> {
     fn process_unit_decl(
         &mut self,
         unit: semtree::DeclUnit,
-        deco_param_defs: Vec<(String, S<Val>)>,
-        deco_vals: Vec<S<Val>>,
+        deco_param_defs: Vec<(String, ValId)>,
+        deco_vals: Vec<ValId>,
         with_clauses: Vec<S<semtree::Module>>,
         where_clauses: Vec<S<semtree::Module>>,
     ) {
@@ -560,7 +579,7 @@ impl<'a> Checker<'a> {
                         for name in param_decl.names {
                             params.push(Param {
                                 name: name.0,
-                                ty: resolved_ty.clone(),
+                                ty: resolved_ty,
                             });
                         }
                     }
@@ -595,14 +614,18 @@ impl<'a> Checker<'a> {
 
         // Define params
         for param in &params {
-            self.define(param.name.clone(), Item::param(param.ty.clone()));
+            let item = Item::param(param.ty);
+            let id = self.alloc_item(item);
+            self.define(param.name.clone(), id);
         }
 
         // Forward refs
         let is_add = matches!(&op.0, semtree::AssignOp::Add);
         for ni in &name_infos {
             if !is_add && ni.seg_names.len() == 1 {
-                self.define(ni.seg_names[0].0.clone(), Item::new(kind));
+                let item = Item::new(kind);
+                let id = self.alloc_item(item);
+                self.define(ni.seg_names[0].0.clone(), id);
             }
         }
 
@@ -642,11 +665,10 @@ impl<'a> Checker<'a> {
 
         // --- Registration ---
         if has_functor_app {
-            self.register_functor_app(name_infos, &body_val_resolved);
+            self.register_functor_app(name_infos, body_val_resolved);
         } else {
             let is_functor = ty_resolved
-                .as_ref()
-                .map_or(false, |t| is_functor_type(&t.0));
+                .map_or(false, |id| is_functor_type(&self.vals[id.0].0));
             let body = if is_functor {
                 ItemBody::Functor {
                     mappings: Vec::new(),
@@ -665,13 +687,14 @@ impl<'a> Checker<'a> {
                 decos: deco_vals,
             };
 
+            let item_id = self.alloc_item(item);
             if is_add {
                 let all_seg_names: Vec<&[(String, TokenSpan)]> =
                     name_infos.iter().map(|ni| ni.seg_names.as_slice()).collect();
-                self.register_add(&all_seg_names, item);
+                self.register_add(&all_seg_names, item_id);
             } else {
                 for ni in &name_infos {
-                    self.register_path(&ni.seg_names, item.clone());
+                    self.register_path(&ni.seg_names, item_id);
                 }
             }
         }
@@ -680,31 +703,41 @@ impl<'a> Checker<'a> {
     fn register_functor_app(
         &mut self,
         name_infos: Vec<NameInfo>,
-        body_val_resolved: &Option<S<Val>>,
+        body_val_resolved: Option<ValId>,
     ) {
         for ni in name_infos {
             if let Some(applicand) = ni.applicand {
                 let (fname, fspan) = (&ni.seg_names[0].0, &ni.seg_names[0].1);
                 let app_resolved = applicand.resolve(self);
-                if let Some(existing) = self.lookup_mut(fname) {
-                    if let ItemBody::Functor { mappings } = &mut existing.body {
-                        if let Some(v) = body_val_resolved {
-                            mappings.push(FunctorMapping {
-                                applicand: app_resolved,
-                                val: v.clone(),
-                            });
+                let lookup_result = self.lookup(fname);
+                match lookup_result {
+                    Some(id) => {
+                        let is_functor =
+                            matches!(&self.items[id.0].body, ItemBody::Functor { .. });
+                        if is_functor {
+                            if let Some(v) = body_val_resolved {
+                                if let ItemBody::Functor { mappings } =
+                                    &mut self.items[id.0].body
+                                {
+                                    mappings.push(FunctorMapping {
+                                        applicand: app_resolved,
+                                        val: v,
+                                    });
+                                }
+                            }
+                        } else {
+                            self.error_at(
+                                fspan,
+                                format!("`{}` is not a functor", fname),
+                            );
                         }
-                    } else {
+                    }
+                    None => {
                         self.error_at(
                             fspan,
-                            format!("`{}` is not a functor", fname),
+                            format!("undefined functor `{}`", fname),
                         );
                     }
-                } else {
-                    self.error_at(
-                        fspan,
-                        format!("undefined functor `{}`", fname),
-                    );
                 }
             }
         }
@@ -713,7 +746,7 @@ impl<'a> Checker<'a> {
     fn process_mod_decl(
         &mut self,
         mod_s: S<semtree::Module>,
-        deco_param_defs: Vec<(String, S<Val>)>,
+        deco_param_defs: Vec<(String, ValId)>,
         with_clauses: Vec<S<semtree::Module>>,
         where_clauses: Vec<S<semtree::Module>>,
     ) {
@@ -737,12 +770,17 @@ impl<'a> Checker<'a> {
     }
 }
 
-pub fn resolve(program: semtree::Program, tokens: &[Token]) -> (Module, Vec<Error>) {
+pub fn resolve(program: semtree::Program, tokens: &[Token]) -> (Program, Vec<Error>) {
     let mut checker = Checker::new(tokens);
     checker.push_scope();
     for d in program.0 {
         checker.resolve_decl(d);
     }
     let module = checker.scopes.pop().unwrap();
-    (module, checker.errors)
+    let prog = Program {
+        root: module,
+        items: checker.items,
+        vals: checker.vals,
+    };
+    (prog, checker.errors)
 }

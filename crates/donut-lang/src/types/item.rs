@@ -1,6 +1,14 @@
 pub use crate::types::common::S;
 use std::collections::HashMap;
 
+// --- Index types ---
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ValId(pub usize);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ItemId(pub usize);
+
 // --- Val 型 (semtree::Val に対応、A なし、演算子 flat) ---
 
 #[derive(Debug, Clone, Copy)]
@@ -10,30 +18,30 @@ pub enum ArrowKind {
     Functor,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ParamVal {
     pub name: Option<String>,
-    pub val: S<Val>,
+    pub val: ValId,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Segment {
     pub name: String,
     pub params: Vec<ParamVal>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Path {
     pub segments: Vec<S<Segment>>,
-    pub applicand: Option<Box<S<Val>>>,
+    pub applicand: Option<ValId>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum Lit {
     Number(String),
     String(String),
-    Array(Vec<S<Val>>),
-    Object(Vec<(String, S<Val>)>),
+    Array(Vec<ValId>),
+    Object(Vec<(String, ValId)>),
 }
 
 #[derive(Debug, Clone)]
@@ -42,13 +50,13 @@ pub enum Hole {
     Named(String),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum Val {
     Path(Path),
     Lit(Lit),
-    Comp(u32, Vec<S<Val>>),
-    CompStar(Vec<S<Val>>),
-    Arrow(ArrowKind, Box<S<Val>>, Box<S<Val>>),
+    Comp(u32, Vec<ValId>),
+    CompStar(Vec<ValId>),
+    Arrow(ArrowKind, ValId, ValId),
     Hole(Hole),
 }
 
@@ -62,22 +70,22 @@ pub enum ItemKind {
     Param,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Param {
     pub name: String,
-    pub ty: S<Val>,
+    pub ty: ValId,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct FunctorMapping {
-    pub applicand: S<Val>,
-    pub val: S<Val>,
+    pub applicand: ValId,
+    pub val: ValId,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum ItemBody {
     Value {
-        val: Option<S<Val>>,
+        val: Option<ValId>,
         members: Module,
     },
     Functor {
@@ -85,19 +93,36 @@ pub enum ItemBody {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Item {
     pub kind: Option<ItemKind>,
-    pub ty: Option<S<Val>>,
+    pub ty: Option<ValId>,
     pub params: Vec<Param>,
     pub body: ItemBody,
-    pub decos: Vec<S<Val>>,
+    pub decos: Vec<ValId>,
 }
 
 #[derive(Debug, Clone)]
 pub struct Module {
-    pub entries: Vec<(String, Item)>,
+    pub entries: Vec<(String, ItemId)>,
     index: HashMap<String, usize>,
+}
+
+// --- Program ---
+
+pub struct Program {
+    pub root: Module,
+    pub items: Vec<Item>,
+    pub vals: Vec<S<Val>>,
+}
+
+impl Program {
+    pub fn val(&self, id: ValId) -> &S<Val> {
+        &self.vals[id.0]
+    }
+    pub fn item(&self, id: ItemId) -> &Item {
+        &self.items[id.0]
+    }
 }
 
 impl Module {
@@ -108,7 +133,7 @@ impl Module {
         }
     }
 
-    pub fn define(&mut self, name: String, item: Item) {
+    pub fn define(&mut self, name: String, item: ItemId) {
         if let Some(&idx) = self.index.get(&name) {
             self.entries[idx].1 = item;
         } else {
@@ -118,14 +143,9 @@ impl Module {
         }
     }
 
-    pub fn get(&self, name: &str) -> Option<&Item> {
+    pub fn get(&self, name: &str) -> Option<ItemId> {
         let &idx = self.index.get(name)?;
-        Some(&self.entries[idx].1)
-    }
-
-    pub fn get_mut(&mut self, name: &str) -> Option<&mut Item> {
-        let &idx = self.index.get(name)?;
-        Some(&mut self.entries[idx].1)
+        Some(self.entries[idx].1)
     }
 
     pub fn contains_key(&self, name: &str) -> bool {
@@ -160,7 +180,7 @@ impl Item {
         }
     }
 
-    pub fn param(ty: S<Val>) -> Self {
+    pub fn param(ty: ValId) -> Self {
         Item {
             kind: Some(ItemKind::Param),
             ty: Some(ty),
@@ -187,9 +207,9 @@ impl Item {
         }
     }
 
-    pub fn val(&self) -> Option<&S<Val>> {
+    pub fn val(&self) -> Option<ValId> {
         match &self.body {
-            ItemBody::Value { val, .. } => val.as_ref(),
+            ItemBody::Value { val, .. } => *val,
             _ => None,
         }
     }

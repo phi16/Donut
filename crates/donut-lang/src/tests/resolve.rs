@@ -11,7 +11,7 @@ fn check_errs(code: &str) -> Vec<String> {
         conv_errors.is_empty(),
         "unexpected convert errors: {conv_errors:?}"
     );
-    let (_module, errors) = crate::resolve::resolve(sem_prog, &tokens);
+    let (_program, errors) = crate::resolve::resolve(sem_prog, &tokens);
     errors.into_iter().map(|(_, msg)| msg).collect()
 }
 
@@ -20,7 +20,7 @@ fn check_ok(code: &str) {
     assert!(errs.is_empty(), "unexpected check errors: {errs:?}");
 }
 
-fn check_module(code: &str) -> Module {
+fn check_module(code: &str) -> Program {
     let (tokens, _, _) = tokenize(code.trim());
     let (program, _) = parse(&tokens);
     let (sem_prog, conv_errors) = convert(program, &tokens);
@@ -28,9 +28,13 @@ fn check_module(code: &str) -> Module {
         conv_errors.is_empty(),
         "unexpected convert errors: {conv_errors:?}"
     );
-    let (module, errors) = crate::resolve::resolve(sem_prog, &tokens);
+    let (program, errors) = crate::resolve::resolve(sem_prog, &tokens);
     assert!(errors.is_empty(), "unexpected check errors: {errors:?}");
-    module
+    program
+}
+
+fn get_item<'a>(p: &'a Program, name: &str) -> &'a Item {
+    p.item(p.root.get(name).unwrap())
 }
 
 // --- Basic resolution ---
@@ -754,19 +758,19 @@ fn names(m: &Module) -> Vec<&str> {
 
 #[test]
 fn module_output_declaration_order() {
-    let m = check_module(
+    let p = check_module(
         r#"
 a = "1"
 b = "2"
 c = "3"
 "#,
     );
-    assert_eq!(names(&m), vec!["a", "b", "c"]);
+    assert_eq!(names(&p.root), vec!["a", "b", "c"]);
 }
 
 #[test]
 fn module_output_item_kind() {
-    let m = check_module(
+    let p = check_module(
         r#"
 T = "t"
 x: T
@@ -774,14 +778,15 @@ y = "v"
 z := "w"
 "#,
     );
-    assert!(matches!(m.get("T").unwrap().kind, Some(ItemKind::Alias)));
-    assert!(matches!(m.get("x").unwrap().kind, Some(ItemKind::Decl)));
-    assert!(matches!(m.get("y").unwrap().kind, Some(ItemKind::Alias)));
-    assert!(matches!(m.get("z").unwrap().kind, Some(ItemKind::Def)));
+    assert!(matches!(get_item(&p, "T").kind, Some(ItemKind::Alias)));
+    assert!(matches!(get_item(&p, "x").kind, Some(ItemKind::Decl)));
+    assert!(matches!(get_item(&p, "y").kind, Some(ItemKind::Alias)));
+    assert!(matches!(get_item(&p, "z").kind, Some(ItemKind::Def)));
 }
 
 /// Extract the single path name from a Val (e.g. Path with one segment "T" → "T")
-fn val_as_path_name(val: &S<Val>) -> Option<&str> {
+fn val_as_path_name<'a>(p: &'a Program, val_id: ValId) -> Option<&'a str> {
+    let val = p.val(val_id);
     match &val.0 {
         Val::Path(path) => {
             if path.segments.len() == 1 {
@@ -795,7 +800,8 @@ fn val_as_path_name(val: &S<Val>) -> Option<&str> {
 }
 
 /// Extract the string literal value from a Val
-fn val_as_string(val: &S<Val>) -> Option<&str> {
+fn val_as_string<'a>(p: &'a Program, val_id: ValId) -> Option<&'a str> {
+    let val = p.val(val_id);
     match &val.0 {
         Val::Lit(Lit::String(s)) => Some(s),
         _ => None,
@@ -804,30 +810,30 @@ fn val_as_string(val: &S<Val>) -> Option<&str> {
 
 #[test]
 fn module_output_val_content() {
-    let m = check_module(
+    let p = check_module(
         r#"
 x = "hello"
 y = "world"
 "#,
     );
-    assert_eq!(val_as_string(m.get("x").unwrap().val().unwrap()), Some("\"hello\""));
-    assert_eq!(val_as_string(m.get("y").unwrap().val().unwrap()), Some("\"world\""));
+    assert_eq!(val_as_string(&p, get_item(&p, "x").val().unwrap()), Some("\"hello\""));
+    assert_eq!(val_as_string(&p, get_item(&p, "y").val().unwrap()), Some("\"world\""));
 }
 
 #[test]
 fn module_output_val_path_content() {
-    let m = check_module(
+    let p = check_module(
         r#"
 a = "v"
 b = a
 "#,
     );
-    assert_eq!(val_as_path_name(m.get("b").unwrap().val().unwrap()), Some("a"));
+    assert_eq!(val_as_path_name(&p, get_item(&p, "b").val().unwrap()), Some("a"));
 }
 
 #[test]
 fn module_output_ty_content() {
-    let m = check_module(
+    let p = check_module(
         r#"
 T = "t"
 U = "u"
@@ -835,49 +841,47 @@ x: T
 y: U = "v"
 "#,
     );
-    assert_eq!(val_as_path_name(m.get("x").unwrap().ty.as_ref().unwrap()), Some("T"));
-    assert_eq!(val_as_path_name(m.get("y").unwrap().ty.as_ref().unwrap()), Some("U"));
-    assert!(m.get("T").unwrap().ty.is_none());
+    assert_eq!(val_as_path_name(&p, get_item(&p, "x").ty.unwrap()), Some("T"));
+    assert_eq!(val_as_path_name(&p, get_item(&p, "y").ty.unwrap()), Some("U"));
+    assert!(get_item(&p, "T").ty.is_none());
 }
 
 #[test]
 fn module_output_param_ty_content() {
-    let m = check_module(
+    let p = check_module(
         r#"
 T = "t"
 U = "u"
 f[x: T, y: U] = "v"
 "#,
     );
-    let f = m.get("f").unwrap();
+    let f = get_item(&p, "f");
     assert_eq!(f.params.len(), 2);
     assert_eq!(f.params[0].name, "x");
-    assert_eq!(val_as_path_name_from_ty(&f.params[0].ty), Some("T"));
+    assert_eq!(val_as_path_name(&p, f.params[0].ty), Some("T"));
     assert_eq!(f.params[1].name, "y");
-    assert_eq!(val_as_path_name_from_ty(&f.params[1].ty), Some("U"));
-}
-
-fn val_as_path_name_from_ty(val: &S<Val>) -> Option<&str> {
-    val_as_path_name(val)
+    assert_eq!(val_as_path_name(&p, f.params[1].ty), Some("U"));
 }
 
 #[test]
 fn module_output_nested_val_content() {
-    let m = check_module(
+    let p = check_module(
         r#"
 m = {
     x = "inner"
 }
 "#,
     );
-    let x = m.get("m").unwrap().members().unwrap().get("x").unwrap();
-    assert_eq!(val_as_string(x.val().unwrap()), Some("\"inner\""));
+    let m_item = get_item(&p, "m");
+    let x_id = m_item.members().unwrap().get("x").unwrap();
+    let x_item = p.item(x_id);
+    assert_eq!(val_as_string(&p, x_item.val().unwrap()), Some("\"inner\""));
 }
 
 #[test]
 fn module_output_where_not_in_members() {
     // where clause bindings should NOT appear in the item's members
-    let m = check_module(
+    let p = check_module(
         r#"
 x = g
   where {
@@ -885,14 +889,14 @@ x = g
   }
 "#,
     );
-    let x = m.get("x").unwrap();
+    let x = get_item(&p, "x");
     assert!(x.members().unwrap().get("g").is_none(), "where binding should not be a member");
-    assert_eq!(val_as_path_name(x.val().unwrap()), Some("g"));
+    assert_eq!(val_as_path_name(&p, x.val().unwrap()), Some("g"));
 }
 
 #[test]
 fn module_output_with_val_and_members() {
-    let m = check_module(
+    let p = check_module(
         r#"
 x = "base"
   with {
@@ -901,28 +905,30 @@ x = "base"
   }
 "#,
     );
-    let x = m.get("x").unwrap();
-    assert_eq!(val_as_string(x.val().unwrap()), Some("\"base\""));
-    assert_eq!(val_as_string(x.members().unwrap().get("a").unwrap().val().unwrap()), Some("\"m1\""));
-    assert_eq!(val_as_string(x.members().unwrap().get("b").unwrap().val().unwrap()), Some("\"m2\""));
+    let x = get_item(&p, "x");
+    assert_eq!(val_as_string(&p, x.val().unwrap()), Some("\"base\""));
+    let a = p.item(x.members().unwrap().get("a").unwrap());
+    assert_eq!(val_as_string(&p, a.val().unwrap()), Some("\"m1\""));
+    let b = p.item(x.members().unwrap().get("b").unwrap());
+    assert_eq!(val_as_string(&p, b.val().unwrap()), Some("\"m2\""));
 }
 
 #[test]
 fn module_output_deco_param_not_in_module() {
     // Decorator params should not appear in the module output
-    let m = check_module(
+    let p = check_module(
         r#"
 T = "t"
 [p: T] f = "v"
 "#,
     );
-    assert!(m.get("p").is_none(), "deco param should not be in module");
-    assert!(m.get("f").is_some());
+    assert!(p.root.get("p").is_none(), "deco param should not be in module");
+    assert!(p.root.get("f").is_some());
 }
 
 #[test]
 fn module_output_module_with_params() {
-    let m = check_module(
+    let p = check_module(
         r#"
 T = "t"
 m[x: T] = {
@@ -930,17 +936,17 @@ m[x: T] = {
 }
 "#,
     );
-    let item = m.get("m").unwrap();
+    let item = get_item(&p, "m");
     assert_eq!(item.params.len(), 1);
     assert_eq!(item.params[0].name, "x");
-    assert_eq!(val_as_path_name_from_ty(&item.params[0].ty), Some("T"));
+    assert_eq!(val_as_path_name(&p, item.params[0].ty), Some("T"));
     assert!(item.val().is_none(), "module body should not produce val");
     assert_eq!(names(item.members().unwrap()), vec!["inner"]);
 }
 
 #[test]
 fn module_output_nested_members_order() {
-    let m = check_module(
+    let p = check_module(
         r#"
 m = {
     x = "1"
@@ -949,13 +955,13 @@ m = {
 }
 "#,
     );
-    let members = m.get("m").unwrap().members().unwrap();
+    let members = get_item(&p, "m").members().unwrap();
     assert_eq!(names(members), vec!["x", "y", "z"]);
 }
 
 #[test]
 fn module_output_with_members_order() {
-    let m = check_module(
+    let p = check_module(
         r#"
 x = "v"
   with {
@@ -964,13 +970,13 @@ x = "v"
   }
 "#,
     );
-    let members = m.get("x").unwrap().members().unwrap();
+    let members = get_item(&p, "x").members().unwrap();
     assert_eq!(names(members), vec!["a", "b"]);
 }
 
 #[test]
 fn module_output_dotted_decl_preserves_order() {
-    let m = check_module(
+    let p = check_module(
         r#"
 m = {
     a = "1"
@@ -979,13 +985,13 @@ m.b = "2"
 m.c = "3"
 "#,
     );
-    let members = m.get("m").unwrap().members().unwrap();
+    let members = get_item(&p, "m").members().unwrap();
     assert_eq!(names(members), vec!["a", "b", "c"]);
 }
 
 #[test]
 fn module_output_add_preserves_order() {
-    let m = check_module(
+    let p = check_module(
         r#"
 x = {
     a = "1"
@@ -996,13 +1002,13 @@ x += {
 }
 "#,
     );
-    let members = m.get("x").unwrap().members().unwrap();
+    let members = get_item(&p, "x").members().unwrap();
     assert_eq!(names(members), vec!["a", "b", "c"]);
 }
 
 #[test]
 fn module_output_anon_block_order() {
-    let m = check_module(
+    let p = check_module(
         r#"
 a = "1"
 {
@@ -1012,12 +1018,12 @@ a = "1"
 d = "4"
 "#,
     );
-    assert_eq!(names(&m), vec!["a", "b", "c", "d"]);
+    assert_eq!(names(&p.root), vec!["a", "b", "c", "d"]);
 }
 
 #[test]
 fn module_output_deep_nesting() {
-    let m = check_module(
+    let p = check_module(
         r#"
 a = {
     b = {
@@ -1027,7 +1033,9 @@ a = {
 }
 "#,
     );
-    let b = m.get("a").unwrap().members().unwrap().get("b").unwrap();
+    let a = get_item(&p, "a");
+    let b_id = a.members().unwrap().get("b").unwrap();
+    let b = p.item(b_id);
     assert_eq!(names(b.members().unwrap()), vec!["c", "d"]);
 }
 
@@ -1077,8 +1085,8 @@ fn functor_app_not_a_functor() {
 
 #[test]
 fn functor_app_mappings_stored() {
-    let m = check_module("A = \"a\"\nB = \"b\"\na = \"x\"\nb = \"y\"\nf: A ~> B\nf(a) = \"x\"\nf(b) = \"y\"");
-    let f = m.get("f").unwrap();
+    let p = check_module("A = \"a\"\nB = \"b\"\na = \"x\"\nb = \"y\"\nf: A ~> B\nf(a) = \"x\"\nf(b) = \"y\"");
+    let f = get_item(&p, "f");
     match &f.body {
         ItemBody::Functor { mappings } => assert_eq!(mappings.len(), 2),
         _ => panic!("expected Functor body"),
