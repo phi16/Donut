@@ -871,63 +871,10 @@ fn hsv2rgb(h: f64, s: f64, v: f64) -> (u8, u8, u8) {
     ((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8)
 }
 
-fn dedent(code: &str) -> String {
-    let lines: Vec<&str> = code.lines().collect();
-    let min_indent = lines
-        .iter()
-        .filter(|l| !l.trim().is_empty())
-        .map(|l| l.len() - l.trim_start().len())
-        .min()
-        .unwrap_or(0);
-    lines
-        .iter()
-        .map(|l| {
-            if l.len() >= min_indent {
-                &l[min_indent..]
-            } else {
-                l.trim()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 // --- Public API ---
 
 pub fn check(program: &Program, tokens: &[Token]) -> (Env, Vec<Error>) {
     let mut checker = Checker::new(program, tokens);
     checker.check_module(&program.root);
     checker.into_result()
-}
-
-pub fn check_source(code: &str) -> std::result::Result<Env, String> {
-    let code = dedent(code.trim_matches('\n'));
-    let (tokens, _, tok_errors) = crate::tokenize::tokenize(&code);
-    if !tok_errors.is_empty() {
-        return Err(format!("tokenize errors: {:?}", tok_errors));
-    }
-    let (program, parse_errors) = crate::parse::parse(&tokens);
-    if !parse_errors.is_empty() {
-        return Err(format!("parse errors: {:?}", parse_errors));
-    }
-    let (sem_prog, conv_errors) = crate::convert::convert(program, &tokens);
-    if !conv_errors.is_empty() {
-        return Err(format!("convert errors: {:?}", conv_errors));
-    }
-    let (resolved, resolve_errors) = crate::resolve::resolve(sem_prog, &tokens);
-    if !resolve_errors.is_empty() {
-        return Err(format!("check errors: {:?}", resolve_errors));
-    }
-    let (env, check_errors) = check(&resolved, &tokens);
-    if !check_errors.is_empty() {
-        return Err(format!(
-            "{}",
-            check_errors
-                .iter()
-                .map(|(_, msg)| msg.as_str())
-                .collect::<Vec<_>>()
-                .join("\n")
-        ));
-    }
-    Ok(env)
 }

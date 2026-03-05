@@ -1,5 +1,12 @@
-use crate::load::load;
+use crate::check::Env;
 use donut_core::cell::Globular;
+
+fn load(code: &str) -> Env {
+    let code = super::dedent(code.trim_matches('\n'));
+    let (env, errors) = crate::load::load(&code);
+    assert!(errors.is_empty(), "unexpected errors: {:?}", errors);
+    env
+}
 
 #[test]
 fn test_load() {
@@ -12,24 +19,24 @@ fn test_load() {
         lm = m x; m
         assoc2: rm → lm
     "#;
-    let table = load(input).unwrap();
-    assert_eq!(table.elements.len(), 7);
-    assert_eq!(table.elements[0].name, "u");
-    assert_eq!(table.elements[1].name, "x");
-    assert_eq!(table.elements[2].name, "m");
-    assert_eq!(table.elements[3].name, "assoc");
-    assert_eq!(table.elements[4].name, "rm");
-    assert_eq!(table.elements[5].name, "lm");
-    assert_eq!(table.elements[6].name, "assoc2");
+    let table = load(input);
+    assert_eq!(table.entries.len(), 7);
+    assert_eq!(table.entries[0].name, "u");
+    assert_eq!(table.entries[1].name, "x");
+    assert_eq!(table.entries[2].name, "m");
+    assert_eq!(table.entries[3].name, "assoc");
+    assert_eq!(table.entries[4].name, "rm");
+    assert_eq!(table.entries[5].name, "lm");
+    assert_eq!(table.entries[6].name, "assoc2");
 
     // u is 0-dim
-    assert_eq!(table.elements[0].cell.pure.dim().in_space, 0);
+    assert_eq!(table.entries[0].cell.pure.dim().in_space, 0);
     // x is 1-dim
-    assert_eq!(table.elements[1].cell.pure.dim().in_space, 1);
+    assert_eq!(table.entries[1].cell.pure.dim().in_space, 1);
     // m is 2-dim (x x → x)
-    assert_eq!(table.elements[2].cell.pure.dim().in_space, 2);
+    assert_eq!(table.entries[2].cell.pure.dim().in_space, 2);
     // assoc is 3-dim
-    assert_eq!(table.elements[3].cell.pure.dim().in_space, 3);
+    assert_eq!(table.entries[3].cell.pure.dim().in_space, 3);
 }
 
 #[test]
@@ -61,9 +68,9 @@ fn test_load_pentagon() {
 
         pentagon: aaa → oao
     "#;
-    let table = load(input).unwrap();
-    assert!(table.elements.len() > 0);
-    let last = table.elements.last().unwrap();
+    let table = load(input);
+    assert!(table.entries.len() > 0);
+    let last = table.entries.last().unwrap();
     assert_eq!(last.name, "pentagon");
 }
 
@@ -80,15 +87,15 @@ fn test_load_colors() {
         [rgb[255, 0, 128]]
         m: x x → x
     "#;
-    let table = load(input).unwrap();
+    let table = load(input);
     let u = table.lookup["u"];
     let x = table.lookup["x"];
     let m = table.lookup["m"];
-    assert_eq!(table.elements[u].color, (80, 80, 80));
+    assert_eq!(table.entries[u].color, (80, 80, 80));
     // hsv(0.6, 1, 1) should produce a blue-ish color
-    let c = table.elements[x].color;
+    let c = table.entries[x].color;
     assert!(c.2 > c.0 && c.2 > c.1, "hsv(0.6) should be blue-ish: {:?}", c);
-    assert_eq!(table.elements[m].color, (255, 0, 128));
+    assert_eq!(table.entries[m].color, (255, 0, 128));
 }
 
 #[test]
@@ -100,11 +107,11 @@ fn test_load_members() {
         }
         f: cat.u → cat.u
     "#;
-    let table = load(input).unwrap();
-    assert_eq!(table.elements.len(), 3);
-    assert_eq!(table.elements[0].name, "cat.u");
-    assert_eq!(table.elements[1].name, "cat.x");
-    assert_eq!(table.elements[2].name, "f");
+    let table = load(input);
+    assert_eq!(table.entries.len(), 3);
+    assert_eq!(table.entries[0].name, "cat.u");
+    assert_eq!(table.entries[1].name, "cat.x");
+    assert_eq!(table.entries[2].name, "f");
 }
 
 #[test]
@@ -119,12 +126,12 @@ fn test_load_nested_members() {
         }
         f: a.b.x a.b.x → a.b.x
     "#;
-    let table = load(input).unwrap();
-    assert_eq!(table.elements[0].name, "a.b.u");
-    assert_eq!(table.elements[1].name, "a.b.x");
-    assert_eq!(table.elements[2].name, "a.y");
-    assert_eq!(table.elements[3].name, "f");
-    assert_eq!(table.elements[3].cell.pure.dim().in_space, 2);
+    let table = load(input);
+    assert_eq!(table.entries[0].name, "a.b.u");
+    assert_eq!(table.entries[1].name, "a.b.x");
+    assert_eq!(table.entries[2].name, "a.y");
+    assert_eq!(table.entries[3].name, "f");
+    assert_eq!(table.entries[3].cell.pure.dim().in_space, 2);
 }
 
 #[test]
@@ -133,10 +140,10 @@ fn test_load_auto_color() {
         u: *
         x: u → u
     "#;
-    let table = load(input).unwrap();
+    let table = load(input);
     // Without explicit color, auto_color is used
-    let c0 = table.elements[0].color;
-    let c1 = table.elements[1].color;
+    let c0 = table.entries[0].color;
+    let c1 = table.entries[1].color;
     // Colors should be different
     assert_ne!(c0, c1);
 }
@@ -144,7 +151,7 @@ fn test_load_auto_color() {
 #[test]
 fn test_load_nat_example() {
     let input = include_str!("../../../../examples/nat.donut");
-    let table = load(input).unwrap();
+    let table = load(input);
 
     // Modules: nat and u8
     assert!(table.lookup.contains_key("nat.C"));
@@ -168,14 +175,14 @@ fn test_load_nat_example() {
     assert!(table.lookup.contains_key("sum_123"));
 
     // Properties (3-cells)
-    let add_assoc = &table.elements[table.lookup["add_assoc"]];
+    let add_assoc = &table.entries[table.lookup["add_assoc"]];
     assert_eq!(add_assoc.cell.pure.dim().in_space, 3);
 
-    let add_comm = &table.elements[table.lookup["add_comm"]];
+    let add_comm = &table.entries[table.lookup["add_comm"]];
     assert_eq!(add_comm.cell.pure.dim().in_space, 3);
 
     // Equivalence (~ arrow)
-    let succ_add = &table.elements[table.lookup["succ_add"]];
+    let succ_add = &table.entries[table.lookup["succ_add"]];
     assert_eq!(succ_add.cell.pure.dim().in_space, 3);
 
     // Functor type declaration is not yet loaded as a cell

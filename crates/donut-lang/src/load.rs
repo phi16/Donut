@@ -1,33 +1,23 @@
-use donut_core::free_cell::FreeCell;
-use std::collections::HashMap;
+use crate::check::Env;
+use crate::types::common::Error;
 
-type Result<T> = std::result::Result<T, String>;
+pub fn load(code: &str) -> (Env, Vec<Error>) {
+    let mut errors: Vec<Error> = Vec::new();
 
-#[derive(Debug, Clone)]
-pub struct Element {
-    pub name: String,
-    pub color: (u8, u8, u8),
-    pub cell: FreeCell,
-}
+    let (tokens, _, tok_errors) = crate::tokenize::tokenize(&code);
+    errors.extend(tok_errors);
 
-#[derive(Debug, Clone)]
-pub struct Table {
-    pub elements: Vec<Element>,
-    pub lookup: HashMap<String, usize>,
-}
+    let (program, parse_errors) = crate::parse::parse(&tokens);
+    errors.extend(parse_errors);
 
-pub fn load(code: &str) -> Result<Table> {
-    let env = crate::check::check_source(code)?;
-    Ok(Table {
-        elements: env
-            .entries
-            .into_iter()
-            .map(|e| Element {
-                name: e.name,
-                color: e.color,
-                cell: e.cell,
-            })
-            .collect(),
-        lookup: env.lookup,
-    })
+    let (sem_prog, conv_errors) = crate::convert::convert(program, &tokens);
+    errors.extend(conv_errors);
+
+    let (resolved, resolve_errors) = crate::resolve::resolve(sem_prog, &tokens);
+    errors.extend(resolve_errors);
+
+    let (env, check_errors) = crate::check::check(&resolved, &tokens);
+    errors.extend(check_errors);
+
+    (env, errors)
 }

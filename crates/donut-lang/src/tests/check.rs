@@ -1,5 +1,19 @@
-use crate::check::check_source;
+use crate::check::Env;
 use donut_core::cell::Globular;
+
+fn check_source(code: &str) -> Result<Env, String> {
+    let code = super::dedent(code.trim_matches('\n'));
+    let (env, errors) = crate::load::load(&code);
+    if errors.is_empty() {
+        Ok(env)
+    } else {
+        Err(errors
+            .iter()
+            .map(|(_, msg)| msg.as_str())
+            .collect::<Vec<_>>()
+            .join("\n"))
+    }
+}
 
 // --- Basic (non-parametric) ---
 

@@ -23,54 +23,59 @@ impl App {
         context: web_sys::CanvasRenderingContext2d,
         mouse: Rc<RefCell<(f64, f64)>>,
     ) -> Self {
-        let input = r#"
-            [gray[80]]
-            u: *
-            [hsv[0.6, 1, 1]]
-            x: u → u
-            [hsv[0.1, 1.0, 1]]
-            m: x x → x
-            [hsv[0.2, 1.0, 1]]
-            a: m x; m → x m; m
-            [gray[200]]
-            chl: (x m; m) x → x m x; m x
-            [gray[200]]
-            chr: x m x; x m → x (m x; m)
-            aaa =
-                a x; m ;;
-                chl; m ;;
-                x m x; a ;;
-                chr; m ;;
-                x a; m
-            [gray[200]]
-            ch0: m x x; x m → m m
-            [gray[200]]
-            ch1: m m → x x m; m x
+        let input = "\
+[gray[80]]
+u: *
+[hsv[0.6, 1, 1]]
+x: u → u
+[hsv[0.1, 1.0, 1]]
+m: x x → x
+[hsv[0.2, 1.0, 1]]
+a: m x; m → x m; m
+[gray[200]]
+chl: (x m; m) x → x m x; m x
+[gray[200]]
+chr: x m x; x m → x (m x; m)
+aaa =
+    a x; m ;;
+    chl; m ;;
+    x m x; a ;;
+    chr; m ;;
+    x a; m
+[gray[200]]
+ch0: m x x; x m → m m
+[gray[200]]
+ch1: m m → x x m; m x
 
-            [gray[200]]
-            kl: (m x; m) x → m x x; m x
-            [gray[200]]
-            kr: x x m; x m → x (x m; m)
-            oao =
-                kl; m ;;
-                m x x; a ;;
-                (ch0 ;; ch1); m ;;
-                x x m; a ;;
-                kr; m
+[gray[200]]
+kl: (m x; m) x → m x x; m x
+[gray[200]]
+kr: x x m; x m → x (x m; m)
+oao =
+    kl; m ;;
+    m x x; a ;;
+    (ch0 ;; ch1); m ;;
+    x x m; a ;;
+    kr; m
 
-            [gray[255]]
-            pentagon: aaa → oao
-            result = pentagon
-        "#;
-        let symbol_table = donut_lang::load::load(input).unwrap();
+[gray[255]]
+pentagon: aaa → oao
+result = pentagon
+";
+        let (env, errors) = donut_lang::load::load(input);
+        if !errors.is_empty() {
+            for (_, msg) in &errors {
+                log::warn!("Load warning: {}", msg);
+            }
+        }
 
         let mut table = PrimTable::new();
-        for (i, e) in symbol_table.elements.iter().enumerate() {
+        for (i, e) in env.entries.iter().enumerate() {
             let prim = Prim::new(i as PrimId);
             table.insert(prim, &e.name, e.cell.pure.dim().in_space, e.color);
         }
 
-        let cell = symbol_table.elements.last().unwrap().cell.clone();
+        let cell = env.entries.last().unwrap().cell.clone();
         let mut f = LayoutSolver::new();
         let cell = f.from_free(cell);
         let sol = f.solve(&cell);
@@ -94,16 +99,22 @@ impl App {
     }
 
     pub fn update_code(&mut self, code: &str) -> Result<()> {
-        let symbol_table =
-            donut_lang::load::load(code).map_err(|e| format!("Parse error: {:?}", e))?;
+        let (env, errors) = donut_lang::load::load(code);
+        if !errors.is_empty() {
+            return Err(errors
+                .iter()
+                .map(|(_, msg)| msg.as_str())
+                .collect::<Vec<_>>()
+                .join("\n"));
+        }
 
         let mut table = PrimTable::new();
-        for (i, e) in symbol_table.elements.iter().enumerate() {
+        for (i, e) in env.entries.iter().enumerate() {
             let prim = Prim::new(i as PrimId);
             table.insert(prim, &e.name, e.cell.pure.dim().in_space, e.color);
         }
 
-        let cell = symbol_table.elements.last().unwrap().cell.clone();
+        let cell = env.entries.last().unwrap().cell.clone();
         let mut f = LayoutSolver::new();
         let cell = f.from_free(cell);
         let sol = f.solve(&cell);
