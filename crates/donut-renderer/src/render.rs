@@ -78,6 +78,11 @@ impl Renderer {
         format!("rgb({} {} {})", color.0, color.1, color.2)
     }
 
+    fn brighten(color: (u8, u8, u8)) -> (u8, u8, u8) {
+        let f = |c: u8| (c as f64 + (255.0 - c as f64) * 0.2) as u8;
+        (f(color.0), f(color.1), f(color.2))
+    }
+
     pub fn cube(&self, cube: &Cuboid, color: (u8, u8, u8)) {
         match cube {
             Cuboid::Point(p) => {
@@ -123,17 +128,27 @@ impl Renderer {
         }
     }
 
-    pub fn cell(&self, cell: &Geometry, table: &PrimTable) {
+    pub fn cell(&self, cell: &Geometry, table: &PrimTable, highlight: Option<&Prim>) {
         for cubes in cell.cubes.iter() {
             for (prim, cube) in cubes {
                 let entry = table.get(prim).unwrap();
-                self.cube(cube, entry.color);
+                let color = if highlight == Some(prim) {
+                    Self::brighten(entry.color)
+                } else {
+                    entry.color
+                };
+                self.cube(cube, color);
             }
         }
 
         for (prim, center, r2) in &cell.spheres {
             let entry = table.get(prim).unwrap();
-            let str = format!("rgb({} {} {})", entry.color.0, entry.color.1, entry.color.2);
+            let color = if highlight == Some(prim) {
+                Self::brighten(entry.color)
+            } else {
+                entry.color
+            };
+            let str = format!("rgb({} {} {})", color.0, color.1, color.2);
 
             assert_eq!(center.len(), 2);
             let r = r2.sqrt();

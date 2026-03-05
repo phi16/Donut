@@ -252,7 +252,15 @@ result = pentagon
             self.context.translate(ox, oy).unwrap();
 
             let rc = self.build_squash_view(i);
-            renderer.cell(&rc, &self.table);
+            let lmx = mouse.0 - ox;
+            let lmy = mouse.1 - oy;
+            let hit = if lmx >= 0.0 && lmx <= vw && lmy >= 0.0 && lmy <= vh {
+                renderer.hit_test(&rc, lmx, lmy)
+            } else {
+                None
+            };
+
+            renderer.cell(&rc, &self.table, hit.as_ref());
 
             let sx = self.slice_pos[2 * i];
             let sy = self.slice_pos[2 * i + 1];
@@ -266,13 +274,9 @@ result = pentagon
             self.context.line_to(vw, sy);
             self.context.stroke();
 
-            let lmx = mouse.0 - ox;
-            let lmy = mouse.1 - oy;
-            if lmx >= 0.0 && lmx <= vw && lmy >= 0.0 && lmy <= vh {
-                if let Some(prim) = renderer.hit_test(&rc, lmx, lmy) {
-                    let label = self.table.format_prim(&prim);
-                    self.draw_tooltip(&label, lmx + 12.0, lmy - 8.0);
-                }
+            if let Some(prim) = &hit {
+                let label = self.table.format_prim(prim);
+                self.draw_tooltip(&label, lmx + 12.0, lmy - 8.0);
             }
 
             self.context.restore();
@@ -292,15 +296,19 @@ result = pentagon
             self.context.translate(ox, oy).unwrap();
 
             let rc = self.build_slice_view();
-            renderer.cell(&rc, &self.table);
-
             let lmx = mouse.0 - ox;
             let lmy = mouse.1 - oy;
-            if lmx >= 0.0 && lmx <= vw && lmy >= 0.0 && lmy <= vh {
-                if let Some(prim) = renderer.hit_test(&rc, lmx, lmy) {
-                    let label = self.table.format_prim(&prim);
-                    self.draw_tooltip(&label, lmx + 12.0, lmy - 8.0);
-                }
+            let hit = if lmx >= 0.0 && lmx <= vw && lmy >= 0.0 && lmy <= vh {
+                renderer.hit_test(&rc, lmx, lmy)
+            } else {
+                None
+            };
+
+            renderer.cell(&rc, &self.table, hit.as_ref());
+
+            if let Some(prim) = &hit {
+                let label = self.table.format_prim(prim);
+                self.draw_tooltip(&label, lmx + 12.0, lmy - 8.0);
             }
 
             self.context.restore();
