@@ -1,4 +1,5 @@
 pub use crate::types::common::S;
+pub use crate::types::common::TokenSpan;
 use std::collections::HashMap;
 
 // --- Index types ---
@@ -95,6 +96,7 @@ pub enum ItemBody {
 
 #[derive(Debug)]
 pub struct Item {
+    pub span: TokenSpan,
     pub kind: Option<ItemKind>,
     pub ty: Option<ValId>,
     pub params: Vec<Param>,
@@ -167,8 +169,9 @@ impl Module {
 }
 
 impl Item {
-    pub fn new(kind: Option<ItemKind>) -> Self {
+    pub fn new(kind: Option<ItemKind>, span: TokenSpan) -> Self {
         Item {
+            span,
             kind,
             ty: None,
             params: Vec::new(),
@@ -180,8 +183,9 @@ impl Item {
         }
     }
 
-    pub fn param(ty: ValId) -> Self {
+    pub fn param(ty: ValId, span: TokenSpan) -> Self {
         Item {
+            span,
             kind: Some(ItemKind::Param),
             ty: Some(ty),
             params: Vec::new(),

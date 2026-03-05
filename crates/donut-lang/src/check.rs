@@ -1,4 +1,6 @@
+use crate::types::common::Error;
 use crate::types::item::*;
+use crate::types::token::Token;
 use donut_core::cell::{check_prim, Diagram, Globular};
 use donut_core::common::{Prim, PrimArg, PrimId};
 use donut_core::free_cell::FreeCell;
@@ -32,11 +34,13 @@ pub struct Env {
 
 struct Checker<'a> {
     program: &'a Program,
+    tokens: &'a [Token<'a>],
     next_prim: PrimId,
 
     // Output (flat)
     entries: Vec<Entry>,
     lookup: HashMap<String, usize>,
+    errors: Vec<Error>,
 
     // Module nesting
     prefixes: Vec<String>,
@@ -49,12 +53,14 @@ struct Checker<'a> {
 }
 
 impl<'a> Checker<'a> {
-    fn new(program: &'a Program) -> Self {
+    fn new(program: &'a Program, tokens: &'a [Token<'a>]) -> Self {
         Checker {
             program,
+            tokens,
             next_prim: 0,
             entries: Vec::new(),
             lookup: HashMap::new(),
+            errors: Vec::new(),
             prefixes: Vec::new(),
             module_params: HashMap::new(),
             module_members: HashMap::new(),
@@ -63,10 +69,17 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn into_env(self) -> Env {
-        Env {
+    fn into_result(self) -> (Env, Vec<Error>) {
+        let env = Env {
             entries: self.entries,
             lookup: self.lookup,
+        };
+        (env, self.errors)
+    }
+
+    fn error_at(&mut self, span: &TokenSpan, msg: impl Into<String>) {
+        if let Some(token) = self.tokens.get(span.start) {
+            self.errors.push((token.pos.clone(), msg.into()));
         }
     }
 
@@ -113,24 +126,30 @@ impl<'a> Checker<'a> {
 
     // --- Module processing ---
 
-    fn check_module(&mut self, module: &Module) -> Result<()> {
+    fn check_module(&mut self, module: &Module) {
         for (name, item_id) in &module.entries {
             let item = self.program.item(*item_id);
-            self.check_item(name, item)?;
+            self.check_item(name, item);
         }
-        Ok(())
     }
 
-    fn check_item(&mut self, name: &str, item: &Item) -> Result<()> {
+    fn check_item(&mut self, name: &str, item: &Item) {
         if matches!(item.kind, Some(ItemKind::Param)) {
-            return Ok(());
+            return;
         }
 
         let color = extract_color(self.program, &item.decos);
         let qname = self.qualified_name(name);
+        let span = &item.span;
 
         // Handle params: create fresh prims
-        let param_freshes = self.enter_params(&item.params)?;
+        let param_freshes = match self.enter_params(&item.params) {
+            Ok(f) => f,
+            Err(msg) => {
+                self.error_at(span, msg);
+                return;
+            }
+        };
         let has_params = !param_freshes.is_empty();
 
         match &item.body {
@@ -145,14 +164,21 @@ impl<'a> Checker<'a> {
                 if let Some(body_id) = body_val {
                     let body_s = self.program.val(*body_id);
                     if let Val::Path(path) = &body_s.0 {
-                        if let Some(result) = self.try_module_alias(&qname, path)? {
-                            self.exit_params(&param_freshes);
-                            // Register module params if this alias is itself parametric
-                            if has_params {
-                                self.module_params
-                                    .insert(qname.clone(), param_freshes.clone());
+                        match self.try_module_alias(&qname, path) {
+                            Ok(Some(())) => {
+                                self.exit_params(&param_freshes);
+                                if has_params {
+                                    self.module_params
+                                        .insert(qname.clone(), param_freshes.clone());
+                                }
+                                return;
                             }
-                            return Ok(result);
+                            Ok(None) => {}
+                            Err(msg) => {
+                                self.error_at(span, msg);
+                                self.exit_params(&param_freshes);
+                                return;
+                            }
                         }
                     }
                 }
@@ -160,127 +186,81 @@ impl<'a> Checker<'a> {
                 match (&item.ty, body_val) {
                     (Some(ty_id), None) => {
                         let ty_s = self.program.val(*ty_id);
-                        let (_, ty) = self.eval_ty(&ty_s.0)?;
-                        let prim = self.make_prim();
-                        let cell = match &ty {
-                            Ty::Zero => FreeCell::zero(prim),
-                            Ty::Succ(s, t) => FreeCell::prim(prim, s.clone(), t.clone())?,
-                        };
-                        let idx = self.add_entry(qname.clone(), color, cell);
-                        if has_params {
-                            self.entry_params.insert(idx, param_freshes.clone());
+                        match self.eval_ty(&ty_s.0) {
+                            Ok((_, ty)) => {
+                                let prim = self.make_prim();
+                                let cell = match &ty {
+                                    Ty::Zero => Ok(FreeCell::zero(prim)),
+                                    Ty::Succ(s, t) => {
+                                        FreeCell::prim(prim, s.clone(), t.clone())
+                                    }
+                                };
+                                match cell {
+                                    Ok(cell) => {
+                                        let idx = self.add_entry(qname.clone(), color, cell);
+                                        if has_params {
+                                            self.entry_params
+                                                .insert(idx, param_freshes.clone());
+                                        }
+                                    }
+                                    Err(msg) => self.error_at(span, msg),
+                                }
+                            }
+                            Err(msg) => self.error_at(span, msg),
                         }
                     }
                     (dim_ty, Some(body_id)) => {
                         let body_s = self.program.val(*body_id);
-                        let body = self.eval_val(&body_s.0)?;
-                        let dim = body.pure.dim().in_space;
-                        let body_ty = if dim == 0 {
-                            Ty::Zero
-                        } else {
-                            Ty::Succ(
-                                FreeCell::from_pure(&body.pure.s()),
-                                FreeCell::from_pure(&body.pure.t()),
-                            )
-                        };
+                        match self.eval_val(&body_s.0) {
+                            Ok(body) => {
+                                let dim = body.pure.dim().in_space;
 
-                        if let Some(ty_id) = dim_ty {
-                            let ty_s = self.program.val(*ty_id);
-                            let (declared_dim, declared_ty) = self.eval_ty(&ty_s.0)?;
-                            if declared_dim != dim {
-                                return Err(
-                                    "declared type dimension does not match body".to_string()
-                                );
+                                if let Some(ty_id) = dim_ty {
+                                    let ty_s = self.program.val(*ty_id);
+                                    match self.eval_ty(&ty_s.0) {
+                                        Ok((declared_dim, declared_ty)) => {
+                                            if declared_dim != dim {
+                                                self.error_at(
+                                                    span,
+                                                    "declared type dimension does not match body",
+                                                );
+                                            } else {
+                                                let body_ty = if dim == 0 {
+                                                    Ty::Zero
+                                                } else {
+                                                    Ty::Succ(
+                                                        FreeCell::from_pure(&body.pure.s()),
+                                                        FreeCell::from_pure(&body.pure.t()),
+                                                    )
+                                                };
+                                                if let Err(msg) =
+                                                    match_ty(&declared_ty, &body_ty)
+                                                {
+                                                    self.error_at(span, msg);
+                                                }
+                                            }
+                                        }
+                                        Err(msg) => self.error_at(span, msg),
+                                    }
+                                }
+
+                                let idx = self.add_entry(qname.clone(), color, body);
+                                if has_params {
+                                    self.entry_params.insert(idx, param_freshes.clone());
+                                }
                             }
-                            match_ty(&declared_ty, &body_ty)?;
-                        }
-
-                        let idx = self.add_entry(qname.clone(), color, body);
-                        if has_params {
-                            self.entry_params.insert(idx, param_freshes.clone());
+                            Err(msg) => self.error_at(span, msg),
                         }
                     }
                     (None, None) => {}
                 }
 
                 if !members.entries.is_empty() {
-                    self.check_members(&qname, members, has_params)?;
+                    self.check_members(&qname, members, has_params);
                 }
             }
             ItemBody::Functor { mappings } => {
-                let ty_id = item
-                    .ty
-                    .ok_or_else(|| "functor must have a type".to_string())?;
-                let ty_s = self.program.val(ty_id);
-                let (src_cell, tgt_cell) = match &ty_s.0 {
-                    Val::Arrow(ArrowKind::Functor, l_id, r_id) => {
-                        let l = self.program.val(*l_id);
-                        let r = self.program.val(*r_id);
-                        (self.eval_val(&l.0)?, self.eval_val(&r.0)?)
-                    }
-                    _ => return Err("functor type must be `A ~> B`".to_string()),
-                };
-
-                let src_prim_id = extract_prim_id(&src_cell.pure)
-                    .ok_or_else(|| "functor source must be a primitive cell".to_string())?;
-
-                let mut functor_map: HashMap<PrimId, PureCell> = HashMap::new();
-                functor_map.insert(src_prim_id, tgt_cell.pure.clone());
-
-                for mapping in mappings {
-                    let app_s = self.program.val(mapping.applicand);
-                    let app_cell = self.eval_val(&app_s.0)?;
-                    let app_prim_id = extract_prim_id(&app_cell.pure).ok_or_else(|| {
-                        "functor mapping applicand must be a primitive cell".to_string()
-                    })?;
-
-                    let val_s = self.program.val(mapping.val);
-                    let val_cell = self.eval_val(&val_s.0)?;
-
-                    let dim = app_cell.pure.dim().in_space;
-                    if dim == 0 {
-                        if app_prim_id == src_prim_id {
-                            // Redundant but allowed: F(src) = tgt is the base case
-                            if !val_cell.pure.is_convertible(&tgt_cell.pure) {
-                                return Err(
-                                    "functor 0-cell mapping contradicts base case".to_string(),
-                                );
-                            }
-                            continue;
-                        }
-                        return Err(
-                            "functor mapping for this 0-cell is already implicitly defined"
-                                .to_string(),
-                        );
-                    }
-                    if dim != val_cell.pure.dim().in_space {
-                        return Err("functor mapping dimension mismatch".to_string());
-                    }
-
-                    {
-                        let expected_s =
-                            apply_functor(&app_cell.pure.s(), &functor_map)?;
-                        let expected_t =
-                            apply_functor(&app_cell.pure.t(), &functor_map)?;
-                        let actual_s = val_cell.pure.s();
-                        let actual_t = val_cell.pure.t();
-
-                        if !expected_s.is_convertible(&actual_s) {
-                            return Err(format!(
-                                "functor mapping source mismatch:\n  expected {}\n  got {}",
-                                expected_s, actual_s
-                            ));
-                        }
-                        if !expected_t.is_convertible(&actual_t) {
-                            return Err(format!(
-                                "functor mapping target mismatch:\n  expected {}\n  got {}",
-                                expected_t, actual_t
-                            ));
-                        }
-                    }
-
-                    functor_map.insert(app_prim_id, val_cell.pure.clone());
-                }
+                self.check_functor(item, &qname, mappings);
             }
         }
 
@@ -291,22 +271,147 @@ impl<'a> Checker<'a> {
             self.module_params
                 .insert(qname.clone(), param_freshes);
         }
-
-        Ok(())
     }
 
-    fn check_members(
-        &mut self,
-        prefix: &str,
-        module: &Module,
-        parent_has_params: bool,
-    ) -> Result<()> {
+    fn check_functor(&mut self, item: &Item, _qname: &str, mappings: &[FunctorMapping]) {
+        let span = &item.span;
+
+        let ty_id = match item.ty {
+            Some(id) => id,
+            None => {
+                self.error_at(span, "functor must have a type");
+                return;
+            }
+        };
+        let ty_s = self.program.val(ty_id);
+        let (src_cell, tgt_cell) = match &ty_s.0 {
+            Val::Arrow(ArrowKind::Functor, l_id, r_id) => {
+                let l = self.program.val(*l_id);
+                let r = self.program.val(*r_id);
+                match (self.eval_val(&l.0), self.eval_val(&r.0)) {
+                    (Ok(s), Ok(t)) => (s, t),
+                    (Err(msg), _) | (_, Err(msg)) => {
+                        self.error_at(span, msg);
+                        return;
+                    }
+                }
+            }
+            _ => {
+                self.error_at(span, "functor type must be `A ~> B`");
+                return;
+            }
+        };
+
+        let src_prim_id = match extract_prim_id(&src_cell.pure) {
+            Some(id) => id,
+            None => {
+                self.error_at(span, "functor source must be a primitive cell");
+                return;
+            }
+        };
+
+        let mut functor_map: HashMap<PrimId, PureCell> = HashMap::new();
+        functor_map.insert(src_prim_id, tgt_cell.pure.clone());
+
+        for mapping in mappings {
+            let app_span = &self.program.val(mapping.applicand).1;
+            let val_span = &self.program.val(mapping.val).1;
+            // Clone spans to avoid borrow issues
+            let app_span = app_span.clone();
+            let val_span = val_span.clone();
+
+            let app_val = &self.program.val(mapping.applicand).0;
+            let app_cell = match self.eval_val(app_val) {
+                Ok(c) => c,
+                Err(msg) => {
+                    self.error_at(&app_span, msg);
+                    continue;
+                }
+            };
+            let app_prim_id = match extract_prim_id(&app_cell.pure) {
+                Some(id) => id,
+                None => {
+                    self.error_at(
+                        &app_span,
+                        "functor mapping applicand must be a primitive cell",
+                    );
+                    continue;
+                }
+            };
+
+            let val_val = &self.program.val(mapping.val).0;
+            let val_cell = match self.eval_val(val_val) {
+                Ok(c) => c,
+                Err(msg) => {
+                    self.error_at(&val_span, msg);
+                    continue;
+                }
+            };
+
+            let dim = app_cell.pure.dim().in_space;
+            if dim == 0 {
+                if app_prim_id == src_prim_id {
+                    if !val_cell.pure.is_convertible(&tgt_cell.pure) {
+                        self.error_at(&val_span, "functor 0-cell mapping contradicts base case");
+                    }
+                    continue;
+                }
+                self.error_at(
+                    &app_span,
+                    "functor mapping for this 0-cell is already implicitly defined",
+                );
+                continue;
+            }
+            if dim != val_cell.pure.dim().in_space {
+                self.error_at(&val_span, "functor mapping dimension mismatch");
+                continue;
+            }
+
+            let expected_s = apply_functor(&app_cell.pure.s(), &functor_map);
+            let expected_t = apply_functor(&app_cell.pure.t(), &functor_map);
+
+            match (expected_s, expected_t) {
+                (Ok(es), Ok(et)) => {
+                    let actual_s = val_cell.pure.s();
+                    let actual_t = val_cell.pure.t();
+                    if !es.is_convertible(&actual_s) {
+                        self.error_at(
+                            &val_span,
+                            format!(
+                                "functor mapping source mismatch:\n  expected {}\n  got {}",
+                                es, actual_s
+                            ),
+                        );
+                        continue;
+                    }
+                    if !et.is_convertible(&actual_t) {
+                        self.error_at(
+                            &val_span,
+                            format!(
+                                "functor mapping target mismatch:\n  expected {}\n  got {}",
+                                et, actual_t
+                            ),
+                        );
+                        continue;
+                    }
+                }
+                (Err(msg), _) | (_, Err(msg)) => {
+                    self.error_at(&app_span, msg);
+                    continue;
+                }
+            }
+
+            functor_map.insert(app_prim_id, val_cell.pure.clone());
+        }
+    }
+
+    fn check_members(&mut self, prefix: &str, module: &Module, parent_has_params: bool) {
         self.prefixes.push(prefix.to_string());
         let mut members = Vec::new();
         for (member_name, item_id) in &module.entries {
             let full_name = format!("{}.{}", prefix, member_name);
             let item = self.program.item(*item_id);
-            self.check_item(member_name, item)?;
+            self.check_item(member_name, item);
             let entry_idx = self.lookup.get(&full_name).copied();
             let is_sub_module = self.module_members.contains_key(&full_name);
             if entry_idx.is_some() || is_sub_module {
@@ -318,7 +423,6 @@ impl<'a> Checker<'a> {
         if parent_has_params || !members.is_empty() {
             self.module_members.insert(prefix.to_string(), members);
         }
-        Ok(())
     }
 
     // --- Params ---
@@ -334,10 +438,8 @@ impl<'a> Checker<'a> {
                 Ty::Zero => FreeCell::zero(prim),
                 Ty::Succ(s, t) => FreeCell::prim(prim, s.clone(), t.clone())?,
             };
-            // Register fresh prim in scope
             let param_name = self.qualified_name(&param.name);
             self.add_entry(param_name, None, cell.clone());
-            // Add to accumulated args
             self.accumulated_args.push(PrimArg::Cell(cell.pure.clone()));
             freshes.push((param.name.clone(), fresh_id));
         }
@@ -380,14 +482,12 @@ impl<'a> Checker<'a> {
                 current = format!("{}.{}", current, seg.name);
             }
 
-            // Resolve module name with prefixes
             let resolved_name = self.resolve_module_name(&current);
             let resolved_name = match resolved_name {
                 Some(n) => n,
                 None => current.clone(),
             };
 
-            // Check for module params
             if let Some(params) = self.module_params.get(&resolved_name).cloned() {
                 for (i, (_, fresh_id)) in params.iter().enumerate() {
                     if let Some(pv) = seg.params.get(i) {
@@ -409,7 +509,6 @@ impl<'a> Checker<'a> {
     }
 
     fn resolve_module_name(&self, name: &str) -> Option<String> {
-        // Try with prefixes
         for prefix in self.prefixes.iter().rev() {
             let qualified = format!("{}.{}", prefix, name);
             if self.module_members.contains_key(&qualified)
@@ -450,7 +549,6 @@ impl<'a> Checker<'a> {
                 let new_cell = FreeCell::from_pure(&new_pure);
                 let idx = self.add_entry(dest_member.clone(), Some(src_entry.color), new_cell);
 
-                // Copy entry_params for parametric members
                 if let Some(params) = self.entry_params.get(src_idx).cloned() {
                     self.entry_params.insert(idx, params);
                 }
@@ -462,7 +560,6 @@ impl<'a> Checker<'a> {
 
             new_members.push((member_name.clone(), new_idx));
 
-            // Recursively instantiate nested module members
             let src_member_name = format!("{}.{}", source, member_name);
             if self.module_members.contains_key(&src_member_name) {
                 self.instantiate_module(&src_member_name, &dest_member, mapping)?;
@@ -541,7 +638,6 @@ impl<'a> Checker<'a> {
 
         let base_cell = self.entries[index].cell.clone();
 
-        // Check if the path has params that need instantiation
         let mapping = self.build_path_mapping(path)?;
         if mapping.is_empty() {
             Ok(base_cell)
@@ -567,12 +663,10 @@ impl<'a> Checker<'a> {
                 continue;
             }
 
-            // Resolve the name to find params
             let resolved = self
                 .resolve_name(&current)
                 .ok_or_else(|| format!("unknown: {}", current))?;
 
-            // Check entry_params for item-level params
             if let Some(params) = self.entry_params.get(&resolved) {
                 for (i, (_, fresh_id)) in params.iter().enumerate() {
                     if let Some(pv) = seg.params.get(i) {
@@ -583,7 +677,6 @@ impl<'a> Checker<'a> {
                 }
             }
 
-            // Check module_params for module-level params
             if let Some(resolved_name) = self.resolve_module_name(&current) {
                 if let Some(params) = self.module_params.get(&resolved_name) {
                     for (i, (_, fresh_id)) in params.iter().enumerate() {
@@ -801,13 +894,13 @@ fn dedent(code: &str) -> String {
 
 // --- Public API ---
 
-pub fn check(program: &Program) -> Result<Env> {
-    let mut checker = Checker::new(program);
-    checker.check_module(&program.root)?;
-    Ok(checker.into_env())
+pub fn check(program: &Program, tokens: &[Token]) -> (Env, Vec<Error>) {
+    let mut checker = Checker::new(program, tokens);
+    checker.check_module(&program.root);
+    checker.into_result()
 }
 
-pub fn check_source(code: &str) -> Result<Env> {
+pub fn check_source(code: &str) -> std::result::Result<Env, String> {
     let code = dedent(code.trim_matches('\n'));
     let (tokens, _, tok_errors) = crate::tokenize::tokenize(&code);
     if !tok_errors.is_empty() {
@@ -821,9 +914,20 @@ pub fn check_source(code: &str) -> Result<Env> {
     if !conv_errors.is_empty() {
         return Err(format!("convert errors: {:?}", conv_errors));
     }
-    let (resolved, check_errors) = crate::resolve::resolve(sem_prog, &tokens);
-    if !check_errors.is_empty() {
-        return Err(format!("check errors: {:?}", check_errors));
+    let (resolved, resolve_errors) = crate::resolve::resolve(sem_prog, &tokens);
+    if !resolve_errors.is_empty() {
+        return Err(format!("check errors: {:?}", resolve_errors));
     }
-    check(&resolved)
+    let (env, check_errors) = check(&resolved, &tokens);
+    if !check_errors.is_empty() {
+        return Err(format!(
+            "{}",
+            check_errors
+                .iter()
+                .map(|(_, msg)| msg.as_str())
+                .collect::<Vec<_>>()
+                .join("\n")
+        ));
+    }
+    Ok(env)
 }

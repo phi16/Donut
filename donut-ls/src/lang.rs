@@ -308,15 +308,9 @@ pub fn tokenize_example(code: &str) -> (Vec<TokenData>, Vec<Diagnostic>) {
     }
 
     // check（型検査）を実行
-    if let Err(msg) = donut_lang::check::check(&resolved) {
-        diags.push(Diagnostic {
-            begin_line: 0,
-            begin_column: 0,
-            end_line: 0,
-            end_column: 0,
-            message: msg,
-            source: "[check]",
-        });
+    let (_env, check_errors) = donut_lang::check::check(&resolved, &tokens);
+    for (pos, msg) in &check_errors {
+        diags.push(to_diag(pos, msg, "[check]"));
     }
 
     // コメントトークンを構築

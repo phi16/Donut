@@ -389,7 +389,8 @@ impl<'a> Checker<'a> {
     fn enter_inner_scope(&mut self, deco_param_defs: &[(String, ValId)]) {
         self.push_scope();
         for (name, val_id) in deco_param_defs {
-            let item = Item::param(*val_id);
+            let span = self.val(*val_id).1.clone();
+            let item = Item::param(*val_id, span);
             let id = self.alloc_item(item);
             self.deco_params.insert(id);
             self.define(name.clone(), id);
@@ -603,7 +604,8 @@ impl<'a> Checker<'a> {
 
         // Define params (before ty so params are in scope for type expressions)
         for param in &params {
-            let item = Item::param(param.ty);
+            let span = self.val(param.ty).1.clone();
+            let item = Item::param(param.ty, span);
             let id = self.alloc_item(item);
             self.define(param.name.clone(), id);
         }
@@ -612,7 +614,7 @@ impl<'a> Checker<'a> {
         let is_add = matches!(&op.0, semtree::AssignOp::Add);
         for ni in &name_infos {
             if !is_add && ni.seg_names.len() == 1 {
-                let item = Item::new(kind);
+                let item = Item::new(kind, ni.seg_names[0].1.clone());
                 let id = self.alloc_item(item);
                 self.define(ni.seg_names[0].0.clone(), id);
             }
@@ -717,7 +719,13 @@ impl<'a> Checker<'a> {
                     members: result,
                 }
             };
+            let span = name_infos
+                .first()
+                .and_then(|ni| ni.seg_names.last())
+                .map(|(_, s)| s.clone())
+                .unwrap_or(TokenSpan { start: 0, end: 0 });
             let item = Item {
+                span,
                 kind,
                 ty: ty_resolved,
                 params,
