@@ -200,6 +200,13 @@ impl PureCell {
         }
     }
 
+    pub fn extract_prim(&self) -> Option<&Prim> {
+        match self {
+            PureCell::Prim(prim, _, dim) if dim.effective == dim.in_space => Some(prim),
+            _ => None,
+        }
+    }
+
     pub fn subst(&self, mapping: &HashMap<PrimId, PrimArg>) -> PureCell {
         match self {
             PureCell::Prim(prim, shape, dim) => {

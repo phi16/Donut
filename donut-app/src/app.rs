@@ -90,16 +90,17 @@ impl App {
         }
 
         let mut table = PrimTable::new();
-        for (i, e) in env.entries.iter().enumerate() {
+        for e in env.entries.iter() {
             if let Some(cell) = e.body.as_cell() {
-                let prim = Prim::new(i as PrimId);
-                table.insert(
-                    prim,
-                    &e.name,
-                    cell.pure.dim().in_space,
-                    e.color,
-                    e.param_counts.clone(),
-                );
+                if let Some(prim) = cell.pure.extract_prim() {
+                    table.insert(
+                        prim.clone(),
+                        &e.name,
+                        cell.pure.dim().in_space,
+                        e.color,
+                        e.param_counts.clone(),
+                    );
+                }
             }
         }
 
