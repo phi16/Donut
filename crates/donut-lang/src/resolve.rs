@@ -211,6 +211,10 @@ impl<'a> Checker<'a> {
         &mut self.items[id.0]
     }
 
+    fn val(&self, id: ValId) -> &S<Val> {
+        &self.vals[id.0]
+    }
+
     fn error_at(&mut self, span: &TokenSpan, msg: impl Into<String>) {
         if let Some(token) = self.tokens.get(span.start) {
             self.errors.push((token.pos.clone(), msg.into()));
@@ -272,48 +276,33 @@ impl<'a> Checker<'a> {
     // --- Scope resolution ---
 
     fn resolve_segments(&mut self, segments: &[(&str, &TokenSpan)]) {
-        let mut current: Option<ItemId> = None;
-        for (i, &(name, span)) in segments.iter().enumerate() {
-            if i == 0 {
-                match self.lookup(name) {
-                    Some(id) => current = Some(id),
-                    None => {
-                        if name != "*" && !crate::convert::is_number_str(name) {
-                            self.error_at(span, format!("undefined name `{}`", name));
-                        }
-                        return;
-                    }
-                }
-            } else {
-                let next = current
-                    .and_then(|id| self.item(id).members().and_then(|m| m.get(name)));
-                if next.is_none() {
+        let Some((&(first_name, first_span), rest)) = segments.split_first() else {
+            return;
+        };
+        let Some(mut current) = self.lookup(first_name) else {
+            if first_name != "*" && !crate::convert::is_number_str(first_name) {
+                self.error_at(first_span, format!("undefined name `{}`", first_name));
+            }
+            return;
+        };
+        for &(name, span) in rest {
+            match self.item(current).members().and_then(|m| m.get(name)) {
+                Some(id) => current = id,
+                None => {
                     self.error_at(span, format!("undefined member `{}`", name));
                     return;
                 }
-                current = next;
             }
         }
     }
 
-    fn resolve_val_as_members(&self, val_id: ValId) -> Option<Module> {
-        let val_s = &self.vals[val_id.0];
-        let path = match &val_s.0 {
-            Val::Path(path) => path,
-            _ => return None,
-        };
-        let mut current: Option<ItemId> = None;
-        for (i, seg_s) in path.segments.iter().enumerate() {
-            let name = &seg_s.0.name;
-            if i == 0 {
-                current = self.lookup(name);
-            } else {
-                current =
-                    current.and_then(|id| self.item(id).members().and_then(|m| m.get(name)));
-            }
+    fn lookup_path(&self, names: &[impl AsRef<str>]) -> Option<ItemId> {
+        let (first, rest) = names.split_first()?;
+        let mut current = self.lookup(first.as_ref())?;
+        for name in rest {
+            current = self.item(current).members()?.get(name.as_ref())?;
         }
-        let id = current?;
-        Some(self.item(id).members()?.clone())
+        Some(current)
     }
 
     // --- Module / Decl resolution (owned) ---
@@ -458,24 +447,7 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn register_add(&mut self, all_seg_names: &[&[(String, TokenSpan)]], item_id: ItemId) {
-        let (val_opt, members_opt) = {
-            let item = &self.items[item_id.0];
-            match &item.body {
-                ItemBody::Value { val, members } => (*val, Some(members.clone())),
-                ItemBody::Functor { .. } => (None, None),
-            }
-        };
-
-        let members_to_merge = if let Some(val_id) = val_opt {
-            self.resolve_val_as_members(val_id)
-                .unwrap_or_else(Module::new)
-        } else if let Some(members) = members_opt {
-            members
-        } else {
-            Module::new()
-        };
-
+    fn register_add(&mut self, all_seg_names: &[&[(String, TokenSpan)]], members_to_merge: Module) {
         for seg_names in all_seg_names {
             self.merge_into_path(seg_names, members_to_merge.clone());
         }
@@ -666,9 +638,37 @@ impl<'a> Checker<'a> {
         // --- Registration ---
         if has_functor_app {
             self.register_functor_app(name_infos, body_val_resolved);
+        } else if is_add {
+            let all_seg_names: Vec<&[(String, TokenSpan)]> =
+                name_infos.iter().map(|ni| ni.seg_names.as_slice()).collect();
+            let members_to_merge = match body_val_resolved {
+                Some(val_id) => {
+                    let val_s = self.val(val_id);
+                    let span = val_s.1.clone();
+                    match &val_s.0 {
+                        Val::Path(path) => {
+                            let path_names: Vec<String> = path
+                                .segments
+                                .iter()
+                                .map(|s| s.0.name.clone())
+                                .collect();
+                            self.lookup_path(&path_names)
+                                .and_then(|id| self.item(id).members())
+                                .cloned()
+                                .unwrap_or_else(Module::new)
+                        }
+                        _ => {
+                            self.error_at(&span, "`+=` requires a path or module body");
+                            Module::new()
+                        }
+                    }
+                }
+                None => result,
+            };
+            self.register_add(&all_seg_names, members_to_merge);
         } else {
             let is_functor = ty_resolved
-                .map_or(false, |id| is_functor_type(&self.vals[id.0].0));
+                .map_or(false, |id| is_functor_type(&self.val(id).0));
             let body = if is_functor {
                 ItemBody::Functor {
                     mappings: Vec::new(),
@@ -686,16 +686,9 @@ impl<'a> Checker<'a> {
                 body,
                 decos: deco_vals,
             };
-
             let item_id = self.alloc_item(item);
-            if is_add {
-                let all_seg_names: Vec<&[(String, TokenSpan)]> =
-                    name_infos.iter().map(|ni| ni.seg_names.as_slice()).collect();
-                self.register_add(&all_seg_names, item_id);
-            } else {
-                for ni in &name_infos {
-                    self.register_path(&ni.seg_names, item_id);
-                }
+            for ni in &name_infos {
+                self.register_path(&ni.seg_names, item_id);
             }
         }
     }
@@ -713,11 +706,11 @@ impl<'a> Checker<'a> {
                 match lookup_result {
                     Some(id) => {
                         let is_functor =
-                            matches!(&self.items[id.0].body, ItemBody::Functor { .. });
+                            matches!(&self.item(id).body, ItemBody::Functor { .. });
                         if is_functor {
                             if let Some(v) = body_val_resolved {
                                 if let ItemBody::Functor { mappings } =
-                                    &mut self.items[id.0].body
+                                    &mut self.item_mut(id).body
                                 {
                                     mappings.push(FunctorMapping {
                                         applicand: app_resolved,

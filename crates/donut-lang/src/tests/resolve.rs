@@ -298,6 +298,84 @@ fn add_from_ref() {
     check_ok("m = {\n    a = \"1\"\n}\nx = {\n    b = \"2\"\n}\nx += m\ny = x.a");
 }
 
+#[test]
+fn add_literal_error() {
+    let errs = check_errs("x = \"a\"\nx += \"b\"");
+    assert!(
+        errs.iter().any(|e| e.contains("`+=` requires")),
+        "{errs:?}"
+    );
+}
+
+#[test]
+fn add_comp_error() {
+    let errs = check_errs("a = \"x\"\nb = \"y\"\nx = \"z\"\nx += a ; b");
+    assert!(
+        errs.iter().any(|e| e.contains("`+=` requires")),
+        "{errs:?}"
+    );
+}
+
+#[test]
+fn add_arrow_error() {
+    let errs = check_errs("a = \"x\"\nb = \"y\"\nx = \"z\"\nx += a → b");
+    assert!(
+        errs.iter().any(|e| e.contains("`+=` requires")),
+        "{errs:?}"
+    );
+}
+
+#[test]
+fn add_no_members() {
+    // m has no members — += is a no-op
+    check_ok("m = \"value\"\nx = \"z\"\nx += m");
+}
+
+#[test]
+fn add_dotted_path_ref() {
+    check_ok(
+        r#"
+a = {
+    b = {
+        c = "1"
+    }
+}
+x = "z"
+x += a.b
+y = x.c
+"#,
+    );
+}
+
+#[test]
+fn add_multiple() {
+    check_ok(
+        r#"
+x = {
+    a = "1"
+}
+x += {
+    b = "2"
+}
+x += {
+    c = "3"
+}
+r1 = x.a
+r2 = x.b
+r3 = x.c
+"#,
+    );
+}
+
+#[test]
+fn add_number_error() {
+    let errs = check_errs("x = \"a\"\nx += 42");
+    assert!(
+        errs.iter().any(|e| e.contains("`+=` requires")),
+        "{errs:?}"
+    );
+}
+
 // --- Value and members coexistence ---
 
 #[test]
