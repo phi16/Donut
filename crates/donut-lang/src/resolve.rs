@@ -850,6 +850,7 @@ impl<'a> Checker<'a> {
 fn builtin_source(name: &str) -> Option<&'static str> {
     match name {
         "base" => Some(include_str!("builtins/base.donut")),
+        "ui" => Some(include_str!("builtins/ui.donut")),
         "sys" => Some(include_str!("builtins/sys.donut")),
         _ => None,
     }

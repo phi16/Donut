@@ -79,11 +79,13 @@ fn test_load_pentagon() {
 #[test]
 fn test_load_colors() {
     let input = r#"
-        [gray[80]]
+        import "base"
+        import "ui"
+        [style[gray[80]]]
         u: *
-        [hsv[0.6, 1, 1]]
+        [style[hsv[0.6, 1, 1]]]
         x: u → u
-        [rgb[255, 0, 128]]
+        [style[rgb[255, 0, 128]]]
         m: x x → x
     "#;
     let table = load(input);

@@ -53,6 +53,8 @@ pub struct Env {
 enum ParamKind {
     Cell,
     Nat,
+    Rat,
+    Meta,
 }
 
 type ParamInfo = (String, PrimId, ParamKind);
@@ -79,8 +81,8 @@ struct Checker<'a> {
     accumulated_args: Vec<PrimArg>,
     param_count_stack: Vec<usize>,
 
-    // Special type tracking
-    nat_prim_id: Option<PrimId>,
+    // Meta type tracking (short_name → PrimId)
+    meta_prim_ids: HashMap<String, PrimId>,
 
     // Functor support
     functor_maps: HashMap<String, HashMap<PrimId, PureCell>>,
@@ -101,7 +103,7 @@ impl<'a> Checker<'a> {
             entry_params: HashMap::new(),
             accumulated_args: Vec::new(),
             param_count_stack: Vec::new(),
-            nat_prim_id: None,
+            meta_prim_ids: HashMap::new(),
             functor_maps: HashMap::new(),
         }
     }
@@ -144,22 +146,10 @@ impl<'a> Checker<'a> {
     ) -> usize {
         let color = color.unwrap_or_else(|| auto_color(self.entries.len()));
         let idx = self.entries.len();
-        // Track special parameter type PrimIds
-        match &body {
-            EntryBody::Cell(cell) => {
-                if let Some(prim_id) = cell.pure.extract_prim_id() {
-                    if cell.pure.dim().in_space == 0 {
-                        if name.ends_with(".nat") || name == "nat" {
-                            self.nat_prim_id = Some(prim_id);
-                        }
-                    }
-                }
-            }
-            EntryBody::Meta(prim) => {
-                if name.ends_with(".nat") || name == "nat" {
-                    self.nat_prim_id = Some(prim.id);
-                }
-            }
+        // Track meta prim ids by short name
+        if let EntryBody::Meta(prim) = &body {
+            let short_name = name.rsplit('.').next().unwrap_or(&name);
+            self.meta_prim_ids.insert(short_name.to_string(), prim.id);
         }
         self.lookup.insert(name.clone(), idx);
         self.entries.push(Entry {
@@ -211,7 +201,7 @@ impl<'a> Checker<'a> {
             return;
         }
 
-        let color = extract_color(self.program, &item.decos);
+        let color = self.extract_color(&item.decos);
         let qname = self.qualified_name(name);
         let span = &item.span;
 
@@ -542,8 +532,8 @@ impl<'a> Checker<'a> {
                     self.add_entry(param_name, None, EntryBody::Cell(cell.clone()), vec![]);
                     self.accumulated_args.push(PrimArg::Cell(cell.pure.clone()));
                 }
-                ParamKind::Nat => {
-                    // Nat params don't create cell entries; use App placeholder for substitution
+                ParamKind::Nat | ParamKind::Rat | ParamKind::Meta => {
+                    // Non-cell params don't create cell entries; use App placeholder for substitution
                     self.accumulated_args.push(PrimArg::App(fresh_id, vec![]));
                 }
             }
@@ -558,28 +548,131 @@ impl<'a> Checker<'a> {
         }
     }
 
+    fn meta_id(&self, name: &str) -> Option<PrimId> {
+        self.meta_prim_ids.get(name).copied()
+    }
+
     fn detect_param_kind(&self, val: &Val) -> ParamKind {
         if let Val::Path(path) = val {
             if let Some(name) = path_name(path) {
                 if let Some(index) = self.resolve_name(&name) {
-                    match &self.entries[index].body {
-                        EntryBody::Meta(prim) => {
-                            if Some(prim.id) == self.nat_prim_id {
-                                return ParamKind::Nat;
-                            }
+                    if let EntryBody::Meta(prim) = &self.entries[index].body {
+                        if self.meta_id("nat") == Some(prim.id) {
+                            return ParamKind::Nat;
                         }
-                        EntryBody::Cell(cell) => {
-                            if let Some(prim_id) = cell.pure.extract_prim_id() {
-                                if Some(prim_id) == self.nat_prim_id {
-                                    return ParamKind::Nat;
-                                }
-                            }
+                        if self.meta_id("rat") == Some(prim.id) {
+                            return ParamKind::Rat;
                         }
+                        return ParamKind::Meta;
                     }
                 }
             }
         }
         ParamKind::Cell
+    }
+
+    // --- Meta evaluation ---
+
+    fn eval_meta_val(&self, val: &Val) -> Result<PrimArg> {
+        match val {
+            Val::Path(path) => {
+                let name = path_name(path).ok_or_else(|| "invalid meta path".to_string())?;
+                let index = self
+                    .resolve_name(&name)
+                    .ok_or_else(|| format!("unknown: {}", name))?;
+                match &self.entries[index].body {
+                    EntryBody::Meta(base_prim) => {
+                        let mapping = self.build_meta_mapping(index, path)?;
+                        let new_args = base_prim
+                            .args
+                            .iter()
+                            .map(|a| a.subst(&mapping))
+                            .collect();
+                        Ok(PrimArg::App(base_prim.id, new_args))
+                    }
+                    EntryBody::Cell(_) => {
+                        Err(format!("{} is not a meta entry", name))
+                    }
+                }
+            }
+            Val::Lit(Lit::Number(s)) => {
+                let n: f64 = s.parse().map_err(|e: std::num::ParseFloatError| e.to_string())?;
+                Ok(PrimArg::Nat(n as u64))
+            }
+            _ => Err("unsupported in meta context".to_string()),
+        }
+    }
+
+    fn build_meta_mapping(
+        &self,
+        entry_idx: usize,
+        path: &Path,
+    ) -> Result<HashMap<PrimId, PrimArg>> {
+        let mut mapping = HashMap::new();
+        if let Some(params) = self.entry_params.get(&entry_idx) {
+            let seg_params = path
+                .segments
+                .last()
+                .map(|s| &s.0.params[..])
+                .unwrap_or(&[]);
+            for (i, (_, fresh_id, kind)) in params.iter().enumerate() {
+                if let Some(pv) = seg_params.get(i) {
+                    let arg = self.resolve_param_arg(pv, *kind)?;
+                    mapping.insert(*fresh_id, arg);
+                }
+            }
+        }
+        Ok(mapping)
+    }
+
+    fn extract_color(&self, decos: &[ValId]) -> Option<(u8, u8, u8)> {
+        for &deco_id in decos {
+            let deco = self.program.val(deco_id);
+            if let Ok(prim_arg) = self.eval_meta_val(&deco.0) {
+                if let Some(color) = self.interpret_color(&prim_arg) {
+                    return Some(color);
+                }
+            }
+        }
+        None
+    }
+
+    fn interpret_color(&self, arg: &PrimArg) -> Option<(u8, u8, u8)> {
+        let PrimArg::App(id, args) = arg else {
+            return None;
+        };
+        if self.meta_id("style") == Some(*id) {
+            return args.first().and_then(|a| self.interpret_color(a));
+        }
+        if self.meta_id("gray") == Some(*id) {
+            let g = match args.first()? {
+                PrimArg::Nat(n) => *n as u8,
+                _ => return None,
+            };
+            return Some((g, g, g));
+        }
+        if self.meta_id("rgb") == Some(*id) {
+            let r = match args.get(0)? {
+                PrimArg::Nat(n) => *n as u8,
+                _ => return None,
+            };
+            let g = match args.get(1)? {
+                PrimArg::Nat(n) => *n as u8,
+                _ => return None,
+            };
+            let b = match args.get(2)? {
+                PrimArg::Nat(n) => *n as u8,
+                _ => return None,
+            };
+            return Some((r, g, b));
+        }
+        if self.meta_id("hsv") == Some(*id) {
+            let h = args.get(0)?.as_rat()?;
+            let s = args.get(1).and_then(|a| a.as_rat()).unwrap_or(1.0);
+            let v = args.get(2).and_then(|a| a.as_rat()).unwrap_or(1.0);
+            return Some(hsv2rgb(h, s, v));
+        }
+        None
     }
 
     // --- Module alias / instantiation ---
@@ -838,6 +931,15 @@ impl<'a> Checker<'a> {
                     .ok_or_else(|| "expected a number literal for nat parameter".to_string())?;
                 Ok(PrimArg::Nat(n as u64))
             }
+            ParamKind::Rat => {
+                let r = extract_rational(self.program, pv)
+                    .ok_or_else(|| "expected a rational literal for rat parameter".to_string())?;
+                Ok(PrimArg::rat(r))
+            }
+            ParamKind::Meta => {
+                let val_s = self.program.val(pv.val);
+                self.eval_meta_val(&val_s.0)
+            }
         }
     }
 
@@ -956,46 +1058,6 @@ fn path_name(path: &Path) -> Option<String> {
         return None;
     }
     Some(parts.join("."))
-}
-
-fn extract_color(program: &Program, decos: &[ValId]) -> Option<(u8, u8, u8)> {
-    for &deco_id in decos {
-        let deco = program.val(deco_id);
-        let Val::Path(path) = &deco.0 else {
-            continue;
-        };
-        if path.segments.len() != 1 {
-            continue;
-        }
-        let seg = &path.segments[0].0;
-        let name = &seg.name;
-        let args = &seg.params;
-
-        match name.as_str() {
-            "gray" if args.len() == 1 => {
-                let g = extract_number(program, &args[0])? as u8;
-                return Some((g, g, g));
-            }
-            "rgb" if args.len() == 3 => {
-                let r = extract_number(program, &args[0])? as u8;
-                let g = extract_number(program, &args[1])? as u8;
-                let b = extract_number(program, &args[2])? as u8;
-                return Some((r, g, b));
-            }
-            "hsv" if !args.is_empty() => {
-                let h = extract_rational(program, &args[0])?;
-                let s = args
-                    .get(1)
-                    .map_or(Some(1.0), |a| extract_rational(program, a))?;
-                let v = args
-                    .get(2)
-                    .map_or(Some(1.0), |a| extract_rational(program, a))?;
-                return Some(hsv2rgb(h, s, v));
-            }
-            _ => {}
-        }
-    }
-    None
 }
 
 fn extract_number(program: &Program, param: &ParamVal) -> Option<f64> {

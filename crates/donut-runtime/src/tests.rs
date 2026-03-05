@@ -5,7 +5,7 @@ use donut_core::common::PrimId;
 use std::collections::HashMap;
 
 fn setup(user_code: &str) -> (Runtime, donut_lang::check::Env) {
-    let prelude = "import \"base\"\nenv = import \"sys\"\n";
+    let prelude = "import \"base\"\nimport \"ui\"\nenv = import \"sys\"\n";
     let code = format!("{}{}", prelude, user_code);
     let (env, errors) = donut_lang::load::load(&code);
     for (_, msg) in &errors {

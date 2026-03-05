@@ -1,0 +1,4 @@
+gray[v: nat]: color
+hsv[h s v: rat]: color
+rgb[r g b: nat]: color
+style[c: color]: decorator

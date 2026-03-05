@@ -41,45 +41,7 @@ impl App {
         entry_select: web_sys::HtmlSelectElement,
         eval_result_el: web_sys::HtmlElement,
     ) -> Self {
-        let input = "\
-[gray[80]]
-u: *
-[hsv[0.6, 1, 1]]
-x: u → u
-[hsv[0.1, 1.0, 1]]
-m: x x → x
-[hsv[0.2, 1.0, 1]]
-a: m x; m → x m; m
-[gray[200]]
-chl: (x m; m) x → x m x; m x
-[gray[200]]
-chr: x m x; x m → x (m x; m)
-aaa =
-    a x; m ;;
-    chl; m ;;
-    x m x; a ;;
-    chr; m ;;
-    x a; m
-[gray[200]]
-ch0: m x x; x m → m m
-[gray[200]]
-ch1: m m → x x m; m x
-
-[gray[200]]
-kl: (m x; m) x → m x x; m x
-[gray[200]]
-kr: x x m; x m → x (x m; m)
-oao =
-    kl; m ;;
-    m x x; a ;;
-    (ch0 ;; ch1); m ;;
-    x x m; a ;;
-    kr; m
-
-[gray[255]]
-pentagon: aaa → oao
-result = pentagon
-";
+        let input = include_str!("default.donut");
         let (env, table, runtime) = Self::load(input).unwrap();
         let env_entry_count = Self::env_entry_count();
         let selected = env.entries.len() - 1;
@@ -106,7 +68,7 @@ result = pentagon
         app
     }
 
-    const PRELUDE: &str = "import \"base\"\nenv = import \"sys\"\n";
+    const PRELUDE: &str = "import \"base\"\nimport \"ui\"\nenv = import \"sys\"\n";
 
     fn env_entry_count() -> usize {
         use std::sync::OnceLock;
