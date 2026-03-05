@@ -1,3 +1,4 @@
+pub mod check;
 pub mod convert;
 pub mod load;
 pub mod parse;

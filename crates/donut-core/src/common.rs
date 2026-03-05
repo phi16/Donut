@@ -12,13 +12,28 @@ pub type Vec2<T> = Vec<T>;
 pub type PrimId = u64;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PrimArg {
+    Cell(crate::pure_cell::PureCell),
+    Nat(u64),
+    App(PrimId, Vec<PrimArg>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Prim {
     pub id: PrimId,
+    pub args: Vec<PrimArg>,
 }
 
 impl Prim {
     pub fn new(id: PrimId) -> Self {
-        Prim { id }
+        Prim {
+            id,
+            args: Vec::new(),
+        }
+    }
+
+    pub fn with_args(id: PrimId, args: Vec<PrimArg>) -> Self {
+        Prim { id, args }
     }
 }
 

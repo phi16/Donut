@@ -583,9 +583,6 @@ impl<'a> Checker<'a> {
             });
         }
 
-        // --- Resolve ty (owned) ---
-        let ty_resolved = ty.map(|t| t.resolve(self));
-
         // --- += pre-check ---
         if matches!(&op.0, semtree::AssignOp::Add) {
             for ni in &name_infos {
@@ -604,7 +601,7 @@ impl<'a> Checker<'a> {
         // --- Inner scope ---
         self.enter_inner_scope(&deco_param_defs);
 
-        // Define params
+        // Define params (before ty so params are in scope for type expressions)
         for param in &params {
             let item = Item::param(param.ty);
             let id = self.alloc_item(item);
@@ -623,6 +620,9 @@ impl<'a> Checker<'a> {
 
         // Where clauses (after forward refs so declared names are visible)
         self.resolve_where_clauses(where_clauses);
+
+        // --- Resolve ty (after params/forward refs/where so all names are in scope) ---
+        let ty_resolved = ty.map(|t| t.resolve(self));
 
         // --- Functor constraints ---
         let has_functor_app = name_infos.iter().any(|ni| ni.applicand.is_some());
@@ -646,10 +646,28 @@ impl<'a> Checker<'a> {
 
         // --- Resolve body (owned) ---
         let body_val_resolved = body_val.map(|v| v.resolve(self));
-        let body_members = match body_mod {
+        let mut body_members = match body_mod {
             Some(m) => self.resolve_module(m),
             None => Module::new(),
         };
+
+        // If body is a path to a module, inherit its members
+        if body_members.entries.is_empty() {
+            if let Some(val_id) = body_val_resolved {
+                let val_s = self.val(val_id);
+                if let Val::Path(path) = &val_s.0 {
+                    let path_names: Vec<String> =
+                        path.segments.iter().map(|s| s.0.name.clone()).collect();
+                    if let Some(id) = self.lookup_path(&path_names) {
+                        if let Some(m) = self.item(id).members() {
+                            if !m.entries.is_empty() {
+                                body_members = m.clone();
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         // With clauses + pop scope
         let result = self.merge_with_clauses(body_members, with_clauses);

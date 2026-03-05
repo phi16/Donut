@@ -302,9 +302,21 @@ pub fn tokenize_example(code: &str) -> (Vec<TokenData>, Vec<Diagnostic>) {
     }
 
     // resolve（名前解決）を実行 — convert の出力は A なしの semtree::Program
-    let (_module, resolve_errors) = donut_lang::resolve::resolve(sem_program, &tokens);
+    let (resolved, resolve_errors) = donut_lang::resolve::resolve(sem_program, &tokens);
     for (pos, msg) in &resolve_errors {
         diags.push(to_diag(pos, msg, "[resolve]"));
+    }
+
+    // check（型検査）を実行
+    if let Err(msg) = donut_lang::check::check(&resolved) {
+        diags.push(Diagnostic {
+            begin_line: 0,
+            begin_column: 0,
+            end_line: 0,
+            end_column: 0,
+            message: msg,
+            source: "[check]",
+        });
     }
 
     // コメントトークンを構築
