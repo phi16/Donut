@@ -22,13 +22,14 @@ enum Ty {
 pub enum EntryBody {
     Cell(FreeCell),
     Meta(Prim),
+    Type(u8, Ty),
 }
 
 impl EntryBody {
     pub fn as_cell(&self) -> Option<&FreeCell> {
         match self {
             EntryBody::Cell(c) => Some(c),
-            EntryBody::Meta(_) => None,
+            _ => None,
         }
     }
 }
@@ -280,15 +281,15 @@ impl<'a> Checker<'a> {
                                 let prim = self.make_prim();
                                 match &ty {
                                     Ty::Zero => {
-                                        self.register_cell_entry(
-                                            qname.clone(), color, FreeCell::zero(prim), &param_freshes,
+                                        self.register_entry(
+                                            qname.clone(), color, EntryBody::Cell(FreeCell::zero(prim)), &param_freshes,
                                         );
                                     }
                                     Ty::Succ(s, t) => {
                                         match FreeCell::prim(prim, s.clone(), t.clone()) {
                                             Ok(cell) => {
-                                                self.register_cell_entry(
-                                                    qname.clone(), color, cell, &param_freshes,
+                                                self.register_entry(
+                                                    qname.clone(), color, EntryBody::Cell(cell), &param_freshes,
                                                 );
                                             }
                                             Err(msg) => self.error_at(span, msg),
@@ -306,24 +307,10 @@ impl<'a> Checker<'a> {
                             let ty_s = self.program.val(ty_id);
                             self.eval_ty(&ty_s.0).ok()
                         });
-                        let declared_meta = match &declared_ty {
-                            Some((_, Ty::Meta(mt))) => Some(mt.clone()),
-                            _ => None,
-                        };
-
-                        if declared_meta.is_some() {
-                            // Meta body
-                            self.check_meta_body(
-                                &qname, span, color, body_id, declared_meta,
-                                &item.params, &param_freshes,
-                            );
-                        } else {
-                            // Cell body (with meta fallback if untyped)
-                            self.check_cell_body(
-                                &qname, span, color, body_id, declared_ty,
-                                &item.params, &param_freshes,
-                            );
-                        }
+                        self.check_body(
+                            &qname, span, color, body_id, declared_ty,
+                            &item.params, &param_freshes,
+                        );
                     }
                     (None, None) => {}
                 }
@@ -346,45 +333,41 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn check_meta_body(
+    /// Try to register the body as a meta entry. Returns Ok(()) on success.
+    fn try_register_meta(
         &mut self,
         qname: &str,
         span: &TokenSpan,
         color: Option<(u8, u8, u8)>,
-        body_id: &ValId,
+        body_val: &Val,
         declared_ret: Option<MetaType>,
         params: &[Param],
         param_freshes: &[ParamInfo],
-    ) {
-        let body_s = self.program.val(*body_id);
-        match self.eval_meta_val(&body_s.0) {
-            Ok(meta_val) => {
-                let prim = self.make_prim();
-                let body_ret = self.check_meta_type(&body_s.0);
+    ) -> Result<()> {
+        let meta_val = self.eval_meta_val(body_val)?;
+        let prim = self.make_prim();
+        let body_ret = self.check_meta_type(body_val);
 
-                // Check declared type against body type
-                let ret = match (&declared_ret, &body_ret) {
-                    (Some(decl), Some(body_ty)) => {
-                        if decl != body_ty {
-                            self.error_at(span, "meta body type does not match declared type");
-                        }
-                        Some(decl.clone())
-                    }
-                    (Some(decl), None) => Some(decl.clone()),
-                    (None, body_ty) => body_ty.clone(),
-                };
-
-                let param_types = self.resolve_item_param_types(params);
-                self.register_meta_entry(
-                    qname.to_string(), color, prim, ret,
-                    param_types, Some(meta_val), param_freshes,
-                );
+        let ret = match (&declared_ret, &body_ret) {
+            (Some(decl), Some(body_ty)) => {
+                if decl != body_ty {
+                    self.error_at(span, "meta body type does not match declared type");
+                }
+                Some(decl.clone())
             }
-            Err(msg) => self.error_at(span, msg),
-        }
+            (Some(decl), None) => Some(decl.clone()),
+            (None, body_ty) => body_ty.clone(),
+        };
+
+        let param_types = self.resolve_item_param_types(params);
+        self.register_meta_entry(
+            qname.to_string(), color, prim, ret,
+            param_types, Some(meta_val), param_freshes,
+        );
+        Ok(())
     }
 
-    fn check_cell_body(
+    fn check_body(
         &mut self,
         qname: &str,
         span: &TokenSpan,
@@ -394,51 +377,74 @@ impl<'a> Checker<'a> {
         params: &[Param],
         param_freshes: &[ParamInfo],
     ) {
-        let body_s = self.program.val(*body_id);
-        match self.eval_val(&body_s.0) {
-            Ok(cell) => {
-                // Validate against declared type if present
-                if let Some((declared_dim, ref declared_ty)) = declared_ty {
-                    let dim = cell.pure.dim().in_space;
-                    if declared_dim != dim {
-                        self.error_at(span, "declared type dimension does not match body");
-                    } else {
-                        let body_ty = if dim == 0 {
-                            Ty::Zero
-                        } else {
-                            Ty::Succ(
-                                FreeCell::from_pure(&cell.pure.s()),
-                                FreeCell::from_pure(&cell.pure.t()),
-                            )
-                        };
-                        if let Err(msg) = match_ty(declared_ty, &body_ty) {
-                            self.error_at(span, msg);
-                        }
-                    }
-                }
+        let declared_meta = match &declared_ty {
+            Some((_, Ty::Meta(mt))) => Some(mt.clone()),
+            _ => None,
+        };
 
-                self.register_cell_entry(
-                    qname.to_string(), color, cell, param_freshes,
-                );
-            }
-            Err(msg) => {
-                // If no explicit type, try meta fallback
-                if declared_ty.is_none() {
-                    let body_s = self.program.val(*body_id);
-                    if let Ok(meta_val) = self.eval_meta_val(&body_s.0) {
-                        let prim = self.make_prim();
-                        let ret = self.check_meta_type(&body_s.0);
-                        let param_types = self.resolve_item_param_types(params);
-                        self.register_meta_entry(
-                            qname.to_string(), color, prim, ret,
-                            param_types, Some(meta_val), param_freshes,
-                        );
-                        return;
-                    }
-                }
+        if let Some(declared_ret) = declared_meta {
+            // Declared as meta type → must be meta
+            let body_val = &self.program.val(*body_id).0;
+            if let Err(msg) = self.try_register_meta(
+                qname, span, color, body_val, Some(declared_ret),
+                params, param_freshes,
+            ) {
                 self.error_at(span, msg);
             }
+            return;
         }
+
+        // Try cell interpretation first
+        let body_s = self.program.val(*body_id);
+        if let Ok(cell) = self.eval_val(&body_s.0) {
+            if let Some((declared_dim, ref declared_ty)) = declared_ty {
+                let dim = cell.pure.dim().in_space;
+                if declared_dim != dim {
+                    self.error_at(span, "declared type dimension does not match body");
+                } else {
+                    let body_ty = if dim == 0 {
+                        Ty::Zero
+                    } else {
+                        Ty::Succ(
+                            FreeCell::from_pure(&cell.pure.s()),
+                            FreeCell::from_pure(&cell.pure.t()),
+                        )
+                    };
+                    if let Err(msg) = match_ty(declared_ty, &body_ty) {
+                        self.error_at(span, msg);
+                    }
+                }
+            }
+            self.register_entry(
+                qname.to_string(), color, EntryBody::Cell(cell), param_freshes,
+            );
+            return;
+        }
+
+        // Fallbacks only when untyped
+        if declared_ty.is_some() {
+            self.error_at(span, "body does not match declared type");
+            return;
+        }
+
+        let body_val = &self.program.val(*body_id).0;
+
+        // Try meta fallback
+        if self.try_register_meta(
+            qname, span, color, body_val, None, params, param_freshes,
+        ).is_ok() {
+            return;
+        }
+
+        // Try type alias fallback
+        if let Ok((dim, ty)) = self.eval_ty(body_val) {
+            self.register_entry(
+                qname.to_string(), color, EntryBody::Type(dim, ty), param_freshes,
+            );
+            return;
+        }
+
+        self.error_at(span, "cannot interpret body as cell, meta value, or type");
     }
 
     fn check_functor(&mut self, item: &Item, qname: &str, mappings: &[FunctorMapping]) {
@@ -667,8 +673,23 @@ impl<'a> Checker<'a> {
             .collect()
     }
 
+    /// Register an entry with the common pattern: add_entry + entry_params.
+    fn register_entry(
+        &mut self,
+        qname: String,
+        color: Option<(u8, u8, u8)>,
+        body: EntryBody,
+        param_freshes: &[ParamInfo],
+    ) -> usize {
+        let pc = self.current_param_counts(param_freshes.len());
+        let idx = self.add_entry(qname, color, body, pc);
+        if !param_freshes.is_empty() {
+            self.entry_params.insert(idx, param_freshes.to_vec());
+        }
+        idx
+    }
+
     /// Register a meta entry: create MetaSig, add entry, store meta value.
-    /// Returns the entry index.
     fn register_meta_entry(
         &mut self,
         qname: String,
@@ -682,29 +703,9 @@ impl<'a> Checker<'a> {
         if let Some(ret) = ret {
             self.meta_sigs.insert(prim.id, MetaSig { params: param_types, ret });
         }
-        let pc = self.current_param_counts(param_freshes.len());
-        let idx = self.add_entry(qname, color, EntryBody::Meta(prim), pc);
+        let idx = self.register_entry(qname, color, EntryBody::Meta(prim), param_freshes);
         if let Some(val) = meta_val {
             self.meta_values.insert(idx, val);
-        }
-        if !param_freshes.is_empty() {
-            self.entry_params.insert(idx, param_freshes.to_vec());
-        }
-        idx
-    }
-
-    /// Register a cell entry: add entry + entry params.
-    fn register_cell_entry(
-        &mut self,
-        qname: String,
-        color: Option<(u8, u8, u8)>,
-        cell: FreeCell,
-        param_freshes: &[ParamInfo],
-    ) -> usize {
-        let pc = self.current_param_counts(param_freshes.len());
-        let idx = self.add_entry(qname, color, EntryBody::Cell(cell), pc);
-        if !param_freshes.is_empty() {
-            self.entry_params.insert(idx, param_freshes.to_vec());
         }
         idx
     }
@@ -773,6 +774,9 @@ impl<'a> Checker<'a> {
                     }
                     EntryBody::Cell(_) => {
                         Err(format!("{} is not a meta entry", name))
+                    }
+                    EntryBody::Type(_, _) => {
+                        Err(format!("{} is a type alias, not a meta value", name))
                     }
                 }
             }
@@ -1009,12 +1013,31 @@ impl<'a> Checker<'a> {
                         EntryBody::Cell(FreeCell::from_pure(&new_pure))
                     }
                     EntryBody::Meta(prim) => EntryBody::Meta(prim.clone()),
+                    EntryBody::Type(dim, ty) => {
+                        let base = (*dim, ty.clone());
+                        let (d, t) = if mapping.is_empty() {
+                            base
+                        } else {
+                            subst_ty(&base, mapping)
+                        };
+                        EntryBody::Type(d, t)
+                    }
                 };
                 let src_pc = src_entry.param_counts.clone();
                 let idx = self.add_entry(dest_member.clone(), Some(src_entry.color), new_body, src_pc);
 
                 if let Some(params) = self.entry_params.get(src_idx).cloned() {
                     self.entry_params.insert(idx, params);
+                }
+
+                // Copy meta values (with substitution)
+                if let Some(val) = self.meta_values.get(src_idx).cloned() {
+                    let new_val = if mapping.is_empty() {
+                        val
+                    } else {
+                        val.subst(mapping)
+                    };
+                    self.meta_values.insert(idx, new_val);
                 }
 
                 Some(idx)
@@ -1117,6 +1140,18 @@ impl<'a> Checker<'a> {
                 if name == "*" {
                     return Ok((0, Ty::Zero));
                 }
+                // Type alias lookup
+                if let Some(idx) = self.resolve_name(&name) {
+                    if let EntryBody::Type(dim, ref ty) = self.entries[idx].body {
+                        let mapping = self.build_path_mapping(path)?;
+                        let base = (dim, ty.clone());
+                        if mapping.is_empty() {
+                            return Ok(base);
+                        } else {
+                            return Ok(subst_ty(&base, &mapping));
+                        }
+                    }
+                }
                 if let Some(mt) = self.resolve_meta_type(val) {
                     return Ok((0, Ty::Meta(mt)));
                 }
@@ -1185,6 +1220,7 @@ impl<'a> Checker<'a> {
         let base_cell = match &self.entries[index].body {
             EntryBody::Cell(cell) => cell.clone(),
             EntryBody::Meta(_) => return Err(format!("{} is a meta entry, not a cell", name)),
+            EntryBody::Type(_, _) => return Err(format!("{} is a type alias, not a cell", name)),
         };
 
         let mapping = self.build_path_mapping(path)?;
@@ -1312,6 +1348,19 @@ fn apply_functor(cell: &PureCell, map: &HashMap<PrimId, PureCell>) -> Result<Pur
             PureCell::comp(*axis, mapped)
         }
     }
+}
+
+fn subst_ty(ty: &(u8, Ty), mapping: &HashMap<PrimId, PrimArg>) -> (u8, Ty) {
+    let (dim, t) = ty;
+    let new_t = match t {
+        Ty::Zero => Ty::Zero,
+        Ty::Succ(s, t) => Ty::Succ(
+            FreeCell::from_pure(&s.pure.subst(mapping)),
+            FreeCell::from_pure(&t.pure.subst(mapping)),
+        ),
+        Ty::Meta(mt) => Ty::Meta(mt.clone()),
+    };
+    (*dim, new_t)
 }
 
 fn match_ty(x: &Ty, y: &Ty) -> Result<()> {

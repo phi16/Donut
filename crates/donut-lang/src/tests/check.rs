@@ -672,3 +672,174 @@ fn nested_module_use_after_instantiation() {
     let double = &env.entries[env.lookup["double"]];
     assert_eq!(double.body.as_cell().unwrap().pure.dim().in_space, 2);
 }
+
+// --- Type alias ---
+
+#[test]
+fn type_alias_arrow() {
+    // T = x x → x should define a type alias, then m: T should work
+    let env = check_source(
+        r#"
+        u: *
+        x: u → u
+        T = x x → x
+        m: T
+        "#,
+    )
+    .unwrap();
+    assert_eq!(env.entries[env.lookup["m"]].body.as_cell().unwrap().pure.dim().in_space, 2);
+}
+
+#[test]
+fn type_alias_star() {
+    // T = * should define a type alias for 0-cell type
+    let env = check_source(
+        r#"
+        T = *
+        u: T
+        "#,
+    )
+    .unwrap();
+    assert_eq!(env.entries[env.lookup["u"]].body.as_cell().unwrap().pure.dim().in_space, 0);
+}
+
+// --- Parametric type-level entries (issue.donut) ---
+
+#[test]
+fn parametric_star_body() {
+    // g[x: *] = * should be valid (g: meta)
+    check_source(
+        r#"
+        g[x: *] = *
+        "#,
+    )
+    .unwrap();
+}
+
+// --- Cell param as body (issue.donut) ---
+
+#[test]
+fn cell_param_as_body() {
+    // h[x: *, y: x → x]: x → x = y
+    let env = check_source(
+        r#"
+        h[x: *, y: x → x]: x → x = y
+        "#,
+    )
+    .unwrap();
+    assert!(env.lookup.contains_key("h"));
+}
+
+#[test]
+fn type_alias_in_parametric_module() {
+    // Type alias inside a parametric module should be instantiated correctly
+    let env = check_source(
+        r#"
+        cat[C: *] = {
+            T = C → C
+            x: T
+        }
+        u: *
+        v: *
+        cu = cat[u]
+        cv = cat[v]
+        "#,
+    )
+    .unwrap();
+    let u = &env.entries[env.lookup["u"]];
+    let v = &env.entries[env.lookup["v"]];
+    let cu_x = &env.entries[env.lookup["cu.x"]];
+    let cv_x = &env.entries[env.lookup["cv.x"]];
+    // cu.x should be u → u
+    assert_eq!(cu_x.body.as_cell().unwrap().pure.s(), u.body.as_cell().unwrap().pure);
+    // cv.x should be v → v
+    assert_eq!(cv_x.body.as_cell().unwrap().pure.s(), v.body.as_cell().unwrap().pure);
+}
+
+#[test]
+fn type_alias_parametric() {
+    // g[x: *] = x → x, then m: g[u] should be u → u
+    let env = check_source(
+        r#"
+        g[x: *] = x → x
+        u: *
+        v: *
+        m: g[u]
+        n: g[v]
+        "#,
+    )
+    .unwrap();
+    let u = &env.entries[env.lookup["u"]];
+    let v = &env.entries[env.lookup["v"]];
+    let m = &env.entries[env.lookup["m"]];
+    let n = &env.entries[env.lookup["n"]];
+    // m: g[u] = u → u
+    assert_eq!(m.body.as_cell().unwrap().pure.s(), u.body.as_cell().unwrap().pure);
+    assert_eq!(m.body.as_cell().unwrap().pure.t(), u.body.as_cell().unwrap().pure);
+    // n: g[v] = v → v
+    assert_eq!(n.body.as_cell().unwrap().pure.s(), v.body.as_cell().unwrap().pure);
+}
+
+#[test]
+fn module_meta_value_instantiation() {
+    // Meta values inside a parametric module should be accessible after instantiation
+    let env = check_source(
+        r#"
+        import "ui"
+        config[C: *] = {
+            my_gray: base.nat = 120
+        }
+        u: *
+        c = config[u]
+        [style[gray[c.my_gray]]]
+        x: u → u
+        "#,
+    )
+    .unwrap();
+    let x = &env.entries[env.lookup["x"]];
+    assert_eq!(x.color, (120, 120, 120));
+}
+
+#[test]
+fn default_donut_example() {
+    let input = include_str!("../../../../donut-app/src/default.donut");
+    check_source(input).unwrap();
+}
+
+#[test]
+fn type_alias_alias() {
+    // f = T where T is a type alias should make f also a type alias
+    let env = check_source(
+        r#"
+        u: *
+        x: u → u
+        T = x x → x
+        S = T
+        m: S
+        "#,
+    )
+    .unwrap();
+    assert_eq!(env.entries[env.lookup["m"]].body.as_cell().unwrap().pure.dim().in_space, 2);
+}
+
+// --- Module member meta reference ---
+
+#[test]
+fn module_member_meta_reference() {
+    // config.my_hue used in decorator
+    let env = check_source(
+        r#"
+        import "ui"
+        config = {
+            my_hue: base.rat = 0.6
+        }
+        u: *
+        [style[hue[config.my_hue]]]
+        x: u → u
+        "#,
+    )
+    .unwrap();
+    let x = &env.entries[env.lookup["x"]];
+    let u = &env.entries[env.lookup["u"]];
+    assert_ne!(x.color, u.color);
+}

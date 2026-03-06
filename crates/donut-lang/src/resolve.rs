@@ -594,7 +594,26 @@ impl<'a> Checker<'a> {
             }
         }
 
+        // --- += pre-check (before inner scope) ---
+        if matches!(&op.0, semtree::AssignOp::Add) {
+            for seg_names in &name_infos_partial {
+                if seg_names.len() == 1 {
+                    let (name, span) = &seg_names[0];
+                    if self.lookup(name).is_none() {
+                        self.error_at(
+                            span,
+                            format!("`{}` must be declared before `+=`", name),
+                        );
+                    }
+                }
+            }
+        }
+
+        // --- Inner scope (before params so params are defined incrementally) ---
+        self.enter_inner_scope(&deco_param_defs);
+
         // --- Consume names → params + name_infos ---
+        // Params are defined immediately so subsequent params can reference earlier ones.
         let mut params = Vec::new();
         let mut name_infos: Vec<NameInfo> = Vec::new();
         for (i, (name_s, seg_names)) in names.into_iter().zip(name_infos_partial).enumerate() {
@@ -606,10 +625,15 @@ impl<'a> Checker<'a> {
                     let resolved_ty = param_decl.ty.resolve(self);
                     if i == 0 {
                         for name in param_decl.names {
-                            params.push(Param {
+                            let param = Param {
                                 name: name.0,
                                 ty: resolved_ty,
-                            });
+                            };
+                            let span = self.val(param.ty).1.clone();
+                            let item = Item::param(param.ty, span);
+                            let id = self.alloc_item(item);
+                            self.define(param.name.clone(), id);
+                            params.push(param);
                         }
                     }
                 }
@@ -618,32 +642,6 @@ impl<'a> Checker<'a> {
                 seg_names,
                 applicand,
             });
-        }
-
-        // --- += pre-check ---
-        if matches!(&op.0, semtree::AssignOp::Add) {
-            for ni in &name_infos {
-                if ni.seg_names.len() == 1 {
-                    let (name, span) = &ni.seg_names[0];
-                    if self.lookup(name).is_none() {
-                        self.error_at(
-                            span,
-                            format!("`{}` must be declared before `+=`", name),
-                        );
-                    }
-                }
-            }
-        }
-
-        // --- Inner scope ---
-        self.enter_inner_scope(&deco_param_defs);
-
-        // Define params (before ty so params are in scope for type expressions)
-        for param in &params {
-            let span = self.val(param.ty).1.clone();
-            let item = Item::param(param.ty, span);
-            let id = self.alloc_item(item);
-            self.define(param.name.clone(), id);
         }
 
         // Forward refs
