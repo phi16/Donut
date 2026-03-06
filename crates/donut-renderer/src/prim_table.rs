@@ -23,20 +23,18 @@ impl PrimTable {
 
     pub fn insert(
         &mut self,
-        prim: Prim,
+        id: PrimId,
         name: &str,
         level: Level,
         color: (u8, u8, u8),
         param_counts: Vec<usize>,
     ) {
-        let name = name.to_string();
-        let entry = PrimEntry {
-            name,
+        self.table.insert(id, PrimEntry {
+            name: name.to_string(),
             level,
             color,
             param_counts,
-        };
-        self.table.insert(prim.id, entry);
+        });
     }
 
     pub fn get(&self, prim: &Prim) -> Option<&PrimEntry> {

@@ -233,13 +233,9 @@ fn test_load_parametric_example() {
 }
 
 #[test]
-fn test_load_app_prelude_with_default() {
-    // Mimics donut-app's PRELUDE + default.donut
-    let prelude = "env = import \"sys\"\n";
-    let user_code = include_str!("../../../../donut-app/src/default.donut");
-    let full_code = format!("{}{}", prelude, user_code);
-    let (env, errors) = crate::load::load(&full_code);
-    assert!(errors.is_empty(), "unexpected errors: {:?}", errors);
+fn test_load_default_donut() {
+    let input = include_str!("../../../../donut-app/src/default.donut");
+    let env = load(input);
 
     // Check that decorators produced colors
     let u = &env.entries[env.lookup["u"]];

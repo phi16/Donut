@@ -36,29 +36,31 @@ fn set_resize_callback(canvas: web_sys::HtmlCanvasElement) -> Option<()> {
 }
 
 fn set_mouse_callback(
+    canvas: &web_sys::HtmlCanvasElement,
     mouse: Rc<RefCell<(f64, f64)>>,
     pressing: Rc<RefCell<bool>>,
 ) -> Option<()> {
-    let window = web_sys::window()?;
-
     let on_mouse_move: Closure<dyn Fn(web_sys::MouseEvent)> = {
         let mouse = Rc::clone(&mouse);
         Closure::new(move |event: web_sys::MouseEvent| {
             *mouse.borrow_mut() = (event.client_x() as f64, event.client_y() as f64);
         })
     };
+    // mousemove on window so we track cursor even outside canvas
+    let window = web_sys::window()?;
     window
         .add_event_listener_with_callback("mousemove", on_mouse_move.as_ref().unchecked_ref())
         .ok()?;
     on_mouse_move.forget();
 
+    // mousedown/mouseup on canvas only, so editor clicks don't affect slicing
     let on_mouse_down: Closure<dyn Fn(web_sys::MouseEvent)> = {
         let pressing = Rc::clone(&pressing);
         Closure::new(move |_: web_sys::MouseEvent| {
             *pressing.borrow_mut() = true;
         })
     };
-    window
+    canvas
         .add_event_listener_with_callback("mousedown", on_mouse_down.as_ref().unchecked_ref())
         .ok()?;
     on_mouse_down.forget();
@@ -83,26 +85,6 @@ fn request_animation_frame(f: &Closure<dyn FnMut()>) {
         .unwrap();
 }
 
-fn show_notification(notification: &web_sys::HtmlElement, message: &str) {
-    notification.set_inner_text(message);
-    let _ = notification.class_list().add_1("show");
-
-    let notification_clone = notification.clone();
-    let hide_notification = Closure::once(move || {
-        let _ = notification_clone.class_list().remove_1("show");
-    });
-
-    web_sys::window()
-        .unwrap()
-        .set_timeout_with_callback_and_timeout_and_arguments_0(
-            hide_notification.as_ref().unchecked_ref(),
-            3000,
-        )
-        .unwrap();
-
-    hide_notification.forget();
-}
-
 pub fn start() -> Option<()> {
     let window = web_sys::window()?;
     let document = window.document()?;
@@ -113,7 +95,7 @@ pub fn start() -> Option<()> {
     set_resize_callback(canvas.clone())?;
     let mouse = Rc::new(RefCell::new((0.0, 0.0)));
     let pressing = Rc::new(RefCell::new(false));
-    set_mouse_callback(Rc::clone(&mouse), Rc::clone(&pressing))?;
+    set_mouse_callback(&canvas, Rc::clone(&mouse), Rc::clone(&pressing))?;
     let context = canvas
         .get_context("2d")
         .ok()??
@@ -127,6 +109,19 @@ pub fn start() -> Option<()> {
         .get_element_by_id("eval-result")?
         .dyn_into::<web_sys::HtmlElement>()
         .ok()?;
+    let diagnostics_el = document
+        .get_element_by_id("diagnostics")?
+        .dyn_into::<web_sys::HtmlElement>()
+        .ok()?;
+
+    let textarea = document
+        .get_element_by_id("code-input")?
+        .dyn_into::<web_sys::HtmlTextAreaElement>()
+        .ok()?;
+
+    // Populate textarea with default code
+    textarea.set_value(include_str!("default.donut"));
+
     let app = Rc::new(RefCell::new(App::new(
         canvas,
         context,
@@ -134,6 +129,7 @@ pub fn start() -> Option<()> {
         pressing,
         entry_select.clone(),
         eval_result_el,
+        diagnostics_el,
     )));
 
     // Set up entry selection handler
@@ -152,36 +148,6 @@ pub fn start() -> Option<()> {
         on_change.forget();
     }
 
-    // Set up button click handler
-    let button = document
-        .get_element_by_id("update-button")?
-        .dyn_into::<web_sys::HtmlElement>()
-        .ok()?;
-    let textarea = document
-        .get_element_by_id("code-input")?
-        .dyn_into::<web_sys::HtmlTextAreaElement>()
-        .ok()?;
-
-    let notification = document
-        .get_element_by_id("notification")?
-        .dyn_into::<web_sys::HtmlElement>()
-        .ok()?;
-
-    let app_clone = Rc::clone(&app);
-    let textarea_clone = textarea.clone();
-    let notification_clone = notification.clone();
-    let on_click: Closure<dyn FnMut()> = Closure::new(move || {
-        let code = textarea_clone.value();
-        if let Err(e) = app_clone.borrow_mut().update_code(&code) {
-            log::error!("Failed to update code: {}", e);
-            show_notification(&notification_clone, &e);
-        }
-    });
-    button
-        .add_event_listener_with_callback("click", on_click.as_ref().unchecked_ref())
-        .ok()?;
-    on_click.forget();
-
     // Set up Ctrl+Enter shortcut
     let app_clone = Rc::clone(&app);
     let textarea_clone = textarea.clone();
@@ -190,10 +156,7 @@ pub fn start() -> Option<()> {
             if event.key() == "Enter" && event.ctrl_key() {
                 event.prevent_default();
                 let code = textarea_clone.value();
-                if let Err(e) = app_clone.borrow_mut().update_code(&code) {
-                    log::error!("Failed to update code: {}", e);
-                    show_notification(&notification, &e);
-                }
+                app_clone.borrow_mut().update_code(&code);
             }
         });
     textarea

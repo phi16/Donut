@@ -23,13 +23,14 @@ pub struct App {
     pressing: Rc<RefCell<bool>>,
     entry_select: web_sys::HtmlSelectElement,
     eval_result_el: web_sys::HtmlElement,
+    diagnostics_el: web_sys::HtmlElement,
     env: Env,
     table: PrimTable,
     runtime: Runtime,
-    env_entry_count: usize,
-    selected: usize,
-    cell: Geometry,
+    selected: Option<usize>,
+    cell: Option<Geometry>,
     slice_pos: Vec<R>,
+    diagnostics: Vec<String>,
 }
 
 impl App {
@@ -40,68 +41,51 @@ impl App {
         pressing: Rc<RefCell<bool>>,
         entry_select: web_sys::HtmlSelectElement,
         eval_result_el: web_sys::HtmlElement,
+        diagnostics_el: web_sys::HtmlElement,
     ) -> Self {
         let input = include_str!("default.donut");
-        let (env, table, runtime) = Self::load(input).unwrap();
-        let env_entry_count = Self::env_entry_count();
-        let selected = env.entries.len() - 1;
-        let cell = Self::build_geometry(env.entries[selected].as_cell().unwrap());
+        let (env, table, runtime, diagnostics) = Self::load(input);
+        let selected = Self::find_last_cell(&env);
+        let cell = selected.map(|i| Self::build_geometry(env.entries[i].as_cell().unwrap()));
+        let slice_pos = cell.as_ref().map(|c| Self::init_slice_pos(&c.size)).unwrap_or_default();
 
-        let mut app = Self {
+        let app = Self {
             canvas,
             context,
             mouse,
             pressing,
             entry_select,
             eval_result_el,
+            diagnostics_el,
             env,
             table,
             runtime,
-            env_entry_count,
             selected,
             cell,
-            slice_pos: vec![],
+            slice_pos,
+            diagnostics,
         };
-        app.slice_pos = Self::init_slice_pos(&app.cell.size);
         app.populate_select();
         app.update_eval_result();
         app
     }
 
-    const PRELUDE: &str = "env = import \"sys\"\n";
-
-    fn env_entry_count() -> usize {
-        use std::sync::OnceLock;
-        static COUNT: OnceLock<usize> = OnceLock::new();
-        *COUNT.get_or_init(|| {
-            let (env_only, _) = donut_lang::load::load(Self::PRELUDE);
-            env_only.entries.len()
-        })
+    fn find_last_cell(env: &Env) -> Option<usize> {
+        env.entries.iter().enumerate()
+            .rev()
+            .find_map(|(i, e)| e.as_cell().map(|_| i))
     }
 
-    fn load(code: &str) -> Result<(Env, PrimTable, Runtime)> {
+    fn load(code: &str) -> (Env, PrimTable, Runtime, Vec<String>) {
         let user_code = dedent(code);
-        let full_code = format!("{}{}", Self::PRELUDE, user_code);
-        let (env, errors) = donut_lang::load::load(&full_code);
-        if !errors.is_empty() {
-            for (_, msg) in &errors {
-                log::warn!("Load warning: {}", msg);
-            }
-        }
+        let (env, errors) = donut_lang::load::load(&user_code);
+        let diagnostics: Vec<String> = errors.into_iter()
+            .map(|(pos, msg)| format!("{}:{}: {}", pos.line + 1, pos.col + 1, msg))
+            .collect();
 
         let mut table = PrimTable::new();
-        for e in env.entries.iter() {
-            if let Some(cell) = e.as_cell() {
-                if let Some(prim) = cell.pure.extract_prim() {
-                    table.insert(
-                        prim.clone(),
-                        &e.name,
-                        cell.pure.dim().in_space,
-                        e.color,
-                        e.param_counts.clone(),
-                    );
-                }
-            }
+        for (&id, decl) in &env.prim_decls {
+            table.insert(id, &decl.name, decl.level, decl.color, decl.param_counts.clone());
         }
 
         // Build runtime
@@ -117,7 +101,7 @@ impl App {
         let mut runtime = Runtime::new();
         donut_runtime::env::register_env(&mut runtime, &prim_lookup);
 
-        Ok((env, table, runtime))
+        (env, table, runtime, diagnostics)
     }
 
     fn build_geometry(free_cell: &FreeCell) -> Geometry {
@@ -141,9 +125,6 @@ impl App {
 
         let document = web_sys::window().unwrap().document().unwrap();
         for (i, entry) in self.env.entries.iter().enumerate() {
-            if i < self.env_entry_count {
-                continue;
-            }
             let option = document
                 .create_element("option")
                 .unwrap()
@@ -154,29 +135,26 @@ impl App {
             let label = format!("{} ({}d)", entry.name, dim);
             option.set_text_content(Some(&label));
             option.set_value(&i.to_string());
-            if i == self.selected {
+            if self.selected == Some(i) {
                 option.set_selected(true);
             }
             self.entry_select.append_child(&option).unwrap();
         }
     }
 
-    pub fn update_code(&mut self, code: &str) -> Result<()> {
-        let (env, table, runtime) = Self::load(code)?;
-        let selected = env.entries[self.env_entry_count..].iter().enumerate()
-            .rev()
-            .find_map(|(i, e)| e.as_cell().map(|_| self.env_entry_count + i))
-            .ok_or("no cell entries")?;
-        let cell = Self::build_geometry(env.entries[selected].as_cell().unwrap());
-        self.slice_pos = Self::init_slice_pos(&cell.size);
+    pub fn update_code(&mut self, code: &str) {
+        let (env, table, runtime, diagnostics) = Self::load(code);
+        let selected = Self::find_last_cell(&env);
+        let cell = selected.map(|i| Self::build_geometry(env.entries[i].as_cell().unwrap()));
+        self.slice_pos = cell.as_ref().map(|c| Self::init_slice_pos(&c.size)).unwrap_or_default();
         self.env = env;
         self.table = table;
         self.runtime = runtime;
         self.selected = selected;
         self.cell = cell;
+        self.diagnostics = diagnostics;
         self.populate_select();
         self.update_eval_result();
-        Ok(())
     }
 
     pub fn select_entry(&mut self, index: usize) {
@@ -184,17 +162,19 @@ impl App {
             return;
         }
         let Some(cell) = self.env.entries[index].as_cell() else { return };
-        self.selected = index;
-        self.cell = Self::build_geometry(cell);
-        self.slice_pos = Self::init_slice_pos(&self.cell.size);
+        self.selected = Some(index);
+        let geom = Self::build_geometry(cell);
+        self.slice_pos = Self::init_slice_pos(&geom.size);
+        self.cell = Some(geom);
         self.update_eval_result();
     }
 
     fn build_squash_view(&self, i: usize) -> Geometry {
+        let cell = self.cell.as_ref().unwrap();
         let d = 2 + 2 * i;
-        let n_extra = self.cell.size.len() - 2;
+        let n_extra = cell.size.len() - 2;
 
-        let mut rc = self.cell.squashed();
+        let mut rc = cell.squashed();
         for _ in 1..d {
             rc = rc.squashed();
         }
@@ -205,8 +185,9 @@ impl App {
     }
 
     fn build_slice_view(&self) -> Geometry {
-        let n_extra = self.cell.size.len() - 2;
-        let mut rc = self.cell.sliced(self.slice_pos[n_extra - 1]);
+        let cell = self.cell.as_ref().unwrap();
+        let n_extra = cell.size.len() - 2;
+        let mut rc = cell.sliced(self.slice_pos[n_extra - 1]);
         for k in (0..n_extra - 1).rev() {
             rc = rc.sliced(self.slice_pos[k]);
         }
@@ -219,7 +200,9 @@ impl App {
         self.context.set_fill_style_str("rgb(40 40 40)");
         self.context.fill_rect(0.0, 0.0, width, height);
 
-        let size = self.cell.size.clone();
+        let Some(ref cell) = self.cell else { return };
+
+        let size = cell.size.clone();
         let n_extra = size.len() - 2;
         let n_views = n_extra / 2;
 
@@ -328,9 +311,29 @@ impl App {
     }
 
     fn update_eval_result(&self) {
-        let entry = &self.env.entries[self.selected];
+        // Update diagnostics
+        if self.diagnostics.is_empty() {
+            let _ = self.diagnostics_el.class_list().remove_1("has-errors");
+            self.diagnostics_el.set_inner_text("");
+        } else {
+            let _ = self.diagnostics_el.class_list().add_1("has-errors");
+            let diag_text: String = self.diagnostics.iter()
+                .map(|d| d.as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
+            self.diagnostics_el.set_inner_text(&diag_text);
+        }
+
+        // Update eval result
+        let Some(selected) = self.selected else {
+            self.eval_result_el.set_inner_text("");
+            let _ = self.eval_result_el.class_list().remove_1("evaluable");
+            return;
+        };
+        let entry = &self.env.entries[selected];
         let Some(cell) = entry.as_cell() else {
             self.eval_result_el.set_inner_text(&format!("{}: meta", entry.name));
+            let _ = self.eval_result_el.class_list().remove_1("evaluable");
             return;
         };
         let type_str = self.table.format_cell_type(&cell.pure);
@@ -349,7 +352,8 @@ impl App {
         } else {
             let _ = self.eval_result_el.class_list().remove_1("evaluable");
         }
-        self.eval_result_el.set_inner_text(&format!("{}: {}\n{}", entry.name, type_str, eval_str));
+        let text = format!("{}: {}\n{}", entry.name, type_str, eval_str);
+        self.eval_result_el.set_inner_text(&text);
     }
 
     fn draw_tooltip(&self, text: &str, x: R, y: R) {

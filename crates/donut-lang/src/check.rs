@@ -2,7 +2,7 @@ use crate::types::common::Error;
 use crate::types::item::*;
 use crate::types::token::Token;
 use donut_core::cell::{check_prim, Diagram, Globular};
-use donut_core::common::{Prim, PrimArg, PrimId};
+use donut_core::common::{Level, Prim, PrimArg, PrimId};
 use donut_core::free_cell::FreeCell;
 use donut_core::pure_cell::PureCell;
 use std::collections::HashMap;
@@ -43,9 +43,18 @@ impl Entry {
 }
 
 #[derive(Debug, Clone)]
+pub struct PrimDecl {
+    pub name: String,
+    pub level: Level,
+    pub color: (u8, u8, u8),
+    pub param_counts: Vec<usize>,
+}
+
+#[derive(Debug, Clone)]
 pub struct Env {
     pub entries: Vec<Entry>,
     pub lookup: HashMap<String, usize>,
+    pub prim_decls: HashMap<PrimId, PrimDecl>,
 }
 
 // --- Meta type ---
@@ -104,6 +113,9 @@ struct Checker<'a> {
 
     // Functor support
     functor_maps: HashMap<String, HashMap<PrimId, PureCell>>,
+
+    // Prim declarations: PrimId → canonical name/color/level/param_counts
+    prim_decls: HashMap<PrimId, PrimDecl>,
 }
 
 impl<'a> Checker<'a> {
@@ -130,6 +142,7 @@ impl<'a> Checker<'a> {
             meta_values: HashMap::new(),
             item_cache: HashMap::new(),
             functor_maps: HashMap::new(),
+            prim_decls: HashMap::new(),
         }
     }
 
@@ -137,6 +150,7 @@ impl<'a> Checker<'a> {
         let env = Env {
             entries: self.entries,
             lookup: self.lookup,
+            prim_decls: self.prim_decls,
         };
         (env, self.errors)
     }
@@ -355,19 +369,36 @@ impl<'a> Checker<'a> {
         match self.eval_ty(&ty_s.0) {
             Ok((_, Ty::Meta(mt))) => {
                 let prim = self.make_prim();
+                let prim_id = prim.id;
                 let param_types = self.resolve_item_param_types(params);
-                self.register_meta_entry(
+                let idx = self.register_meta_entry(
                     qname.to_string(), color, prim, Some(mt),
                     param_types, None, param_freshes,
                 );
+                let entry = &self.entries[idx];
+                self.prim_decls.insert(prim_id, PrimDecl {
+                    name: entry.name.clone(),
+                    level: 0,
+                    color: entry.color,
+                    param_counts: entry.param_counts.clone(),
+                });
             }
             Ok((_, ty)) => {
                 let prim = self.make_prim();
+                let prim_id = prim.id;
                 match make_cell(prim, &ty) {
                     Ok(cell) => {
-                        self.register_entry(
+                        let level = cell.pure.dim().in_space;
+                        let idx = self.register_entry(
                             qname.to_string(), color, EntryBody::Cell(cell), param_freshes,
                         );
+                        let entry = &self.entries[idx];
+                        self.prim_decls.insert(prim_id, PrimDecl {
+                            name: entry.name.clone(),
+                            level,
+                            color: entry.color,
+                            param_counts: entry.param_counts.clone(),
+                        });
                     }
                     Err(msg) => self.error_at(span, msg),
                 }
@@ -389,6 +420,7 @@ impl<'a> Checker<'a> {
     ) -> Result<()> {
         let meta_val = self.eval_meta_val(body_val)?;
         let prim = self.make_prim();
+        let prim_id = prim.id;
         let body_ret = self.check_meta_type(body_val);
 
         let ret = match (&declared_ret, &body_ret) {
@@ -403,10 +435,17 @@ impl<'a> Checker<'a> {
         };
 
         let param_types = self.resolve_item_param_types(params);
-        self.register_meta_entry(
+        let idx = self.register_meta_entry(
             qname.to_string(), color, prim, ret,
             param_types, Some(meta_val), param_freshes,
         );
+        let entry = &self.entries[idx];
+        self.prim_decls.insert(prim_id, PrimDecl {
+            name: entry.name.clone(),
+            level: 0,
+            color: entry.color,
+            param_counts: entry.param_counts.clone(),
+        });
         Ok(())
     }
 
