@@ -218,7 +218,7 @@ impl<'a> Checker<'a> {
         }
 
         let decos = self.eval_decorators(&item.decos);
-        let color = Self::extract_color(&decos);
+        let color = self.extract_color(&decos);
         let qname = self.qualified_name(name);
         let span = &item.span;
 
@@ -265,158 +265,64 @@ impl<'a> Checker<'a> {
 
                 match (&item.ty, body_val) {
                     (Some(ty_id), None) => {
+                        // Declaration without body
                         let ty_s = self.program.val(*ty_id);
                         match self.eval_ty(&ty_s.0) {
+                            Ok((_, Ty::Meta(mt))) => {
+                                let prim = self.make_prim();
+                                let param_types = self.resolve_item_param_types(&item.params);
+                                self.register_meta_entry(
+                                    qname.clone(), color, prim, Some(mt),
+                                    param_types, None, &param_freshes,
+                                );
+                            }
                             Ok((_, ty)) => {
                                 let prim = self.make_prim();
-                                let body = match &ty {
-                                    Ty::Zero => Ok(EntryBody::Cell(FreeCell::zero(prim))),
+                                match &ty {
+                                    Ty::Zero => {
+                                        self.register_cell_entry(
+                                            qname.clone(), color, FreeCell::zero(prim), &param_freshes,
+                                        );
+                                    }
                                     Ty::Succ(s, t) => {
-                                        FreeCell::prim(prim, s.clone(), t.clone())
-                                            .map(EntryBody::Cell)
-                                    }
-                                    Ty::Meta(mt) => {
-                                        let param_types: Vec<MetaType> = item.params.iter()
-                                            .filter_map(|p| {
-                                                let ty_s = self.program.val(p.ty);
-                                                self.resolve_meta_type(&ty_s.0)
-                                            })
-                                            .collect();
-                                        self.meta_sigs.insert(prim.id, MetaSig { params: param_types, ret: mt.clone() });
-                                        Ok(EntryBody::Meta(prim))
-                                    }
-                                };
-                                match body {
-                                    Ok(body) => {
-                                        let pc = self.current_param_counts(param_freshes.len());
-                                        let idx = self.add_entry(qname.clone(), color, body, pc);
-                                        if has_params {
-                                            self.entry_params
-                                                .insert(idx, param_freshes.clone());
+                                        match FreeCell::prim(prim, s.clone(), t.clone()) {
+                                            Ok(cell) => {
+                                                self.register_cell_entry(
+                                                    qname.clone(), color, cell, &param_freshes,
+                                                );
+                                            }
+                                            Err(msg) => self.error_at(span, msg),
                                         }
                                     }
-                                    Err(msg) => self.error_at(span, msg),
+                                    Ty::Meta(_) => unreachable!(),
                                 }
                             }
                             Err(msg) => self.error_at(span, msg),
                         }
                     }
                     (dim_ty, Some(body_id)) => {
-                        // Check if the type annotation is Meta
-                        let declared_meta = dim_ty.and_then(|ty_id| {
+                        // Determine declared type
+                        let declared_ty = dim_ty.and_then(|ty_id| {
                             let ty_s = self.program.val(ty_id);
-                            match self.eval_ty(&ty_s.0) {
-                                Ok((_, Ty::Meta(mt))) => Some(mt),
-                                _ => None,
-                            }
+                            self.eval_ty(&ty_s.0).ok()
                         });
+                        let declared_meta = match &declared_ty {
+                            Some((_, Ty::Meta(mt))) => Some(mt.clone()),
+                            _ => None,
+                        };
 
                         if declared_meta.is_some() {
-                            // Meta-typed body: evaluate as meta expression
-                            let body_s = self.program.val(*body_id);
-                            match self.eval_meta_val(&body_s.0) {
-                                Ok(meta_val) => {
-                                    let prim = self.make_prim();
-
-                                    let body_ret = self.check_meta_type(&body_s.0);
-
-                                    let ret = match (&declared_meta, &body_ret) {
-                                        (Some(decl), Some(body_ty)) => {
-                                            if decl != body_ty {
-                                                self.error_at(span, "meta body type does not match declared type");
-                                            }
-                                            Some(decl.clone())
-                                        }
-                                        (Some(decl), None) => Some(decl.clone()),
-                                        (None, Some(body_ty)) => Some(body_ty.clone()),
-                                        (None, None) => None,
-                                    };
-
-                                    if let Some(ret) = ret {
-                                        let param_types: Vec<MetaType> = item.params.iter()
-                                            .filter_map(|p| {
-                                                let ty_s = self.program.val(p.ty);
-                                                self.resolve_meta_type(&ty_s.0)
-                                            })
-                                            .collect();
-                                        self.meta_sigs.insert(prim.id, MetaSig { params: param_types, ret });
-                                    }
-
-                                    let pc = self.current_param_counts(param_freshes.len());
-                                    let idx = self.add_entry(qname.clone(), color, EntryBody::Meta(prim), pc);
-                                    self.meta_values.insert(idx, meta_val);
-                                    if has_params {
-                                        self.entry_params.insert(idx, param_freshes.clone());
-                                    }
-                                }
-                                Err(msg) => self.error_at(span, msg),
-                            }
+                            // Meta body
+                            self.check_meta_body(
+                                &qname, span, color, body_id, declared_meta,
+                                &item.params, &param_freshes,
+                            );
                         } else {
-                            let body_s = self.program.val(*body_id);
-                            match self.eval_val(&body_s.0) {
-                                Ok(cell) => {
-                                    let dim = cell.pure.dim().in_space;
-
-                                    if let Some(ty_id) = dim_ty {
-                                        let ty_s = self.program.val(*ty_id);
-                                        match self.eval_ty(&ty_s.0) {
-                                            Ok((declared_dim, declared_ty)) => {
-                                                if declared_dim != dim {
-                                                    self.error_at(
-                                                        span,
-                                                        "declared type dimension does not match body",
-                                                    );
-                                                } else {
-                                                    let body_ty = if dim == 0 {
-                                                        Ty::Zero
-                                                    } else {
-                                                        Ty::Succ(
-                                                            FreeCell::from_pure(&cell.pure.s()),
-                                                            FreeCell::from_pure(&cell.pure.t()),
-                                                        )
-                                                    };
-                                                    if let Err(msg) =
-                                                        match_ty(&declared_ty, &body_ty)
-                                                    {
-                                                        self.error_at(span, msg);
-                                                    }
-                                                }
-                                            }
-                                            Err(msg) => self.error_at(span, msg),
-                                        }
-                                    }
-
-                                    let pc = self.current_param_counts(param_freshes.len());
-                                    let idx = self.add_entry(qname.clone(), color, EntryBody::Cell(cell), pc);
-                                    if has_params {
-                                        self.entry_params.insert(idx, param_freshes.clone());
-                                    }
-                                }
-                                Err(msg) => {
-                                    // If no explicit type and eval_val fails, try eval_meta_val as fallback
-                                    if dim_ty.is_none() {
-                                        let body_s = self.program.val(*body_id);
-                                        if let Ok(meta_val) = self.eval_meta_val(&body_s.0) {
-                                            let prim = self.make_prim();
-                                            // Infer return type from body
-                                            if let Some(ret) = self.check_meta_type(&body_s.0) {
-                                                self.meta_sigs.insert(prim.id, MetaSig { params: vec![], ret });
-                                            }
-                                            let pc = self.current_param_counts(param_freshes.len());
-                                            let idx = self.add_entry(qname.clone(), color, EntryBody::Meta(prim), pc);
-                                            self.meta_values.insert(idx, meta_val);
-                                            if has_params {
-                                                self.entry_params.insert(idx, param_freshes.clone());
-                                            }
-                                            // Skip the error
-                                        } else {
-                                            self.error_at(span, msg);
-                                        }
-                                    } else {
-                                        self.error_at(span, msg);
-                                    }
-                                }
-                            }
+                            // Cell body (with meta fallback if untyped)
+                            self.check_cell_body(
+                                &qname, span, color, body_id, declared_ty,
+                                &item.params, &param_freshes,
+                            );
                         }
                     }
                     (None, None) => {}
@@ -437,6 +343,101 @@ impl<'a> Checker<'a> {
         if has_params && item.members().map_or(false, |m| !m.entries.is_empty()) {
             self.module_params
                 .insert(qname.clone(), param_freshes);
+        }
+    }
+
+    fn check_meta_body(
+        &mut self,
+        qname: &str,
+        span: &TokenSpan,
+        color: Option<(u8, u8, u8)>,
+        body_id: &ValId,
+        declared_ret: Option<MetaType>,
+        params: &[Param],
+        param_freshes: &[ParamInfo],
+    ) {
+        let body_s = self.program.val(*body_id);
+        match self.eval_meta_val(&body_s.0) {
+            Ok(meta_val) => {
+                let prim = self.make_prim();
+                let body_ret = self.check_meta_type(&body_s.0);
+
+                // Check declared type against body type
+                let ret = match (&declared_ret, &body_ret) {
+                    (Some(decl), Some(body_ty)) => {
+                        if decl != body_ty {
+                            self.error_at(span, "meta body type does not match declared type");
+                        }
+                        Some(decl.clone())
+                    }
+                    (Some(decl), None) => Some(decl.clone()),
+                    (None, body_ty) => body_ty.clone(),
+                };
+
+                let param_types = self.resolve_item_param_types(params);
+                self.register_meta_entry(
+                    qname.to_string(), color, prim, ret,
+                    param_types, Some(meta_val), param_freshes,
+                );
+            }
+            Err(msg) => self.error_at(span, msg),
+        }
+    }
+
+    fn check_cell_body(
+        &mut self,
+        qname: &str,
+        span: &TokenSpan,
+        color: Option<(u8, u8, u8)>,
+        body_id: &ValId,
+        declared_ty: Option<(u8, Ty)>,
+        params: &[Param],
+        param_freshes: &[ParamInfo],
+    ) {
+        let body_s = self.program.val(*body_id);
+        match self.eval_val(&body_s.0) {
+            Ok(cell) => {
+                // Validate against declared type if present
+                if let Some((declared_dim, ref declared_ty)) = declared_ty {
+                    let dim = cell.pure.dim().in_space;
+                    if declared_dim != dim {
+                        self.error_at(span, "declared type dimension does not match body");
+                    } else {
+                        let body_ty = if dim == 0 {
+                            Ty::Zero
+                        } else {
+                            Ty::Succ(
+                                FreeCell::from_pure(&cell.pure.s()),
+                                FreeCell::from_pure(&cell.pure.t()),
+                            )
+                        };
+                        if let Err(msg) = match_ty(declared_ty, &body_ty) {
+                            self.error_at(span, msg);
+                        }
+                    }
+                }
+
+                self.register_cell_entry(
+                    qname.to_string(), color, cell, param_freshes,
+                );
+            }
+            Err(msg) => {
+                // If no explicit type, try meta fallback
+                if declared_ty.is_none() {
+                    let body_s = self.program.val(*body_id);
+                    if let Ok(meta_val) = self.eval_meta_val(&body_s.0) {
+                        let prim = self.make_prim();
+                        let ret = self.check_meta_type(&body_s.0);
+                        let param_types = self.resolve_item_param_types(params);
+                        self.register_meta_entry(
+                            qname.to_string(), color, prim, ret,
+                            param_types, Some(meta_val), param_freshes,
+                        );
+                        return;
+                    }
+                }
+                self.error_at(span, msg);
+            }
         }
     }
 
@@ -656,23 +657,80 @@ impl<'a> Checker<'a> {
         self.meta_prim_ids.get(name).copied()
     }
 
+    /// Resolve param types from item params to MetaTypes.
+    fn resolve_item_param_types(&self, params: &[Param]) -> Vec<MetaType> {
+        params.iter()
+            .filter_map(|p| {
+                let ty_s = self.program.val(p.ty);
+                self.resolve_meta_type(&ty_s.0)
+            })
+            .collect()
+    }
+
+    /// Register a meta entry: create MetaSig, add entry, store meta value.
+    /// Returns the entry index.
+    fn register_meta_entry(
+        &mut self,
+        qname: String,
+        color: Option<(u8, u8, u8)>,
+        prim: Prim,
+        ret: Option<MetaType>,
+        param_types: Vec<MetaType>,
+        meta_val: Option<PrimArg>,
+        param_freshes: &[ParamInfo],
+    ) -> usize {
+        if let Some(ret) = ret {
+            self.meta_sigs.insert(prim.id, MetaSig { params: param_types, ret });
+        }
+        let pc = self.current_param_counts(param_freshes.len());
+        let idx = self.add_entry(qname, color, EntryBody::Meta(prim), pc);
+        if let Some(val) = meta_val {
+            self.meta_values.insert(idx, val);
+        }
+        if !param_freshes.is_empty() {
+            self.entry_params.insert(idx, param_freshes.to_vec());
+        }
+        idx
+    }
+
+    /// Register a cell entry: add entry + entry params.
+    fn register_cell_entry(
+        &mut self,
+        qname: String,
+        color: Option<(u8, u8, u8)>,
+        cell: FreeCell,
+        param_freshes: &[ParamInfo],
+    ) -> usize {
+        let pc = self.current_param_counts(param_freshes.len());
+        let idx = self.add_entry(qname, color, EntryBody::Cell(cell), pc);
+        if !param_freshes.is_empty() {
+            self.entry_params.insert(idx, param_freshes.to_vec());
+        }
+        idx
+    }
+
+    /// Check if meta type `from` can be coerced to `to` (e.g., nat → rat).
+    fn meta_type_coercible(&self, from: &MetaType, to: &MetaType) -> bool {
+        if let (Some(nat_id), Some(rat_id)) = (self.meta_id("nat"), self.meta_id("rat")) {
+            *from == MetaType(nat_id, vec![]) && *to == MetaType(rat_id, vec![])
+        } else {
+            false
+        }
+    }
+
     fn detect_param_kind(&self, val: &Val) -> ParamKind {
-        if let Val::Path(path) = val {
-            if let Some(name) = path_name(path) {
-                if let Some(index) = self.resolve_name(&name) {
-                    if let EntryBody::Meta(prim) = &self.entries[index].body {
-                        if self.meta_id("nat") == Some(prim.id) {
-                            return ParamKind::Nat;
-                        }
-                        if self.meta_id("rat") == Some(prim.id) {
-                            return ParamKind::Rat;
-                        }
-                        return ParamKind::Meta;
-                    }
+        match self.eval_ty(val) {
+            Ok((_, Ty::Meta(mt))) => {
+                if self.meta_id("nat") == Some(mt.0) {
+                    ParamKind::Nat
+                } else if self.meta_id("rat") == Some(mt.0) {
+                    ParamKind::Rat
+                } else {
+                    ParamKind::Meta
                 }
             }
+            _ => ParamKind::Cell,
         }
-        ParamKind::Cell
     }
 
     // --- Meta evaluation ---
@@ -754,19 +812,15 @@ impl<'a> Checker<'a> {
     }
 
     fn resolve_meta_param(&self, pv: &ParamVal, kind: ParamKind) -> Result<PrimArg> {
-        // First try eval_meta_val for variable references and meta expressions
         let val_s = self.program.val(pv.val);
-        if let Ok(mut arg) = self.eval_meta_val(&val_s.0) {
-            // Nat→Rat coercion when param expects Rat
-            if kind == ParamKind::Rat {
-                if let PrimArg::Nat(n) = arg {
-                    arg = PrimArg::rat(n as f64);
-                }
+        let mut arg = self.eval_meta_val(&val_s.0)?;
+        // Nat→Rat coercion when param expects Rat
+        if kind == ParamKind::Rat {
+            if let PrimArg::Nat(n) = arg {
+                arg = PrimArg::rat(n as f64);
             }
-            return Ok(arg);
         }
-        // Fallback to resolve_param_arg (handles 0.6 path numbers, string color names, etc.)
-        self.resolve_param_arg(pv, kind)
+        Ok(arg)
     }
 
     // --- Meta reduction ---
@@ -824,44 +878,37 @@ impl<'a> Checker<'a> {
         for &deco_id in decos {
             let deco = self.program.val(deco_id);
             let span = deco.1.clone();
-            match self.check_meta_type(&deco.0) {
-                Some(ty) if decorator_type.as_ref() == Some(&ty) => {
-                    match self.eval_meta_val(&deco.0) {
-                        Ok(prim_arg) => {
-                            result.push(self.reduce_meta(&prim_arg));
-                        }
-                        Err(msg) => self.error_at(&span, msg),
-                    }
+            let is_decorator = self.check_meta_type(&deco.0)
+                .filter(|ty| decorator_type.as_ref() == Some(ty))
+                .is_some();
+            if is_decorator {
+                match self.eval_meta_val(&deco.0) {
+                    Ok(prim_arg) => result.push(self.reduce_meta(&prim_arg)),
+                    Err(msg) => self.error_at(&span, msg),
                 }
-                Some(_) => {
-                    self.error_at(&span, "decorator must have type `base.decorator`");
-                }
-                None => {
-                    self.error_at(&span, "decorator must have type `base.decorator`");
-                }
+            } else {
+                self.error_at(&span, "decorator must have type `base.decorator`");
             }
         }
         result
     }
 
     /// Extract color from evaluated decorators.
-    fn extract_color(decos: &[PrimArg]) -> Option<(u8, u8, u8)> {
+    /// Looks for style[rgb[r, g, b]] by checking PrimIds.
+    fn extract_color(&self, decos: &[PrimArg]) -> Option<(u8, u8, u8)> {
+        let style_id = self.meta_id("style")?;
+        let rgb_id = self.meta_id("rgb")?;
         for deco in decos {
-            if let PrimArg::App(_, args) = deco {
-                if let Some(color) = args.first().and_then(Self::interpret_color) {
-                    return Some(color);
-                }
-            }
+            let PrimArg::App(id, args) = deco else { continue };
+            if *id != style_id { continue; }
+            let Some(PrimArg::App(color_id, color_args)) = args.first() else { continue };
+            if *color_id != rgb_id { continue; }
+            let r = match color_args.get(0)? { PrimArg::Nat(n) => *n as u8, _ => continue };
+            let g = match color_args.get(1)? { PrimArg::Nat(n) => *n as u8, _ => continue };
+            let b = match color_args.get(2)? { PrimArg::Nat(n) => *n as u8, _ => continue };
+            return Some((r, g, b));
         }
         None
-    }
-
-    fn interpret_color(arg: &PrimArg) -> Option<(u8, u8, u8)> {
-        let PrimArg::App(_, args) = arg else { return None };
-        let r = match args.get(0)? { PrimArg::Nat(n) => *n as u8, _ => return None };
-        let g = match args.get(1)? { PrimArg::Nat(n) => *n as u8, _ => return None };
-        let b = match args.get(2)? { PrimArg::Nat(n) => *n as u8, _ => return None };
-        Some((r, g, b))
     }
 
     // --- Module alias / instantiation ---
@@ -1015,27 +1062,18 @@ impl<'a> Checker<'a> {
     /// Returns None if the expression is not a valid meta expression.
     fn check_meta_type(&self, val: &Val) -> Option<MetaType> {
         match val {
-            Val::Lit(Lit::Number(s)) => {
-                let id = if s.contains('.') {
-                    self.meta_id("rat")?
-                } else {
-                    self.meta_id("nat")?
-                };
+            Val::Lit(Lit::Number(_)) => {
+                let id = self.meta_id("nat")?;
                 Some(MetaType(id, vec![]))
             }
             Val::Path(path) => {
-                // Try implicit number resolution first
+                // Try implicit number resolution (e.g., 0.6 → rat)
                 if let Some(num) = try_path_as_number(path) {
-                    return match num {
-                        ImplicitNum::Nat(_) => {
-                            let id = self.meta_id("nat")?;
-                            Some(MetaType(id, vec![]))
-                        }
-                        ImplicitNum::Rat(_) => {
-                            let id = self.meta_id("rat")?;
-                            Some(MetaType(id, vec![]))
-                        }
+                    let id = match num {
+                        ImplicitNum::Nat(_) => self.meta_id("nat")?,
+                        ImplicitNum::Rat(_) => self.meta_id("rat")?,
                     };
+                    return Some(MetaType(id, vec![]));
                 }
 
                 let name = path_name(path)?;
@@ -1061,19 +1099,8 @@ impl<'a> Checker<'a> {
                 for (arg_ty, param_ty) in arg_types.iter().zip(sig.params.iter()) {
                     match arg_ty {
                         Some(ty) if ty == param_ty => {}
-                        Some(ty) => {
-                            // nat → rat coercion
-                            let nat_id = self.meta_id("nat");
-                            let rat_id = self.meta_id("rat");
-                            if !(nat_id.is_some()
-                                && *ty == MetaType(nat_id.unwrap(), vec![])
-                                && rat_id.is_some()
-                                && *param_ty == MetaType(rat_id.unwrap(), vec![]))
-                            {
-                                return None;
-                            }
-                        }
-                        None => return None,
+                        Some(ty) if self.meta_type_coercible(ty, param_ty) => {}
+                        _ => return None,
                     }
                 }
 
@@ -1090,18 +1117,12 @@ impl<'a> Checker<'a> {
                 if name == "*" {
                     return Ok((0, Ty::Zero));
                 }
-                if name == "meta" {
-                    // Bootstrap: keyword 'meta' before base.meta is registered
-                    if let Some(mt) = self.resolve_meta_type(val) {
-                        return Ok((0, Ty::Meta(mt)));
-                    }
-                    // Fallback for bootstrap (base.donut: meta: meta)
-                    let id = self.meta_prim_ids.get("meta").copied()
-                        .unwrap_or(0);
-                    return Ok((0, Ty::Meta(MetaType(id, vec![]))));
-                }
                 if let Some(mt) = self.resolve_meta_type(val) {
                     return Ok((0, Ty::Meta(mt)));
+                }
+                // Bootstrap: keyword 'meta' before base.meta is registered
+                if name == "meta" {
+                    return Ok((0, Ty::Meta(MetaType(0, vec![]))));
                 }
                 Err("expected `*` or arrow type".to_string())
             }
@@ -1220,8 +1241,8 @@ impl<'a> Checker<'a> {
                 Ok(PrimArg::Nat(n as u64))
             }
             ParamKind::Rat => {
-                let r = extract_rational(self.program, pv)
-                    .ok_or_else(|| "expected a rational literal for rat parameter".to_string())?;
+                let r = extract_number(self.program, pv)
+                    .ok_or_else(|| "expected a number literal for rat parameter".to_string())?;
                 Ok(PrimArg::rat(r))
             }
             ParamKind::Meta => {
@@ -1247,26 +1268,19 @@ impl<'a> Checker<'a> {
                 continue;
             }
 
-            let resolved = self
-                .resolve_name(&current)
-                .ok_or_else(|| format!("unknown: {}", current))?;
+            // Collect param infos from entry_params or module_params
+            let params = self.resolve_name(&current)
+                .and_then(|idx| self.entry_params.get(&idx))
+                .or_else(|| {
+                    self.resolve_module_name(&current)
+                        .and_then(|name| self.module_params.get(&name))
+                });
 
-            if let Some(params) = self.entry_params.get(&resolved) {
+            if let Some(params) = params {
                 for (i, (_, fresh_id, kind)) in params.iter().enumerate() {
                     if let Some(pv) = seg.params.get(i) {
                         let arg = self.resolve_param_arg(pv, *kind)?;
                         mapping.insert(*fresh_id, arg);
-                    }
-                }
-            }
-
-            if let Some(resolved_name) = self.resolve_module_name(&current) {
-                if let Some(params) = self.module_params.get(&resolved_name) {
-                    for (i, (_, fresh_id, kind)) in params.iter().enumerate() {
-                        if let Some(pv) = seg.params.get(i) {
-                            let arg = self.resolve_param_arg(pv, *kind)?;
-                            mapping.insert(*fresh_id, arg);
-                        }
                     }
                 }
             }
@@ -1381,47 +1395,10 @@ fn extract_number(program: &Program, param: &ParamVal) -> Option<f64> {
     let val = program.val(param.val);
     match &val.0 {
         Val::Lit(Lit::Number(s)) => s.parse().ok(),
-        _ => None,
-    }
-}
-
-fn extract_rational(program: &Program, param: &ParamVal) -> Option<f64> {
-    let val = program.val(param.val);
-    match &val.0 {
-        Val::Lit(Lit::Number(s)) => s.parse().ok(),
-        Val::Lit(Lit::String(s)) => match s.as_str() {
-            "1-" => Some(0.01),
-            "1" => Some(0.05),
-            "1+" => Some(0.09),
-            "2+" => Some(0.52),
-            "2" => Some(0.56),
-            "2-" => Some(0.60),
-            "orange" => Some(0.1),
-            "yellow" => Some(0.16),
-            "green" => Some(0.33),
-            "cyan" => Some(0.5),
-            "blue" => Some(0.6),
-            "purple" => Some(0.75),
-            "pink" => Some(0.9),
-            _ => None,
+        Val::Path(path) => match try_path_as_number(path)? {
+            ImplicitNum::Nat(n) => Some(n as f64),
+            ImplicitNum::Rat(r) => Some(r),
         },
-        Val::Path(path) => {
-            if path.applicand.is_some() {
-                return None;
-            }
-            let parts: Option<Vec<_>> = path
-                .segments
-                .iter()
-                .map(|seg_s| {
-                    if !seg_s.0.params.is_empty() {
-                        return None;
-                    }
-                    let name = &seg_s.0.name;
-                    crate::convert::is_number_str(name).then_some(name.as_str())
-                })
-                .collect();
-            parts?.join(".").parse().ok()
-        }
         _ => None,
     }
 }
