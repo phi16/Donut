@@ -69,9 +69,6 @@ impl Renderer {
         self.context.close_path();
         self.context.set_fill_style_str(color);
         self.context.fill();
-        // self.context.set_stroke_style_str("rgba(255 255 255 0.1)");
-        // self.context.set_line_width(1.0);
-        // self.context.stroke();
     }
 
     fn color(&self, color: (u8, u8, u8)) -> String {
@@ -128,27 +125,25 @@ impl Renderer {
         }
     }
 
+    fn prim_color(&self, table: &PrimTable, prim: &Prim, highlight: Option<&Prim>) -> (u8, u8, u8) {
+        let base = table.get(prim).map(|e| e.color).unwrap_or((128, 128, 128));
+        if highlight == Some(prim) {
+            Self::brighten(base)
+        } else {
+            base
+        }
+    }
+
     pub fn cell(&self, cell: &Geometry, table: &PrimTable, highlight: Option<&Prim>) {
         for cubes in cell.cubes.iter() {
             for (prim, cube) in cubes {
-                let entry = table.get(prim).unwrap();
-                let color = if highlight == Some(prim) {
-                    Self::brighten(entry.color)
-                } else {
-                    entry.color
-                };
+                let color = self.prim_color(table, prim, highlight);
                 self.cube(cube, color);
             }
         }
 
         for (prim, center, r2) in &cell.spheres {
-            let entry = table.get(prim).unwrap();
-            let color = if highlight == Some(prim) {
-                Self::brighten(entry.color)
-            } else {
-                entry.color
-            };
-            let str = format!("rgb({} {} {})", color.0, color.1, color.2);
+            let color = self.prim_color(table, prim, highlight);
 
             assert_eq!(center.len(), 2);
             let r = r2.sqrt();
@@ -159,7 +154,7 @@ impl Renderer {
                 .arc(x, y, r, 0.0, std::f64::consts::PI * 2.0)
                 .unwrap();
             self.context.close_path();
-            self.context.set_fill_style_str(&str);
+            self.context.set_fill_style_str(&self.color(color));
             self.context.fill();
         }
     }
