@@ -1,4 +1,5 @@
 rgb[r g b: nat]: color
 hsv[h s v: rat]: color
 gray[v: nat]: color = rgb[v, v, v]
+lerp[a b: color, x: rat]: color
 style[c: color]: decorator

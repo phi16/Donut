@@ -530,6 +530,84 @@ fn meta_parametric_color_function() {
 }
 
 #[test]
+fn meta_hsv_reduces_to_rgb() {
+    let env = check_source(
+        r#"
+        import "base"
+        import "ui"
+        [style[hsv[0.0, 1, 1]]]
+        u: *
+        "#,
+    )
+    .unwrap();
+    let u = &env.entries[env.lookup["u"]];
+    // hsv(0, 1, 1) = red
+    assert_eq!(u.color, (255, 0, 0));
+}
+
+#[test]
+fn meta_hsv_stored_variable() {
+    let env = check_source(
+        r#"
+        import "base"
+        import "ui"
+        c: color = hsv[0.0, 1, 1]
+        [style[c]]
+        u: *
+        "#,
+    )
+    .unwrap();
+    let u = &env.entries[env.lookup["u"]];
+    assert_eq!(u.color, (255, 0, 0));
+}
+
+#[test]
+fn meta_lerp_colors() {
+    let env = check_source(
+        r#"
+        import "base"
+        import "ui"
+        [style[lerp[rgb[0, 0, 0], rgb[100, 200, 50], 0.5]]]
+        u: *
+        "#,
+    )
+    .unwrap();
+    let u = &env.entries[env.lookup["u"]];
+    assert_eq!(u.color, (50, 100, 25));
+}
+
+#[test]
+fn meta_lerp_with_gray() {
+    let env = check_source(
+        r#"
+        import "base"
+        import "ui"
+        [style[lerp[gray[0], gray[200], 0.5]]]
+        u: *
+        "#,
+    )
+    .unwrap();
+    let u = &env.entries[env.lookup["u"]];
+    assert_eq!(u.color, (100, 100, 100));
+}
+
+#[test]
+fn meta_lerp_with_hsv_and_rgb() {
+    let env = check_source(
+        r#"
+        import "base"
+        import "ui"
+        [style[lerp[hsv[0.0, 1, 1], rgb[0, 0, 255], 0.5]]]
+        u: *
+        "#,
+    )
+    .unwrap();
+    let u = &env.entries[env.lookup["u"]];
+    // hsv(0,1,1)=rgb(255,0,0), lerp with rgb(0,0,255) at 0.5 = (128, 0, 128)
+    assert_eq!(u.color, (128, 0, 128));
+}
+
+#[test]
 fn nested_module_instantiation_three_levels() {
     // 3-level deep nesting: outer > mid > inner
     let env = check_source(

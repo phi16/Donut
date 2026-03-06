@@ -708,11 +708,58 @@ impl<'a> Checker<'a> {
         self.resolve_param_arg(pv, kind)
     }
 
+    // --- Meta reduction ---
+
+    fn reduce_meta(&self, arg: &PrimArg) -> PrimArg {
+        match arg {
+            PrimArg::Nat(_) | PrimArg::Rat(_) | PrimArg::Cell(_) => arg.clone(),
+            PrimArg::App(id, args) => {
+                let reduced: Vec<PrimArg> = args.iter().map(|a| self.reduce_meta(a)).collect();
+                if let Some(result) = self.builtin_reduce(*id, &reduced) {
+                    return result;
+                }
+                PrimArg::App(*id, reduced)
+            }
+        }
+    }
+
+    fn builtin_reduce(&self, id: PrimId, args: &[PrimArg]) -> Option<PrimArg> {
+        let rgb_id = self.meta_id("rgb")?;
+        if self.meta_id("hsv") == Some(id) {
+            let h = args.get(0)?.as_rat()?;
+            let s = args.get(1).and_then(|a| a.as_rat()).unwrap_or(1.0);
+            let v = args.get(2).and_then(|a| a.as_rat()).unwrap_or(1.0);
+            let (r, g, b) = hsv2rgb(h, s, v);
+            return Some(PrimArg::App(rgb_id, vec![
+                PrimArg::Nat(r as u64), PrimArg::Nat(g as u64), PrimArg::Nat(b as u64),
+            ]));
+        }
+        if self.meta_id("lerp") == Some(id) {
+            let a = args.get(0)?;
+            let b = args.get(1)?;
+            let x = args.get(2)?.as_rat()?;
+            if let (PrimArg::App(a_id, a_args), PrimArg::App(b_id, b_args)) = (a, b) {
+                if *a_id == rgb_id && *b_id == rgb_id {
+                    let interp = |i: usize| -> Option<PrimArg> {
+                        let av = match a_args.get(i)? { PrimArg::Nat(n) => *n as f64, _ => return None };
+                        let bv = match b_args.get(i)? { PrimArg::Nat(n) => *n as f64, _ => return None };
+                        Some(PrimArg::Nat((av + (bv - av) * x).round() as u64))
+                    };
+                    return Some(PrimArg::App(rgb_id, vec![interp(0)?, interp(1)?, interp(2)?]));
+                }
+            }
+        }
+        None
+    }
+
+    // --- Color extraction ---
+
     fn extract_color(&self, decos: &[ValId]) -> Option<(u8, u8, u8)> {
         for &deco_id in decos {
             let deco = self.program.val(deco_id);
             if let Ok(prim_arg) = self.eval_meta_val(&deco.0) {
-                if let Some(color) = self.interpret_decorator(&prim_arg) {
+                let reduced = self.reduce_meta(&prim_arg);
+                if let Some(color) = self.interpret_decorator(&reduced) {
                     return Some(color);
                 }
             }
@@ -721,9 +768,7 @@ impl<'a> Checker<'a> {
     }
 
     fn interpret_decorator(&self, arg: &PrimArg) -> Option<(u8, u8, u8)> {
-        let PrimArg::App(id, args) = arg else {
-            return None;
-        };
+        let PrimArg::App(id, args) = arg else { return None };
         if self.meta_id("style") == Some(*id) {
             return args.first().and_then(|a| self.interpret_color(a));
         }
@@ -731,22 +776,12 @@ impl<'a> Checker<'a> {
     }
 
     fn interpret_color(&self, arg: &PrimArg) -> Option<(u8, u8, u8)> {
-        let PrimArg::App(id, args) = arg else {
-            return None;
-        };
-        if self.meta_id("rgb") == Some(*id) {
-            let r = match args.get(0)? { PrimArg::Nat(n) => *n as u8, _ => return None };
-            let g = match args.get(1)? { PrimArg::Nat(n) => *n as u8, _ => return None };
-            let b = match args.get(2)? { PrimArg::Nat(n) => *n as u8, _ => return None };
-            return Some((r, g, b));
-        }
-        if self.meta_id("hsv") == Some(*id) {
-            let h = args.get(0)?.as_rat()?;
-            let s = args.get(1).and_then(|a| a.as_rat()).unwrap_or(1.0);
-            let v = args.get(2).and_then(|a| a.as_rat()).unwrap_or(1.0);
-            return Some(hsv2rgb(h, s, v));
-        }
-        None
+        let PrimArg::App(id, args) = arg else { return None };
+        if self.meta_id("rgb") != Some(*id) { return None }
+        let r = match args.get(0)? { PrimArg::Nat(n) => *n as u8, _ => return None };
+        let g = match args.get(1)? { PrimArg::Nat(n) => *n as u8, _ => return None };
+        let b = match args.get(2)? { PrimArg::Nat(n) => *n as u8, _ => return None };
+        Some((r, g, b))
     }
 
     // --- Module alias / instantiation ---
