@@ -1,5 +1,4 @@
 base = {
-    meta: meta
     nat: meta
     rat: meta
     color: meta

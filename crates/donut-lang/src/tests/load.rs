@@ -231,3 +231,17 @@ fn test_load_parametric_example() {
     let last = env.entries.last().unwrap();
     assert_eq!(last.name, "result");
 }
+
+#[test]
+fn test_load_app_prelude_with_default() {
+    // Mimics donut-app's PRELUDE + default.donut
+    let prelude = "env = import \"sys\"\n";
+    let user_code = include_str!("../../../../donut-app/src/default.donut");
+    let full_code = format!("{}{}", prelude, user_code);
+    let (env, errors) = crate::load::load(&full_code);
+    assert!(errors.is_empty(), "unexpected errors: {:?}", errors);
+
+    // Check that decorators produced colors
+    let u = &env.entries[env.lookup["u"]];
+    assert_eq!(u.color, (80, 80, 80)); // gray[80]
+}

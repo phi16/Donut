@@ -68,7 +68,7 @@ impl App {
         app
     }
 
-    const PRELUDE: &str = "import \"base\"\nimport \"ui\"\nenv = import \"sys\"\n";
+    const PRELUDE: &str = "env = import \"sys\"\n";
 
     fn env_entry_count() -> usize {
         use std::sync::OnceLock;
@@ -163,7 +163,10 @@ impl App {
 
     pub fn update_code(&mut self, code: &str) -> Result<()> {
         let (env, table, runtime) = Self::load(code)?;
-        let selected = env.entries.len() - 1;
+        let selected = env.entries[self.env_entry_count..].iter().enumerate()
+            .rev()
+            .find_map(|(i, e)| e.as_cell().map(|_| self.env_entry_count + i))
+            .ok_or("no cell entries")?;
         let cell = Self::build_geometry(env.entries[selected].as_cell().unwrap());
         self.slice_pos = Self::init_slice_pos(&cell.size);
         self.env = env;
@@ -180,8 +183,9 @@ impl App {
         if index >= self.env.entries.len() {
             return;
         }
+        let Some(cell) = self.env.entries[index].as_cell() else { return };
         self.selected = index;
-        self.cell = Self::build_geometry(self.env.entries[index].as_cell().unwrap());
+        self.cell = Self::build_geometry(cell);
         self.slice_pos = Self::init_slice_pos(&self.cell.size);
         self.update_eval_result();
     }

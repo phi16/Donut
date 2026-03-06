@@ -99,16 +99,23 @@ struct Checker<'a> {
     // Meta values (entry_idx → evaluated PrimArg)
     meta_values: HashMap<usize, PrimArg>,
 
+    // Import-level caching: reuse entries for same ItemId across modules
+    item_cache: HashMap<ItemId, String>,
+
     // Functor support
     functor_maps: HashMap<String, HashMap<PrimId, PureCell>>,
 }
 
 impl<'a> Checker<'a> {
     fn new(program: &'a Program, tokens: &'a [Token<'a>]) -> Self {
+        // Reserve PrimId 0 for the built-in 'meta' type
+        let mut meta_prim_ids = HashMap::new();
+        meta_prim_ids.insert("meta".to_string(), 0);
+
         Checker {
             program,
             tokens,
-            next_prim: 0,
+            next_prim: 1, // 0 is reserved for 'meta'
             entries: Vec::new(),
             lookup: HashMap::new(),
             errors: Vec::new(),
@@ -118,9 +125,10 @@ impl<'a> Checker<'a> {
             entry_params: HashMap::new(),
             accumulated_args: Vec::new(),
             param_count_stack: Vec::new(),
-            meta_prim_ids: HashMap::new(),
+            meta_prim_ids,
             meta_sigs: HashMap::new(),
             meta_values: HashMap::new(),
+            item_cache: HashMap::new(),
             functor_maps: HashMap::new(),
         }
     }
@@ -209,18 +217,31 @@ impl<'a> Checker<'a> {
     fn check_module(&mut self, module: &Module) {
         for (name, item_id) in &module.entries {
             let item = self.program.item(*item_id);
-            self.check_item(name, item);
+            self.check_item(name, item, *item_id);
         }
     }
 
-    fn check_item(&mut self, name: &str, item: &Item) {
+    fn check_item(&mut self, name: &str, item: &Item, item_id: ItemId) {
         if matches!(item.kind, Some(ItemKind::Param)) {
+            return;
+        }
+
+        let qname = self.qualified_name(name);
+
+        // Reuse cached entry for same ItemId (from import cache)
+        if let Some(old_qname) = self.item_cache.get(&item_id).cloned() {
+            if let Some(&idx) = self.lookup.get(&old_qname) {
+                self.lookup.insert(qname.clone(), idx);
+            }
+            self.alias_members(&old_qname, &qname);
+            if let Some(params) = self.module_params.get(&old_qname).cloned() {
+                self.module_params.insert(qname, params);
+            }
             return;
         }
 
         let decos = self.eval_decorators(&item.decos);
         let color = self.extract_color(&decos);
-        let qname = self.qualified_name(name);
         let span = &item.span;
 
         // Handle params: create fresh prims
@@ -252,6 +273,7 @@ impl<'a> Checker<'a> {
                                     self.module_params
                                         .insert(qname.clone(), param_freshes.clone());
                                 }
+                                self.item_cache.insert(item_id, qname);
                                 return;
                             }
                             Ok(None) => {}
@@ -301,6 +323,22 @@ impl<'a> Checker<'a> {
             self.module_params
                 .insert(qname.clone(), param_freshes);
         }
+
+        self.item_cache.insert(item_id, qname);
+    }
+
+    /// Create lookup aliases for all members of an already-checked module.
+    fn alias_members(&mut self, old_prefix: &str, new_prefix: &str) {
+        let Some(members) = self.module_members.get(old_prefix).cloned() else { return };
+        for (member_name, entry_idx) in &members {
+            let old_name = format!("{}.{}", old_prefix, member_name);
+            let new_name = format!("{}.{}", new_prefix, member_name);
+            if let Some(idx) = entry_idx {
+                self.lookup.insert(new_name.clone(), *idx);
+            }
+            self.alias_members(&old_name, &new_name);
+        }
+        self.module_members.insert(new_prefix.to_string(), members);
     }
 
     /// Register a declaration (type annotation only, no body).
@@ -401,34 +439,37 @@ impl<'a> Checker<'a> {
 
         // Try cell interpretation first
         let body_s = self.program.val(*body_id);
-        if let Ok(cell) = self.eval_val(&body_s.0) {
-            if let Some((declared_dim, ref declared_ty)) = declared_ty {
-                let dim = cell.pure.dim().in_space;
-                if declared_dim != dim {
-                    self.error_at(span, "declared type dimension does not match body");
-                } else {
-                    let body_ty = if dim == 0 {
-                        Ty::Zero
+        let cell_err = match self.eval_val(&body_s.0) {
+            Ok(cell) => {
+                if let Some((declared_dim, ref declared_ty)) = declared_ty {
+                    let dim = cell.pure.dim().in_space;
+                    if declared_dim != dim {
+                        self.error_at(span, "declared type dimension does not match body");
                     } else {
-                        Ty::Succ(
-                            FreeCell::from_pure(&cell.pure.s()),
-                            FreeCell::from_pure(&cell.pure.t()),
-                        )
-                    };
-                    if let Err(msg) = match_ty(declared_ty, &body_ty) {
-                        self.error_at(span, msg);
+                        let body_ty = if dim == 0 {
+                            Ty::Zero
+                        } else {
+                            Ty::Succ(
+                                FreeCell::from_pure(&cell.pure.s()),
+                                FreeCell::from_pure(&cell.pure.t()),
+                            )
+                        };
+                        if let Err(msg) = match_ty(declared_ty, &body_ty) {
+                            self.error_at(span, msg);
+                        }
                     }
                 }
+                self.register_entry(
+                    qname.to_string(), color, EntryBody::Cell(cell), param_freshes,
+                );
+                return;
             }
-            self.register_entry(
-                qname.to_string(), color, EntryBody::Cell(cell), param_freshes,
-            );
-            return;
-        }
+            Err(msg) => msg,
+        };
 
         // Fallbacks only when untyped
         if declared_ty.is_some() {
-            self.error_at(span, "body does not match declared type");
+            self.error_at(span, cell_err);
             return;
         }
 
@@ -449,7 +490,7 @@ impl<'a> Checker<'a> {
             return;
         }
 
-        self.error_at(span, "cannot interpret body as cell, meta value, or type");
+        self.error_at(span, cell_err);
     }
 
     fn check_functor(&mut self, item: &Item, qname: &str, mappings: &[FunctorMapping]) {
@@ -605,7 +646,7 @@ impl<'a> Checker<'a> {
         for (member_name, item_id) in &module.entries {
             let full_name = format!("{}.{}", prefix, member_name);
             let item = self.program.item(*item_id);
-            self.check_item(member_name, item);
+            self.check_item(member_name, item, *item_id);
             let entry_idx = self.lookup.get(&full_name).copied();
             let is_sub_module = self.module_members.contains_key(&full_name);
             if entry_idx.is_some() || is_sub_module {
@@ -663,6 +704,9 @@ impl<'a> Checker<'a> {
     fn meta_id(&self, name: &str) -> Option<PrimId> {
         self.meta_prim_ids.get(name).copied()
     }
+
+
+
 
     /// Resolve param types from item params to MetaTypes.
     fn resolve_item_param_types(&self, params: &[Param]) -> Vec<MetaType> {
@@ -786,8 +830,8 @@ impl<'a> Checker<'a> {
                     let r: f64 = s.parse().map_err(|e: std::num::ParseFloatError| e.to_string())?;
                     Ok(PrimArg::rat(r))
                 } else {
-                    let n: f64 = s.parse().map_err(|e: std::num::ParseFloatError| e.to_string())?;
-                    Ok(PrimArg::Nat(n as u64))
+                    let n: u64 = s.parse().map_err(|_| format!("invalid nat: {}", s))?;
+                    Ok(PrimArg::Nat(n))
                 }
             }
             _ => Err("unsupported in meta context".to_string()),
@@ -1119,12 +1163,13 @@ impl<'a> Checker<'a> {
                         }
                     }
                 }
+                // Built-in 'meta' keyword
+                if name == "meta" {
+                    let id = self.meta_id("meta").unwrap();
+                    return Ok((0, Ty::Meta(MetaType(id, vec![]))));
+                }
                 if let Some(mt) = self.resolve_meta_type(val) {
                     return Ok((0, Ty::Meta(mt)));
-                }
-                // Bootstrap: keyword 'meta' before base.meta is registered
-                if name == "meta" {
-                    return Ok((0, Ty::Meta(MetaType(0, vec![]))));
                 }
                 Err("expected `*` or arrow type".to_string())
             }
