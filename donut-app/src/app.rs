@@ -45,7 +45,7 @@ impl App {
         let (env, table, runtime) = Self::load(input).unwrap();
         let env_entry_count = Self::env_entry_count();
         let selected = env.entries.len() - 1;
-        let cell = Self::build_geometry(env.entries[selected].body.as_cell().unwrap());
+        let cell = Self::build_geometry(env.entries[selected].as_cell().unwrap());
 
         let mut app = Self {
             canvas,
@@ -91,7 +91,7 @@ impl App {
 
         let mut table = PrimTable::new();
         for e in env.entries.iter() {
-            if let Some(cell) = e.body.as_cell() {
+            if let Some(cell) = e.as_cell() {
                 if let Some(prim) = cell.pure.extract_prim() {
                     table.insert(
                         prim.clone(),
@@ -108,7 +108,7 @@ impl App {
         let mut prim_lookup: HashMap<String, PrimId> = HashMap::new();
         for (name, &idx) in &env.lookup {
             let entry = &env.entries[idx];
-            if let Some(cell) = entry.body.as_cell() {
+            if let Some(cell) = entry.as_cell() {
                 if let Some(id) = cell.pure.extract_prim_id() {
                     prim_lookup.insert(name.clone(), id);
                 }
@@ -149,7 +149,7 @@ impl App {
                 .unwrap()
                 .dyn_into::<web_sys::HtmlOptionElement>()
                 .unwrap();
-            let Some(cell) = entry.body.as_cell() else { continue };
+            let Some(cell) = entry.as_cell() else { continue };
             let dim = cell.pure.dim().in_space;
             let label = format!("{} ({}d)", entry.name, dim);
             option.set_text_content(Some(&label));
@@ -164,7 +164,7 @@ impl App {
     pub fn update_code(&mut self, code: &str) -> Result<()> {
         let (env, table, runtime) = Self::load(code)?;
         let selected = env.entries.len() - 1;
-        let cell = Self::build_geometry(env.entries[selected].body.as_cell().unwrap());
+        let cell = Self::build_geometry(env.entries[selected].as_cell().unwrap());
         self.slice_pos = Self::init_slice_pos(&cell.size);
         self.env = env;
         self.table = table;
@@ -181,7 +181,7 @@ impl App {
             return;
         }
         self.selected = index;
-        self.cell = Self::build_geometry(self.env.entries[index].body.as_cell().unwrap());
+        self.cell = Self::build_geometry(self.env.entries[index].as_cell().unwrap());
         self.slice_pos = Self::init_slice_pos(&self.cell.size);
         self.update_eval_result();
     }
@@ -325,7 +325,7 @@ impl App {
 
     fn update_eval_result(&self) {
         let entry = &self.env.entries[self.selected];
-        let Some(cell) = entry.body.as_cell() else {
+        let Some(cell) = entry.as_cell() else {
             self.eval_result_el.set_inner_text(&format!("{}: meta", entry.name));
             return;
         };

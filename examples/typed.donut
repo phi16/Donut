@@ -1,0 +1,95 @@
+import "ui"
+
+// ============================================================
+// Type aliases
+// ============================================================
+
+[style[gray[80]]]
+u: *
+[style[gray[80]]]
+v: *
+
+// Type alias: Endo[X] = X → X
+Endo[X: *] = X → X
+
+// Type alias: Hom[X, Y] = X → Y
+Hom[X: *, Y: *] = X → Y
+
+// Alias chaining
+End = Endo[u]
+
+// ============================================================
+// Cells using type aliases
+// ============================================================
+
+[style[hue[0.6]]]
+f: Endo[u]
+[style[hue[0.1]]]
+g: Endo[u]
+[style[hue[0.35]]]
+h: Hom[u, v]
+
+// 2-cell between endomorphisms (same source/target)
+[style[hue[0.8]]]
+alpha: f → g
+
+// Using End (chained alias)
+[style[hue[0.4]]]
+k: End
+
+// ============================================================
+// Parametric module with type aliases
+// ============================================================
+
+cat[C: *] = {
+    Arr = Endo[C]
+
+    [style[hsv[0.6, 1, 1]]]
+    x: Arr
+    [style[hsv[0.1, 1, 1]]]
+    m: x x → x
+    [style[hsv[0.2, 1, 1]]]
+    a: m x; m → x m; m
+}
+
+cu = cat[u]
+cv = cat[v]
+
+// ============================================================
+// Parametric identity: pass-through cell param as body
+// ============================================================
+
+id_cell[X: *, y: Endo[X]]: Endo[X] = y
+
+witness = id_cell[u, f]
+
+// ============================================================
+// Meta configuration in module
+// ============================================================
+
+config = {
+    my_hue: base.rat = 0.45
+    my_gray: base.nat = 120
+}
+
+[style[hue[config.my_hue]]]
+colored: *
+
+[style[gray[config.my_gray]]]
+dimmed: colored → colored
+
+// ============================================================
+// Parametric star body
+// ============================================================
+
+obj[X: *] = *
+
+p: obj[u]
+q: obj[v]
+
+// ============================================================
+// Composite result
+// ============================================================
+
+double_m = cu.m cu.x; cu.m
+result = cu.a
