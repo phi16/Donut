@@ -485,7 +485,7 @@ fn meta_typed_body() {
         r#"
         import "base"
         import "ui"
-        g: nat = 80
+        g: base.nat = 80
         [style[gray[g]]]
         u: *
         "#,
@@ -496,13 +496,25 @@ fn meta_typed_body() {
 }
 
 #[test]
+fn meta_typed_body_mismatch() {
+    // g: base.meta = 80 should be a type error (80 is nat, not meta)
+    let result = check_source(
+        r#"
+        import "base"
+        g: base.meta = 80
+        "#,
+    );
+    assert!(result.is_err());
+}
+
+#[test]
 fn meta_parametric_function() {
     // f[x: nat]: nat = x, used in decorator
     let env = check_source(
         r#"
         import "base"
         import "ui"
-        f[x: nat]: nat = x
+        f[x: base.nat]: base.nat = x
         [style[gray[f[120]]]]
         u: *
         "#,
@@ -519,7 +531,7 @@ fn meta_parametric_color_function() {
         r#"
         import "base"
         import "ui"
-        mycolor[r g b: nat]: color = rgb[r, g, b]
+        mycolor[r g b: base.nat]: base.color = rgb[r, g, b]
         [style[mycolor[10, 20, 30]]]
         u: *
         "#,
@@ -551,7 +563,7 @@ fn meta_hsv_stored_variable() {
         r#"
         import "base"
         import "ui"
-        c: color = hsv[0.0, 1, 1]
+        c: base.color = hsv[0.0, 1, 1]
         [style[c]]
         u: *
         "#,

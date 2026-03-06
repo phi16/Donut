@@ -155,11 +155,14 @@ impl Module {
     }
 
     /// Merge source entries into self. Returns conflicting key names.
+    /// Duplicate entries with the same ItemId are silently skipped.
     pub fn merge(&mut self, source: Module) -> Vec<String> {
         let mut conflicts = Vec::new();
         for (key, item) in source.entries {
-            if self.contains_key(&key) {
-                conflicts.push(key);
+            if let Some(existing) = self.get(&key) {
+                if existing != item {
+                    conflicts.push(key);
+                }
             } else {
                 self.define(key, item);
             }

@@ -858,14 +858,6 @@ fn builtin_source(name: &str) -> Option<&'static str> {
 
 pub fn resolve(program: semtree::Program, tokens: &[Token]) -> (Program, Vec<Error>) {
     let mut checker = Checker::new(tokens);
-    // Prelude scope: built-in decorator names
-    checker.push_scope();
-    for name in &["gray", "hsv", "rgb"] {
-        let dummy_span = TokenSpan { start: 0, end: 0 };
-        let item = Item::new(None, dummy_span);
-        let id = checker.alloc_item(item);
-        checker.define(name.to_string(), id);
-    }
     // User scope
     checker.push_scope();
     for d in program.0 {

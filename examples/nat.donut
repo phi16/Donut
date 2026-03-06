@@ -1,15 +1,17 @@
+import "ui"
+
 // ============================================================
 // Abstract environment: natural number arithmetic
 // ============================================================
 
 nat = {
-    [hsv[0.33]]
+    [style[hue[0.33]]]
     C: *
 
     // Types
-    [hsv[0.55]]
+    [style[hue[0.55]]]
     Nat: C → C
-    [hsv[0.08]]
+    [style[hue[0.08]]]
     Bool: C → C
 
     // Nat constants
@@ -87,11 +89,11 @@ succ_add: nat.succ nat.Nat; nat.add ~ nat.Nat nat.succ; nat.add
 // ============================================================
 
 u8 = {
-    [hsv[0.75]]
+    [style[hue[0.75]]]
     D: *
 
     // Types
-    [hsv[0.85]]
+    [style[hue[0.85]]]
     U8: D → D
 
     // Constants

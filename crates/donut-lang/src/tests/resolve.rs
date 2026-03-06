@@ -1204,7 +1204,7 @@ fn functor_app_undefined_functor() {
 fn import_base() {
     let p = check_module("import \"base\"\nC: *\nx: C → C");
     assert!(p.root.get("C").is_some());
-    assert!(p.root.get("nat").is_some());
+    assert!(p.root.get("base").is_some());
     assert!(p.root.get("x").is_some());
 }
 

@@ -15,7 +15,7 @@ type Result<T> = std::result::Result<T, String>;
 enum Ty {
     Zero,
     Succ(FreeCell, FreeCell),
-    Meta,
+    Meta(MetaType),
 }
 
 #[derive(Debug, Clone)]
@@ -45,6 +45,16 @@ pub struct Entry {
 pub struct Env {
     pub entries: Vec<Entry>,
     pub lookup: HashMap<String, usize>,
+}
+
+// --- Meta type ---
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MetaType(PrimId, Vec<MetaType>);
+
+struct MetaSig {
+    params: Vec<MetaType>,
+    ret: MetaType,
 }
 
 // --- Param kind ---
@@ -83,6 +93,8 @@ struct Checker<'a> {
 
     // Meta type tracking (short_name → PrimId)
     meta_prim_ids: HashMap<String, PrimId>,
+    // Meta type signatures (constructor PrimId → signature)
+    meta_sigs: HashMap<PrimId, MetaSig>,
     // Meta values (entry_idx → evaluated PrimArg)
     meta_values: HashMap<usize, PrimArg>,
 
@@ -106,6 +118,7 @@ impl<'a> Checker<'a> {
             accumulated_args: Vec::new(),
             param_count_stack: Vec::new(),
             meta_prim_ids: HashMap::new(),
+            meta_sigs: HashMap::new(),
             meta_values: HashMap::new(),
             functor_maps: HashMap::new(),
         }
@@ -204,7 +217,8 @@ impl<'a> Checker<'a> {
             return;
         }
 
-        let color = self.extract_color(&item.decos);
+        let decos = self.eval_decorators(&item.decos);
+        let color = Self::extract_color(&decos);
         let qname = self.qualified_name(name);
         let span = &item.span;
 
@@ -261,7 +275,16 @@ impl<'a> Checker<'a> {
                                         FreeCell::prim(prim, s.clone(), t.clone())
                                             .map(EntryBody::Cell)
                                     }
-                                    Ty::Meta => Ok(EntryBody::Meta(prim)),
+                                    Ty::Meta(mt) => {
+                                        let param_types: Vec<MetaType> = item.params.iter()
+                                            .filter_map(|p| {
+                                                let ty_s = self.program.val(p.ty);
+                                                self.resolve_meta_type(&ty_s.0)
+                                            })
+                                            .collect();
+                                        self.meta_sigs.insert(prim.id, MetaSig { params: param_types, ret: mt.clone() });
+                                        Ok(EntryBody::Meta(prim))
+                                    }
                                 };
                                 match body {
                                     Ok(body) => {
@@ -279,20 +302,46 @@ impl<'a> Checker<'a> {
                         }
                     }
                     (dim_ty, Some(body_id)) => {
-                        // Check if the type is Meta
-                        let is_meta_ty = if let Some(ty_id) = dim_ty {
-                            let ty_s = self.program.val(*ty_id);
-                            matches!(self.eval_ty(&ty_s.0), Ok((_, Ty::Meta)))
-                        } else {
-                            false
-                        };
+                        // Check if the type annotation is Meta
+                        let declared_meta = dim_ty.and_then(|ty_id| {
+                            let ty_s = self.program.val(ty_id);
+                            match self.eval_ty(&ty_s.0) {
+                                Ok((_, Ty::Meta(mt))) => Some(mt),
+                                _ => None,
+                            }
+                        });
 
-                        if is_meta_ty {
+                        if declared_meta.is_some() {
                             // Meta-typed body: evaluate as meta expression
                             let body_s = self.program.val(*body_id);
                             match self.eval_meta_val(&body_s.0) {
                                 Ok(meta_val) => {
                                     let prim = self.make_prim();
+
+                                    let body_ret = self.check_meta_type(&body_s.0);
+
+                                    let ret = match (&declared_meta, &body_ret) {
+                                        (Some(decl), Some(body_ty)) => {
+                                            if decl != body_ty {
+                                                self.error_at(span, "meta body type does not match declared type");
+                                            }
+                                            Some(decl.clone())
+                                        }
+                                        (Some(decl), None) => Some(decl.clone()),
+                                        (None, Some(body_ty)) => Some(body_ty.clone()),
+                                        (None, None) => None,
+                                    };
+
+                                    if let Some(ret) = ret {
+                                        let param_types: Vec<MetaType> = item.params.iter()
+                                            .filter_map(|p| {
+                                                let ty_s = self.program.val(p.ty);
+                                                self.resolve_meta_type(&ty_s.0)
+                                            })
+                                            .collect();
+                                        self.meta_sigs.insert(prim.id, MetaSig { params: param_types, ret });
+                                    }
+
                                     let pc = self.current_param_counts(param_freshes.len());
                                     let idx = self.add_entry(qname.clone(), color, EntryBody::Meta(prim), pc);
                                     self.meta_values.insert(idx, meta_val);
@@ -349,6 +398,10 @@ impl<'a> Checker<'a> {
                                         let body_s = self.program.val(*body_id);
                                         if let Ok(meta_val) = self.eval_meta_val(&body_s.0) {
                                             let prim = self.make_prim();
+                                            // Infer return type from body
+                                            if let Some(ret) = self.check_meta_type(&body_s.0) {
+                                                self.meta_sigs.insert(prim.id, MetaSig { params: vec![], ret });
+                                            }
                                             let pc = self.current_param_counts(param_freshes.len());
                                             let idx = self.add_entry(qname.clone(), color, EntryBody::Meta(prim), pc);
                                             self.meta_values.insert(idx, meta_val);
@@ -573,7 +626,7 @@ impl<'a> Checker<'a> {
                     let cell = match &ty {
                         Ty::Zero => FreeCell::zero(prim),
                         Ty::Succ(s, t) => FreeCell::prim(prim, s.clone(), t.clone())?,
-                        Ty::Meta => return Err("meta type cannot be used as cell parameter".to_string()),
+                        Ty::Meta(_) => return Err("meta type cannot be used as cell parameter".to_string()),
                     };
                     let param_name = self.qualified_name(&param.name);
                     self.add_entry(param_name, None, EntryBody::Cell(cell.clone()), vec![]);
@@ -627,6 +680,14 @@ impl<'a> Checker<'a> {
     fn eval_meta_val(&self, val: &Val) -> Result<PrimArg> {
         match val {
             Val::Path(path) => {
+                // Try implicit number resolution first
+                if let Some(num) = try_path_as_number(path) {
+                    return match num {
+                        ImplicitNum::Nat(n) => Ok(PrimArg::Nat(n)),
+                        ImplicitNum::Rat(r) => Ok(PrimArg::rat(r)),
+                    };
+                }
+
                 let name = path_name(path).ok_or_else(|| "invalid meta path".to_string())?;
                 let index = self
                     .resolve_name(&name)
@@ -754,12 +815,40 @@ impl<'a> Checker<'a> {
 
     // --- Color extraction ---
 
-    fn extract_color(&self, decos: &[ValId]) -> Option<(u8, u8, u8)> {
+    /// Evaluate and type-check all decorators. Returns reduced PrimArg values
+    /// for successfully evaluated decorators of type `base.decorator`.
+    fn eval_decorators(&mut self, decos: &[ValId]) -> Vec<PrimArg> {
+        let decorator_type = self.meta_id("decorator")
+            .map(|id| MetaType(id, vec![]));
+        let mut result = Vec::new();
         for &deco_id in decos {
             let deco = self.program.val(deco_id);
-            if let Ok(prim_arg) = self.eval_meta_val(&deco.0) {
-                let reduced = self.reduce_meta(&prim_arg);
-                if let Some(color) = self.interpret_decorator(&reduced) {
+            let span = deco.1.clone();
+            match self.check_meta_type(&deco.0) {
+                Some(ty) if decorator_type.as_ref() == Some(&ty) => {
+                    match self.eval_meta_val(&deco.0) {
+                        Ok(prim_arg) => {
+                            result.push(self.reduce_meta(&prim_arg));
+                        }
+                        Err(msg) => self.error_at(&span, msg),
+                    }
+                }
+                Some(_) => {
+                    self.error_at(&span, "decorator must have type `base.decorator`");
+                }
+                None => {
+                    self.error_at(&span, "decorator must have type `base.decorator`");
+                }
+            }
+        }
+        result
+    }
+
+    /// Extract color from evaluated decorators.
+    fn extract_color(decos: &[PrimArg]) -> Option<(u8, u8, u8)> {
+        for deco in decos {
+            if let PrimArg::App(_, args) = deco {
+                if let Some(color) = args.first().and_then(Self::interpret_color) {
                     return Some(color);
                 }
             }
@@ -767,17 +856,8 @@ impl<'a> Checker<'a> {
         None
     }
 
-    fn interpret_decorator(&self, arg: &PrimArg) -> Option<(u8, u8, u8)> {
-        let PrimArg::App(id, args) = arg else { return None };
-        if self.meta_id("style") == Some(*id) {
-            return args.first().and_then(|a| self.interpret_color(a));
-        }
-        None
-    }
-
-    fn interpret_color(&self, arg: &PrimArg) -> Option<(u8, u8, u8)> {
-        let PrimArg::App(id, args) = arg else { return None };
-        if self.meta_id("rgb") != Some(*id) { return None }
+    fn interpret_color(arg: &PrimArg) -> Option<(u8, u8, u8)> {
+        let PrimArg::App(_, args) = arg else { return None };
         let r = match args.get(0)? { PrimArg::Nat(n) => *n as u8, _ => return None };
         let g = match args.get(1)? { PrimArg::Nat(n) => *n as u8, _ => return None };
         let b = match args.get(2)? { PrimArg::Nat(n) => *n as u8, _ => return None };
@@ -909,6 +989,100 @@ impl<'a> Checker<'a> {
 
     // --- Type evaluation ---
 
+    /// Resolve a type annotation Val to a MetaType.
+    fn resolve_meta_type(&self, val: &Val) -> Option<MetaType> {
+        if let Val::Path(path) = val {
+            let name = path_name(path)?;
+            let index = self.resolve_name(&name)?;
+            if let EntryBody::Meta(prim) = &self.entries[index].body {
+                let seg = path.segments.last()?;
+                if seg.0.params.is_empty() {
+                    return Some(MetaType(prim.id, vec![]));
+                }
+                let arg_types: Vec<MetaType> = seg.0.params.iter()
+                    .filter_map(|pv| {
+                        let v = self.program.val(pv.val);
+                        self.resolve_meta_type(&v.0)
+                    })
+                    .collect();
+                return Some(MetaType(prim.id, arg_types));
+            }
+        }
+        None
+    }
+
+    /// Type-check a meta value expression, returning its MetaType.
+    /// Returns None if the expression is not a valid meta expression.
+    fn check_meta_type(&self, val: &Val) -> Option<MetaType> {
+        match val {
+            Val::Lit(Lit::Number(s)) => {
+                let id = if s.contains('.') {
+                    self.meta_id("rat")?
+                } else {
+                    self.meta_id("nat")?
+                };
+                Some(MetaType(id, vec![]))
+            }
+            Val::Path(path) => {
+                // Try implicit number resolution first
+                if let Some(num) = try_path_as_number(path) {
+                    return match num {
+                        ImplicitNum::Nat(_) => {
+                            let id = self.meta_id("nat")?;
+                            Some(MetaType(id, vec![]))
+                        }
+                        ImplicitNum::Rat(_) => {
+                            let id = self.meta_id("rat")?;
+                            Some(MetaType(id, vec![]))
+                        }
+                    };
+                }
+
+                let name = path_name(path)?;
+                let index = self.resolve_name(&name)?;
+                let EntryBody::Meta(prim) = &self.entries[index].body else { return None };
+                let sig = self.meta_sigs.get(&prim.id)?;
+
+                // Collect argument types from the last segment's params
+                let seg = path.segments.last()?;
+                let arg_types: Vec<Option<MetaType>> = seg.0.params.iter()
+                    .map(|pv| {
+                        let v = self.program.val(pv.val);
+                        self.check_meta_type(&v.0)
+                    })
+                    .collect();
+
+                // Arity check
+                if arg_types.len() != sig.params.len() {
+                    return None;
+                }
+
+                // Argument type check
+                for (arg_ty, param_ty) in arg_types.iter().zip(sig.params.iter()) {
+                    match arg_ty {
+                        Some(ty) if ty == param_ty => {}
+                        Some(ty) => {
+                            // nat → rat coercion
+                            let nat_id = self.meta_id("nat");
+                            let rat_id = self.meta_id("rat");
+                            if !(nat_id.is_some()
+                                && *ty == MetaType(nat_id.unwrap(), vec![])
+                                && rat_id.is_some()
+                                && *param_ty == MetaType(rat_id.unwrap(), vec![]))
+                            {
+                                return None;
+                            }
+                        }
+                        None => return None,
+                    }
+                }
+
+                Some(sig.ret.clone())
+            }
+            _ => None,
+        }
+    }
+
     fn eval_ty(&self, val: &Val) -> Result<(u8, Ty)> {
         match val {
             Val::Path(path) => {
@@ -917,12 +1091,17 @@ impl<'a> Checker<'a> {
                     return Ok((0, Ty::Zero));
                 }
                 if name == "meta" {
-                    return Ok((0, Ty::Meta));
-                }
-                if let Some(index) = self.resolve_name(&name) {
-                    if let EntryBody::Meta(_) = &self.entries[index].body {
-                        return Ok((0, Ty::Meta));
+                    // Bootstrap: keyword 'meta' before base.meta is registered
+                    if let Some(mt) = self.resolve_meta_type(val) {
+                        return Ok((0, Ty::Meta(mt)));
                     }
+                    // Fallback for bootstrap (base.donut: meta: meta)
+                    let id = self.meta_prim_ids.get("meta").copied()
+                        .unwrap_or(0);
+                    return Ok((0, Ty::Meta(MetaType(id, vec![]))));
+                }
+                if let Some(mt) = self.resolve_meta_type(val) {
+                    return Ok((0, Ty::Meta(mt)));
                 }
                 Err("expected `*` or arrow type".to_string())
             }
@@ -1133,7 +1312,7 @@ fn match_ty(x: &Ty, y: &Ty) -> Result<()> {
             }
             Ok(())
         }
-        (Ty::Meta, Ty::Meta) => Ok(()),
+        (Ty::Meta(a), Ty::Meta(b)) if a == b => Ok(()),
         _ => Err("type mismatch".to_string()),
     }
 }
@@ -1159,6 +1338,35 @@ fn lift_dim(mut cell: FreeCell, target: u8) -> FreeCell {
         cell = FreeCell::id(cell);
     }
     cell
+}
+
+enum ImplicitNum {
+    Nat(u64),
+    Rat(f64),
+}
+
+fn try_path_as_number(path: &Path) -> Option<ImplicitNum> {
+    if path.applicand.is_some() {
+        return None;
+    }
+    if path.segments.iter().any(|s| {
+        !s.0.params.is_empty() || !crate::convert::is_number_str(&s.0.name)
+    }) {
+        return None;
+    }
+    match path.segments.len() {
+        1 => {
+            let s = &path.segments[0].0.name;
+            let n: u64 = s.parse().ok()?;
+            Some(ImplicitNum::Nat(n))
+        }
+        2 => {
+            let s = format!("{}.{}", path.segments[0].0.name, path.segments[1].0.name);
+            let r: f64 = s.parse().ok()?;
+            Some(ImplicitNum::Rat(r))
+        }
+        _ => None,
+    }
 }
 
 fn path_name(path: &Path) -> Option<String> {

@@ -1,3 +1,5 @@
+import "ui"
+
 // Parametric monoid
 //
 // Expected hover labels:
@@ -7,15 +9,15 @@
 //   3-cell:  cat.a[u] (= result)
 
 cat[C: *] = {
-    [hsv[0.6, 1, 1]]
+    [style[hsv[0.6, 1, 1]]]
     x: C → C
-    [hsv[0.1, 1, 1]]
+    [style[hsv[0.1, 1, 1]]]
     m: x x → x
-    [hsv[0.2, 1, 1]]
+    [style[hsv[0.2, 1, 1]]]
     a: m x; m → x m; m
 }
 
-[gray[80]]
+[style[gray[80]]]
 u: *
 
 c = cat[u]
