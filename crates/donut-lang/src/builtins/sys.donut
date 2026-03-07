@@ -10,6 +10,8 @@ bool: C → C with {
     and: bool bool → bool
     or: bool bool → bool
     dup: bool → bool bool
+    drop: bool → C
+    swap: bool bool → bool bool
 }
 
 [style.color[hue[0.1]]]
@@ -21,6 +23,8 @@ f32: C → C with {
     div: f32 f32 → f32
     neg: f32 → f32
     dup: f32 → f32 f32
+    drop: f32 → C
+    swap: f32 f32 → f32 f32
 }
 
 [style.color[hue[0.6]]]
@@ -37,4 +41,36 @@ u32: C → C with {
     le: u32 u32 → bool
     to_f32: u32 → f32
     dup: u32 → u32 u32
+    drop: u32 → C
+    swap: u32 u32 → u32 u32
+}
+
+[style.color[hue[0.05]]]
+f2: C → C with {
+    pack: f32 f32 → f2
+    unpack: f2 → f32 f32
+    add: f2 f2 → f2
+    sub: f2 f2 → f2
+    mul: f2 f2 → f2
+    div: f2 f2 → f2
+    neg: f2 → f2
+    scale: f32 f2 → f2
+    dup: f2 → f2 f2
+    drop: f2 → C
+    swap: f2 f2 → f2 f2
+}
+
+[style.color[hue[0.95]]]
+f3: C → C with {
+    pack: f32 f32 f32 → f3
+    unpack: f3 → f32 f32 f32
+    add: f3 f3 → f3
+    sub: f3 f3 → f3
+    mul: f3 f3 → f3
+    div: f3 f3 → f3
+    neg: f3 → f3
+    scale: f32 f3 → f3
+    dup: f3 → f3 f3
+    drop: f3 → C
+    swap: f3 f3 → f3 f3
 }

@@ -12,16 +12,10 @@ fn setup(user_code: &str) -> (Runtime, donut_lang::check::Env) {
         eprintln!("  warning: {}", msg);
     }
 
-    // Build name → PrimId lookup from env entries
-    let mut lookup: HashMap<String, PrimId> = HashMap::new();
-    for (name, &idx) in &env.lookup {
-        let entry = &env.entries[idx];
-        if let Some(cell) = entry.as_cell() {
-            if let Some(id) = cell.pure.extract_prim_id() {
-                lookup.insert(name.clone(), id);
-            }
-        }
-    }
+    // Build name → PrimId lookup from prim_decls (canonical names)
+    let lookup: HashMap<String, PrimId> = env.prim_decls.iter()
+        .map(|(&id, decl)| (decl.name.clone(), id))
+        .collect();
 
     let mut rt = Runtime::new();
     register_sys(&mut rt, &lookup);
@@ -228,4 +222,121 @@ result = F(th)
     let result_idx = *env.lookup.get("result").expect("result not found");
     let result_cell = &env.entries[result_idx].as_cell().unwrap();
     assert_eq!(result_cell.pure.dim().in_space, 2);
+}
+
+// --- import "sys" (without named binding) ---
+
+fn setup_bare(user_code: &str) -> (Runtime, donut_lang::check::Env) {
+    let prelude = "import \"base\"\nimport \"ui\"\nimport \"sys\"\n";
+    let code = format!("{}{}", prelude, user_code);
+    let (env, errors) = donut_lang::load::load(&code);
+    for (_, msg) in &errors {
+        eprintln!("  warning: {}", msg);
+    }
+
+    let lookup: HashMap<String, PrimId> = env.prim_decls.iter()
+        .map(|(&id, decl)| (decl.name.clone(), id))
+        .collect();
+
+    let mut rt = Runtime::new();
+    register_sys(&mut rt, &lookup);
+    (rt, env)
+}
+
+#[test]
+fn test_bare_import() {
+    let (rt, env) = setup_bare("x = u32.lit[42]");
+    assert_eq!(eval_entry(&rt, &env, "x"), vec![Value::U32(42)]);
+}
+
+#[test]
+fn test_bare_add() {
+    let (rt, env) = setup_bare("\
+sum = u32.lit[1] u32.lit[1]; u32.add
+");
+    assert_eq!(eval_entry(&rt, &env, "sum"), vec![Value::U32(2)]);
+}
+
+#[test]
+fn test_bare_bool() {
+    let (rt, env) = setup_bare("\
+t = bool.lit[1]
+notf = bool.lit[0]; bool.not
+");
+    assert_eq!(eval_entry(&rt, &env, "t"), vec![Value::Bool(true)]);
+    assert_eq!(eval_entry(&rt, &env, "notf"), vec![Value::Bool(true)]);
+}
+
+#[test]
+fn test_bare_f32() {
+    let (rt, env) = setup_bare("\
+x = f32.lit[1] f32.lit[1]; f32.add
+");
+    assert_eq!(eval_entry(&rt, &env, "x"), vec![Value::F32(2.0)]);
+}
+
+#[test]
+fn test_bare_functor() {
+    let (rt, env) = setup_bare("\
+mycat = {
+    K: *
+    [hsv[0.6]]
+    x: K → K
+    zero: K → x
+    succ: x → x
+    add: x x → x
+}
+F: mycat.K ~> C
+F(mycat.x) = u32
+F(mycat.zero) = u32.lit[0]
+F(mycat.succ) = u32.lit[1] u32; u32.add
+F(mycat.add) = u32.add
+one = F(mycat.zero; mycat.succ)
+sum = F(mycat.zero; mycat.succ) F(mycat.zero; mycat.succ); F(mycat.add)
+");
+    assert_eq!(eval_entry(&rt, &env, "one"), vec![Value::U32(1)]);
+    assert_eq!(eval_entry(&rt, &env, "sum"), vec![Value::U32(2)]);
+}
+
+// --- canonical name consistency ---
+
+#[test]
+fn test_canonical_names_match() {
+    // Both import styles should produce identical canonical names in prim_decls
+    let named_code = "import \"base\"\nimport \"ui\"\nsys = import \"sys\"\n";
+    let bare_code = "import \"base\"\nimport \"ui\"\nimport \"sys\"\n";
+
+    let (named_env, _) = donut_lang::load::load(named_code);
+    let (bare_env, _) = donut_lang::load::load(bare_code);
+
+    let mut named_names: Vec<String> = named_env.prim_decls.values()
+        .map(|d| d.name.clone()).collect();
+    let mut bare_names: Vec<String> = bare_env.prim_decls.values()
+        .map(|d| d.name.clone()).collect();
+    named_names.sort();
+    bare_names.sort();
+
+    assert_eq!(named_names, bare_names,
+        "canonical names should be identical regardless of import style");
+}
+
+// --- mixed import styles ---
+
+#[test]
+fn test_mixed_import() {
+    // Use both bare and named import for sys
+    let prelude = "import \"base\"\nimport \"ui\"\nimport \"sys\"\nsys = import \"sys\"\n";
+    let code = format!("{}x = sys.u32.lit[1] u32.lit[2]; sys.u32.add\n", prelude);
+    let (env, errors) = donut_lang::load::load(&code);
+    for (_, msg) in &errors {
+        eprintln!("  warning: {}", msg);
+    }
+
+    let lookup: HashMap<String, PrimId> = env.prim_decls.iter()
+        .map(|(&id, decl)| (decl.name.clone(), id))
+        .collect();
+    let mut rt = Runtime::new();
+    register_sys(&mut rt, &lookup);
+
+    assert_eq!(eval_entry(&rt, &env, "x"), vec![Value::U32(3)]);
 }

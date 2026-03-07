@@ -100,16 +100,10 @@ impl App {
             );
         }
 
-        // Build runtime
-        let mut prim_lookup: HashMap<String, PrimId> = HashMap::new();
-        for (name, &idx) in &env.lookup {
-            let entry = &env.entries[idx];
-            if let Some(cell) = entry.as_cell() {
-                if let Some(id) = cell.pure.extract_prim_id() {
-                    prim_lookup.insert(name.clone(), id);
-                }
-            }
-        }
+        // Build runtime (use prim_decls for canonical names)
+        let prim_lookup: HashMap<String, PrimId> = env.prim_decls.iter()
+            .map(|(&id, decl)| (decl.name.clone(), id))
+            .collect();
         let mut runtime = Runtime::new();
         donut_runtime::env::register_sys(&mut runtime, &prim_lookup);
 
@@ -363,7 +357,8 @@ impl App {
         let type_str = self.table.format_cell_type(&cell.pure);
 
         let evaluable = self.runtime.is_evaluable(cell);
-        let eval_str = match self.runtime.eval_check(cell) {
+        let prim_names: HashMap<_, _> = self.env.prim_decls.iter().map(|(&id, d)| (id, d.name.clone())).collect();
+        let eval_str = match self.runtime.eval_check(cell, &prim_names) {
             Some(reason) => reason,
             None => match self.runtime.eval(cell, &[]) {
                 Ok(values) => format!("= {}", donut_runtime::format_values(&values)),
@@ -421,7 +416,7 @@ impl App {
                     }
                     ParamKind::Nat => format!("{}: nat", name),
                     ParamKind::Rat => format!("{}: rat", name),
-                    ParamKind::Meta => format!("{}: meta", name),
+                    ParamKind::Meta(_) => format!("{}: meta", name),
                 }
             })
             .collect();

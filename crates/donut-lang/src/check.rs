@@ -245,6 +245,9 @@ struct Checker<'a> {
 
     // Prim declarations: PrimId → canonical name/color/level/param_counts
     prim_decls: HashMap<PrimId, PrimDecl>,
+
+    // Current origin context: (origin_name, prefix_depth when origin was set)
+    current_origin: Option<(String, usize)>,
 }
 
 impl<'a> Checker<'a> {
@@ -272,6 +275,7 @@ impl<'a> Checker<'a> {
             item_cache: HashMap::new(),
             functor_maps: HashMap::new(),
             prim_decls: HashMap::new(),
+            current_origin: None,
         }
     }
 
@@ -368,6 +372,25 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// Compute the canonical name for a prim_decl entry.
+    /// Uses current_origin (origin_name, prefix_depth) to strip user-scope prefix
+    /// and prepend origin with `::` separator.
+    fn canonical_name(&self, qname: &str) -> String {
+        if let Some((ref origin, depth)) = self.current_origin {
+            let local = if depth > 0 {
+                let prefix = &self.prefixes[depth - 1];
+                qname.strip_prefix(prefix.as_str())
+                    .and_then(|s| s.strip_prefix('.'))
+                    .unwrap_or(qname)
+            } else {
+                qname
+            };
+            format!("{}::{}", origin, local)
+        } else {
+            qname.to_string()
+        }
+    }
+
     fn resolve_name(&self, name: &str) -> Option<usize> {
         for prefix in self.prefixes.iter().rev() {
             let qualified = format!("{}.{}", prefix, name);
@@ -397,6 +420,15 @@ impl<'a> Checker<'a> {
             return;
         }
 
+        // Track origin context from item for canonical naming
+        let prev_origin = self.current_origin.clone();
+        if let Some(ref origin) = item.origin {
+            // Only update if entering a different origin (preserve depth for same origin)
+            if self.current_origin.as_ref().map_or(true, |co| co.0 != *origin) {
+                self.current_origin = Some((origin.clone(), self.prefixes.len()));
+            }
+        }
+
         let qname = self.qualified_name(name);
 
         // Reuse cached entry for same ItemId (from import cache)
@@ -408,6 +440,7 @@ impl<'a> Checker<'a> {
             if let Some(params) = self.module_params.get(&old_qname).cloned() {
                 self.module_params.insert(qname, params);
             }
+            self.current_origin = prev_origin;
             return;
         }
 
@@ -420,6 +453,7 @@ impl<'a> Checker<'a> {
             Ok(f) => f,
             Err(msg) => {
                 self.error_at(span, msg);
+                self.current_origin = prev_origin;
                 return;
             }
         };
@@ -445,12 +479,14 @@ impl<'a> Checker<'a> {
                                         .insert(qname.clone(), param_freshes.clone());
                                 }
                                 self.item_cache.insert(item_id, qname);
+                                self.current_origin = prev_origin;
                                 return;
                             }
                             Ok(None) => {}
                             Err(msg) => {
                                 self.error_at(span, msg);
                                 self.exit_params(&param_freshes);
+                                self.current_origin = prev_origin;
                                 return;
                             }
                         }
@@ -496,6 +532,7 @@ impl<'a> Checker<'a> {
         }
 
         self.item_cache.insert(item_id, qname);
+        self.current_origin = prev_origin;
     }
 
     /// Create lookup aliases for all members of an already-checked module.
@@ -522,6 +559,7 @@ impl<'a> Checker<'a> {
         params: &[Param],
         param_freshes: &[ParamInfo],
     ) {
+        let canonical = self.canonical_name(qname);
         let ty_s = self.program.val(ty_id);
         match self.eval_ty(&ty_s.0) {
             Ok((_, Ty::Meta(mt))) => {
@@ -534,7 +572,7 @@ impl<'a> Checker<'a> {
                 );
                 let entry = &self.entries[idx];
                 self.prim_decls.insert(prim_id, PrimDecl {
-                    name: entry.name.clone(),
+                    name: canonical.clone(),
                     level: 0,
                     color: entry.color,
                     param_counts: entry.param_counts.clone(),
@@ -551,7 +589,7 @@ impl<'a> Checker<'a> {
                         );
                         let entry = &self.entries[idx];
                         self.prim_decls.insert(prim_id, PrimDecl {
-                            name: entry.name.clone(),
+                            name: canonical.clone(),
                             level,
                             color: entry.color,
                             param_counts: entry.param_counts.clone(),
@@ -575,6 +613,7 @@ impl<'a> Checker<'a> {
         params: &[Param],
         param_freshes: &[ParamInfo],
     ) -> Result<()> {
+        let canonical = self.canonical_name(qname);
         let meta_val = self.eval_meta_val(body_val)?;
         let prim = self.make_prim();
         let prim_id = prim.id;
@@ -598,7 +637,7 @@ impl<'a> Checker<'a> {
         );
         let entry = &self.entries[idx];
         self.prim_decls.insert(prim_id, PrimDecl {
-            name: entry.name.clone(),
+            name: canonical,
             level: 0,
             color: entry.color,
             param_counts: entry.param_counts.clone(),
@@ -918,10 +957,11 @@ impl<'a> Checker<'a> {
                     let cell = make_cell(prim, &ty)?;
                     let level = cell.pure.dim().in_space;
                     let param_name = self.qualified_name(&param.name);
+                    let canonical = self.canonical_name(&param_name);
                     self.add_entry(param_name, None, EntryBody::Cell(cell.clone()), vec![]);
                     self.accumulated_args.push(PrimArg::Cell(cell.pure.clone()));
                     self.prim_decls.insert(fresh_id, PrimDecl {
-                        name: param.name.clone(),
+                        name: canonical,
                         level,
                         color: (128, 128, 128),
                         param_counts: vec![],
@@ -931,11 +971,12 @@ impl<'a> Checker<'a> {
                     // Create a meta entry so it can be referenced in meta expressions
                     let prim = Prim::new(fresh_id);
                     let param_name = self.qualified_name(&param.name);
+                    let canonical = self.canonical_name(&param_name);
                     let idx = self.add_entry(param_name, None, EntryBody::Meta(prim), vec![]);
                     self.meta_values.insert(idx, PrimArg::App(fresh_id, vec![]));
                     self.accumulated_args.push(PrimArg::App(fresh_id, vec![]));
                     self.prim_decls.insert(fresh_id, PrimDecl {
-                        name: param.name.clone(),
+                        name: canonical,
                         level: 0,
                         color: (128, 128, 128),
                         param_counts: vec![],

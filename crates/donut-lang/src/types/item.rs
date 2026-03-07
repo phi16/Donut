@@ -103,6 +103,8 @@ pub struct Item {
     pub params: Vec<Param>,
     pub body: ItemBody,
     pub decos: Vec<ValId>,
+    /// Origin module name (e.g. "sys") for items defined in imported modules.
+    pub origin: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -241,6 +243,7 @@ impl Item {
                 members: Module::new(),
             },
             decos: Vec::new(),
+            origin: None,
         }
     }
 
@@ -255,6 +258,7 @@ impl Item {
                 members: Module::new(),
             },
             decos: Vec::new(),
+            origin: None,
         }
     }
 

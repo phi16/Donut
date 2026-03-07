@@ -188,6 +188,8 @@ struct Checker<'a> {
     used_deco_params: HashSet<ItemId>,
     in_applicand: bool,
     import_cache: HashMap<String, Module>,
+    /// Origin name for items being resolved inside an import (e.g. "sys").
+    current_origin: Option<String>,
 }
 
 impl<'a> Checker<'a> {
@@ -202,6 +204,7 @@ impl<'a> Checker<'a> {
             used_deco_params: HashSet::new(),
             in_applicand: false,
             import_cache: HashMap::new(),
+            current_origin: None,
         }
     }
 
@@ -211,7 +214,10 @@ impl<'a> Checker<'a> {
         id
     }
 
-    fn alloc_item(&mut self, item: Item) -> ItemId {
+    fn alloc_item(&mut self, mut item: Item) -> ItemId {
+        if item.origin.is_none() {
+            item.origin = self.current_origin.clone();
+        }
         let id = ItemId(self.items.len());
         self.items.push(item);
         id
@@ -349,7 +355,10 @@ impl<'a> Checker<'a> {
                 }
                 match builtin_source(&name) {
                     Some(source) => {
+                        let old_origin = self.current_origin.take();
+                        self.current_origin = Some(name.clone());
                         let mut module = self.resolve_import(source);
+                        self.current_origin = old_origin;
                         module.origin = Some(name.clone());
                         self.import_cache.insert(name, module.clone());
                         module
@@ -841,6 +850,7 @@ impl<'a> Checker<'a> {
                 params,
                 body,
                 decos: deco_vals,
+                origin: None,
             };
             let item_id = self.alloc_item(item);
             for ni in &name_infos {

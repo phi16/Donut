@@ -11,6 +11,8 @@ pub enum Value {
     U32(u32),
     F32(f64),
     Bool(bool),
+    F2(f64, f64),
+    F3(f64, f64, f64),
 }
 
 impl fmt::Display for Value {
@@ -19,6 +21,8 @@ impl fmt::Display for Value {
             Value::U32(v) => write!(f, "{}", v),
             Value::F32(v) => write!(f, "{}", v),
             Value::Bool(v) => write!(f, "{}", v),
+            Value::F2(x, y) => write!(f, "({}, {})", x, y),
+            Value::F3(x, y, z) => write!(f, "({}, {}, {})", x, y, z),
         }
     }
 }
@@ -35,13 +39,19 @@ type EvalFn = Box<dyn Fn(&[PrimArg], &[Value]) -> Result<Vec<Value>, String>>;
 
 pub struct Runtime {
     ops: HashMap<PrimId, EvalFn>,
+    base: Option<PrimId>,
 }
 
 impl Runtime {
     pub fn new() -> Self {
         Runtime {
             ops: HashMap::new(),
+            base: None,
         }
+    }
+
+    pub fn set_base(&mut self, id: PrimId) {
+        self.base = Some(id);
     }
 
     pub fn register(&mut self, id: PrimId, f: impl Fn(&[PrimArg], &[Value]) -> Result<Vec<Value>, String> + 'static) {
@@ -49,22 +59,45 @@ impl Runtime {
     }
 
     /// Check if a cell can be evaluated with no input.
+    /// 型だけで「実行すべきか」を判定: sys.C 上の閉じた 2-cell か？
     pub fn is_evaluable(&self, cell: &FreeCell) -> bool {
-        self.eval_check(cell).is_none()
+        let dim = cell.pure.dim().in_space;
+        if dim != 2 {
+            return false;
+        }
+        if source_width(&cell.cell) > 0 {
+            return false;
+        }
+        // 0-cell 境界が base (sys.C) と一致するか
+        let Some(base) = self.base else { return false };
+        let zero_cell = cell.pure.s().s();
+        zero_cell.extract_prim_id() == Some(base)
     }
 
     /// Returns None if evaluable, or Some(reason) if not.
-    pub fn eval_check(&self, cell: &FreeCell) -> Option<String> {
+    pub fn eval_check(&self, cell: &FreeCell, prim_names: &HashMap<PrimId, String>) -> Option<String> {
         let dim = cell.pure.dim().in_space;
-        if dim < 2 {
-            return Some(format!("{}d cell", dim));
+        if dim != 2 {
+            return Some(format!("{}-cell", dim));
         }
-        if !self.has_all_ops(&cell.cell) {
-            return Some("contains non-runtime prims".to_string());
+        // 0-cell 境界チェック
+        if let Some(base) = self.base {
+            let zero_cell = cell.pure.s().s();
+            if zero_cell.extract_prim_id() != Some(base) {
+                let base_name = prim_names.get(&base).cloned().unwrap_or_else(|| format!("prim#{}", base));
+                return Some(format!("not on {}", base_name));
+            }
         }
         let sw = source_width(&cell.cell);
         if sw > 0 {
             return Some(format!("needs {} input(s)", sw));
+        }
+        let mut missing = Vec::new();
+        self.collect_missing_ops(&cell.cell, &mut missing, prim_names);
+        if !missing.is_empty() {
+            missing.sort();
+            missing.dedup();
+            return Some(format!("missing ops: {}", missing.join(", ")));
         }
         None
     }
@@ -75,6 +108,26 @@ impl Runtime {
             CellF::Id(_) => true,
             CellF::Comp(0 | 1, children) => children.iter().all(|c| self.has_all_ops(c)),
             CellF::Comp(_, _) | CellF::Zero(_) => false,
+        }
+    }
+
+    fn collect_missing_ops(&self, cell: &Cell, missing: &mut Vec<String>, prim_names: &HashMap<PrimId, String>) {
+        match cell.0.as_ref() {
+            CellF::Prim(prim, _, _) => {
+                if !self.ops.contains_key(&prim.id) {
+                    let name = prim_names.get(&prim.id)
+                        .cloned()
+                        .unwrap_or_else(|| format!("prim#{}", prim.id));
+                    missing.push(name);
+                }
+            }
+            CellF::Id(_) => {}
+            CellF::Comp(0 | 1, children) => {
+                for c in children {
+                    self.collect_missing_ops(c, missing, prim_names);
+                }
+            }
+            CellF::Comp(_, _) | CellF::Zero(_) => {}
         }
     }
 
