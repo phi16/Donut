@@ -11,8 +11,8 @@ pub enum Value {
     U32(u32),
     F32(f64),
     Bool(bool),
-    F2(f64, f64),
-    F3(f64, f64, f64),
+    F32x2(f64, f64),
+    F32x3(f64, f64, f64),
 }
 
 impl fmt::Display for Value {
@@ -21,8 +21,8 @@ impl fmt::Display for Value {
             Value::U32(v) => write!(f, "{}", v),
             Value::F32(v) => write!(f, "{}", v),
             Value::Bool(v) => write!(f, "{}", v),
-            Value::F2(x, y) => write!(f, "({}, {})", x, y),
-            Value::F3(x, y, z) => write!(f, "({}, {}, {})", x, y, z),
+            Value::F32x2(x, y) => write!(f, "({}, {})", x, y),
+            Value::F32x3(x, y, z) => write!(f, "({}, {}, {})", x, y, z),
         }
     }
 }

@@ -140,94 +140,94 @@ fn ops() -> Vec<Op> {
             (Value::Bool(a), Value::Bool(b)) => Ok(vec![Value::Bool(*b), Value::Bool(*a)]),
             _ => type_error(),
         }},
-        // f2
-        Op { name: "sys::f2.pack", f: |_, v| match (&v[0], &v[1]) {
-            (Value::F32(a), Value::F32(b)) => Ok(vec![Value::F2(*a, *b)]),
+        // f32x2
+        Op { name: "sys::f32x2.pack", f: |_, v| match (&v[0], &v[1]) {
+            (Value::F32(a), Value::F32(b)) => Ok(vec![Value::F32x2(*a, *b)]),
             _ => type_error(),
         }},
-        Op { name: "sys::f2.unpack", f: |_, v| match &v[0] {
-            Value::F2(a, b) => Ok(vec![Value::F32(*a), Value::F32(*b)]),
+        Op { name: "sys::f32x2.unpack", f: |_, v| match &v[0] {
+            Value::F32x2(a, b) => Ok(vec![Value::F32(*a), Value::F32(*b)]),
             _ => type_error(),
         }},
-        Op { name: "sys::f2.add", f: |_, v| match (&v[0], &v[1]) {
-            (Value::F2(a0, a1), Value::F2(b0, b1)) => Ok(vec![Value::F2(a0 + b0, a1 + b1)]),
+        Op { name: "sys::f32x2.add", f: |_, v| match (&v[0], &v[1]) {
+            (Value::F32x2(a0, a1), Value::F32x2(b0, b1)) => Ok(vec![Value::F32x2(a0 + b0, a1 + b1)]),
             _ => type_error(),
         }},
-        Op { name: "sys::f2.sub", f: |_, v| match (&v[0], &v[1]) {
-            (Value::F2(a0, a1), Value::F2(b0, b1)) => Ok(vec![Value::F2(a0 - b0, a1 - b1)]),
+        Op { name: "sys::f32x2.sub", f: |_, v| match (&v[0], &v[1]) {
+            (Value::F32x2(a0, a1), Value::F32x2(b0, b1)) => Ok(vec![Value::F32x2(a0 - b0, a1 - b1)]),
             _ => type_error(),
         }},
-        Op { name: "sys::f2.mul", f: |_, v| match (&v[0], &v[1]) {
-            (Value::F2(a0, a1), Value::F2(b0, b1)) => Ok(vec![Value::F2(a0 * b0, a1 * b1)]),
+        Op { name: "sys::f32x2.mul", f: |_, v| match (&v[0], &v[1]) {
+            (Value::F32x2(a0, a1), Value::F32x2(b0, b1)) => Ok(vec![Value::F32x2(a0 * b0, a1 * b1)]),
             _ => type_error(),
         }},
-        Op { name: "sys::f2.div", f: |_, v| match (&v[0], &v[1]) {
-            (Value::F2(a0, a1), Value::F2(b0, b1)) => Ok(vec![Value::F2(a0 / b0, a1 / b1)]),
+        Op { name: "sys::f32x2.div", f: |_, v| match (&v[0], &v[1]) {
+            (Value::F32x2(a0, a1), Value::F32x2(b0, b1)) => Ok(vec![Value::F32x2(a0 / b0, a1 / b1)]),
             _ => type_error(),
         }},
-        Op { name: "sys::f2.neg", f: |_, v| match &v[0] {
-            Value::F2(a, b) => Ok(vec![Value::F2(-a, -b)]),
+        Op { name: "sys::f32x2.neg", f: |_, v| match &v[0] {
+            Value::F32x2(a, b) => Ok(vec![Value::F32x2(-a, -b)]),
             _ => type_error(),
         }},
-        Op { name: "sys::f2.scale", f: |_, v| match (&v[0], &v[1]) {
-            (Value::F32(s), Value::F2(a, b)) => Ok(vec![Value::F2(s * a, s * b)]),
+        Op { name: "sys::f32x2.scale", f: |_, v| match (&v[0], &v[1]) {
+            (Value::F32(s), Value::F32x2(a, b)) => Ok(vec![Value::F32x2(s * a, s * b)]),
             _ => type_error(),
         }},
-        Op { name: "sys::f2.dup", f: |_, v| match &v[0] {
-            Value::F2(a, b) => Ok(vec![Value::F2(*a, *b), Value::F2(*a, *b)]),
+        Op { name: "sys::f32x2.dup", f: |_, v| match &v[0] {
+            Value::F32x2(a, b) => Ok(vec![Value::F32x2(*a, *b), Value::F32x2(*a, *b)]),
             _ => type_error(),
         }},
-        Op { name: "sys::f2.drop", f: |_, v| match &v[0] {
-            Value::F2(_, _) => Ok(vec![]),
+        Op { name: "sys::f32x2.drop", f: |_, v| match &v[0] {
+            Value::F32x2(_, _) => Ok(vec![]),
             _ => type_error(),
         }},
-        Op { name: "sys::f2.swap", f: |_, v| match (&v[0], &v[1]) {
-            (Value::F2(a0, a1), Value::F2(b0, b1)) => Ok(vec![Value::F2(*b0, *b1), Value::F2(*a0, *a1)]),
+        Op { name: "sys::f32x2.swap", f: |_, v| match (&v[0], &v[1]) {
+            (Value::F32x2(a0, a1), Value::F32x2(b0, b1)) => Ok(vec![Value::F32x2(*b0, *b1), Value::F32x2(*a0, *a1)]),
             _ => type_error(),
         }},
-        // f3
-        Op { name: "sys::f3.pack", f: |_, v| match (&v[0], &v[1], &v[2]) {
-            (Value::F32(a), Value::F32(b), Value::F32(c)) => Ok(vec![Value::F3(*a, *b, *c)]),
+        // f32x3
+        Op { name: "sys::f32x3.pack", f: |_, v| match (&v[0], &v[1], &v[2]) {
+            (Value::F32(a), Value::F32(b), Value::F32(c)) => Ok(vec![Value::F32x3(*a, *b, *c)]),
             _ => type_error(),
         }},
-        Op { name: "sys::f3.unpack", f: |_, v| match &v[0] {
-            Value::F3(a, b, c) => Ok(vec![Value::F32(*a), Value::F32(*b), Value::F32(*c)]),
+        Op { name: "sys::f32x3.unpack", f: |_, v| match &v[0] {
+            Value::F32x3(a, b, c) => Ok(vec![Value::F32(*a), Value::F32(*b), Value::F32(*c)]),
             _ => type_error(),
         }},
-        Op { name: "sys::f3.add", f: |_, v| match (&v[0], &v[1]) {
-            (Value::F3(a0, a1, a2), Value::F3(b0, b1, b2)) => Ok(vec![Value::F3(a0 + b0, a1 + b1, a2 + b2)]),
+        Op { name: "sys::f32x3.add", f: |_, v| match (&v[0], &v[1]) {
+            (Value::F32x3(a0, a1, a2), Value::F32x3(b0, b1, b2)) => Ok(vec![Value::F32x3(a0 + b0, a1 + b1, a2 + b2)]),
             _ => type_error(),
         }},
-        Op { name: "sys::f3.sub", f: |_, v| match (&v[0], &v[1]) {
-            (Value::F3(a0, a1, a2), Value::F3(b0, b1, b2)) => Ok(vec![Value::F3(a0 - b0, a1 - b1, a2 - b2)]),
+        Op { name: "sys::f32x3.sub", f: |_, v| match (&v[0], &v[1]) {
+            (Value::F32x3(a0, a1, a2), Value::F32x3(b0, b1, b2)) => Ok(vec![Value::F32x3(a0 - b0, a1 - b1, a2 - b2)]),
             _ => type_error(),
         }},
-        Op { name: "sys::f3.mul", f: |_, v| match (&v[0], &v[1]) {
-            (Value::F3(a0, a1, a2), Value::F3(b0, b1, b2)) => Ok(vec![Value::F3(a0 * b0, a1 * b1, a2 * b2)]),
+        Op { name: "sys::f32x3.mul", f: |_, v| match (&v[0], &v[1]) {
+            (Value::F32x3(a0, a1, a2), Value::F32x3(b0, b1, b2)) => Ok(vec![Value::F32x3(a0 * b0, a1 * b1, a2 * b2)]),
             _ => type_error(),
         }},
-        Op { name: "sys::f3.div", f: |_, v| match (&v[0], &v[1]) {
-            (Value::F3(a0, a1, a2), Value::F3(b0, b1, b2)) => Ok(vec![Value::F3(a0 / b0, a1 / b1, a2 / b2)]),
+        Op { name: "sys::f32x3.div", f: |_, v| match (&v[0], &v[1]) {
+            (Value::F32x3(a0, a1, a2), Value::F32x3(b0, b1, b2)) => Ok(vec![Value::F32x3(a0 / b0, a1 / b1, a2 / b2)]),
             _ => type_error(),
         }},
-        Op { name: "sys::f3.neg", f: |_, v| match &v[0] {
-            Value::F3(a, b, c) => Ok(vec![Value::F3(-a, -b, -c)]),
+        Op { name: "sys::f32x3.neg", f: |_, v| match &v[0] {
+            Value::F32x3(a, b, c) => Ok(vec![Value::F32x3(-a, -b, -c)]),
             _ => type_error(),
         }},
-        Op { name: "sys::f3.scale", f: |_, v| match (&v[0], &v[1]) {
-            (Value::F32(s), Value::F3(a, b, c)) => Ok(vec![Value::F3(s * a, s * b, s * c)]),
+        Op { name: "sys::f32x3.scale", f: |_, v| match (&v[0], &v[1]) {
+            (Value::F32(s), Value::F32x3(a, b, c)) => Ok(vec![Value::F32x3(s * a, s * b, s * c)]),
             _ => type_error(),
         }},
-        Op { name: "sys::f3.dup", f: |_, v| match &v[0] {
-            Value::F3(a, b, c) => Ok(vec![Value::F3(*a, *b, *c), Value::F3(*a, *b, *c)]),
+        Op { name: "sys::f32x3.dup", f: |_, v| match &v[0] {
+            Value::F32x3(a, b, c) => Ok(vec![Value::F32x3(*a, *b, *c), Value::F32x3(*a, *b, *c)]),
             _ => type_error(),
         }},
-        Op { name: "sys::f3.drop", f: |_, v| match &v[0] {
-            Value::F3(_, _, _) => Ok(vec![]),
+        Op { name: "sys::f32x3.drop", f: |_, v| match &v[0] {
+            Value::F32x3(_, _, _) => Ok(vec![]),
             _ => type_error(),
         }},
-        Op { name: "sys::f3.swap", f: |_, v| match (&v[0], &v[1]) {
-            (Value::F3(a0, a1, a2), Value::F3(b0, b1, b2)) => Ok(vec![Value::F3(*b0, *b1, *b2), Value::F3(*a0, *a1, *a2)]),
+        Op { name: "sys::f32x3.swap", f: |_, v| match (&v[0], &v[1]) {
+            (Value::F32x3(a0, a1, a2), Value::F32x3(b0, b1, b2)) => Ok(vec![Value::F32x3(*b0, *b1, *b2), Value::F32x3(*a0, *a1, *a2)]),
             _ => type_error(),
         }},
     ]

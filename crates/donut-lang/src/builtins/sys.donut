@@ -46,31 +46,31 @@ u32: C → C with {
 }
 
 [style.color[hue[0.05]]]
-f2: C → C with {
-    pack: f32 f32 → f2
-    unpack: f2 → f32 f32
-    add: f2 f2 → f2
-    sub: f2 f2 → f2
-    mul: f2 f2 → f2
-    div: f2 f2 → f2
-    neg: f2 → f2
-    scale: f32 f2 → f2
-    dup: f2 → f2 f2
-    drop: f2 → C
-    swap: f2 f2 → f2 f2
+f32x2: C → C with {
+    pack: f32 f32 → f32x2
+    unpack: f32x2 → f32 f32
+    add: f32x2 f32x2 → f32x2
+    sub: f32x2 f32x2 → f32x2
+    mul: f32x2 f32x2 → f32x2
+    div: f32x2 f32x2 → f32x2
+    neg: f32x2 → f32x2
+    scale: f32 f32x2 → f32x2
+    dup: f32x2 → f32x2 f32x2
+    drop: f32x2 → C
+    swap: f32x2 f32x2 → f32x2 f32x2
 }
 
 [style.color[hue[0.95]]]
-f3: C → C with {
-    pack: f32 f32 f32 → f3
-    unpack: f3 → f32 f32 f32
-    add: f3 f3 → f3
-    sub: f3 f3 → f3
-    mul: f3 f3 → f3
-    div: f3 f3 → f3
-    neg: f3 → f3
-    scale: f32 f3 → f3
-    dup: f3 → f3 f3
-    drop: f3 → C
-    swap: f3 f3 → f3 f3
+f32x3: C → C with {
+    pack: f32 f32 f32 → f32x3
+    unpack: f32x3 → f32 f32 f32
+    add: f32x3 f32x3 → f32x3
+    sub: f32x3 f32x3 → f32x3
+    mul: f32x3 f32x3 → f32x3
+    div: f32x3 f32x3 → f32x3
+    neg: f32x3 → f32x3
+    scale: f32 f32x3 → f32x3
+    dup: f32x3 → f32x3 f32x3
+    drop: f32x3 → C
+    swap: f32x3 f32x3 → f32x3 f32x3
 }
