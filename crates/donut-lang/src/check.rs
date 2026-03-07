@@ -58,6 +58,14 @@ pub struct Env {
     pub entry_params: HashMap<usize, Vec<ParamInfo>>,
 }
 
+// --- Functor map entry ---
+
+struct FunctorEntry {
+    /// Fresh PrimIds for mapping-level params (empty for non-parametric mappings)
+    param_prims: Vec<PrimId>,
+    cell: PureCell,
+}
+
 // --- Meta type ---
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -113,7 +121,7 @@ struct Checker<'a> {
     item_cache: HashMap<ItemId, String>,
 
     // Functor support
-    functor_maps: HashMap<String, HashMap<PrimId, PureCell>>,
+    functor_maps: HashMap<String, HashMap<PrimId, FunctorEntry>>,
 
     // Prim declarations: PrimId → canonical name/color/level/param_counts
     prim_decls: HashMap<PrimId, PrimDecl>,
@@ -571,10 +579,22 @@ impl<'a> Checker<'a> {
             }
         };
 
-        let mut functor_map: HashMap<PrimId, PureCell> = HashMap::new();
-        functor_map.insert(src_prim_id, tgt_cell.pure.clone());
+        let mut functor_map: HashMap<PrimId, FunctorEntry> = HashMap::new();
+        functor_map.insert(src_prim_id, FunctorEntry {
+            param_prims: vec![],
+            cell: tgt_cell.pure.clone(),
+        });
 
         for mapping in mappings {
+            // Enter mapping-level params (e.g., [n: base.nat])
+            let mapping_freshes = match self.enter_params(&mapping.params) {
+                Ok(f) => f,
+                Err(msg) => {
+                    self.error_at(span, msg);
+                    continue;
+                }
+            };
+
             let app_span = &self.program.val(mapping.applicand).1;
             let val_span = &self.program.val(mapping.val).1;
             // Clone spans to avoid borrow issues
@@ -585,6 +605,7 @@ impl<'a> Checker<'a> {
             if let Val::Path(path) = app_val {
                 if path.applicand.is_some() {
                     self.error_at(&app_span, "functor application cannot be used in mapping left-hand side");
+                    self.exit_params(&mapping_freshes);
                     continue;
                 }
             }
@@ -592,6 +613,7 @@ impl<'a> Checker<'a> {
                 Ok(c) => c,
                 Err(msg) => {
                     self.error_at(&app_span, msg);
+                    self.exit_params(&mapping_freshes);
                     continue;
                 }
             };
@@ -602,6 +624,7 @@ impl<'a> Checker<'a> {
                         &app_span,
                         "functor mapping applicand must be a primitive cell",
                     );
+                    self.exit_params(&mapping_freshes);
                     continue;
                 }
             };
@@ -611,9 +634,12 @@ impl<'a> Checker<'a> {
                 Ok(c) => c,
                 Err(msg) => {
                     self.error_at(&val_span, msg);
+                    self.exit_params(&mapping_freshes);
                     continue;
                 }
             };
+
+            self.exit_params(&mapping_freshes);
 
             let dim = app_cell.pure.dim().in_space;
             if dim == 0 {
@@ -674,18 +700,33 @@ impl<'a> Checker<'a> {
                 }
             }
 
-            functor_map.insert(app_prim_id, val_pure);
+            let param_prims: Vec<PrimId> = mapping_freshes.iter()
+                .map(|(_, id, _)| *id)
+                .collect();
+            functor_map.insert(app_prim_id, FunctorEntry {
+                param_prims,
+                cell: val_pure,
+            });
         }
 
         self.functor_maps.insert(qname.to_string(), functor_map);
     }
 
     fn check_members(&mut self, prefix: &str, module: &Module, parent_param_count: usize) {
-        self.prefixes.push(prefix.to_string());
+        let canonical = module.origin.as_deref().unwrap_or(prefix);
+        let need_alias = canonical != prefix;
+
+        // If canonical entries already registered, just alias
+        if need_alias && self.module_members.contains_key(canonical) {
+            self.alias_members(canonical, prefix);
+            return;
+        }
+
+        self.prefixes.push(canonical.to_string());
         self.param_count_stack.push(parent_param_count);
         let mut members = Vec::new();
         for (member_name, item_id) in &module.entries {
-            let full_name = format!("{}.{}", prefix, member_name);
+            let full_name = format!("{}.{}", canonical, member_name);
             let item = self.program.item(*item_id);
             self.check_item(member_name, item, *item_id);
             let entry_idx = self.lookup.get(&full_name).copied();
@@ -698,7 +739,11 @@ impl<'a> Checker<'a> {
         self.prefixes.pop();
 
         if parent_param_count > 0 || !members.is_empty() {
-            self.module_members.insert(prefix.to_string(), members);
+            self.module_members.insert(canonical.to_string(), members);
+        }
+
+        if need_alias {
+            self.alias_members(canonical, prefix);
         }
     }
 
@@ -1390,11 +1435,19 @@ impl<'a> Checker<'a> {
 
 // --- Helpers ---
 
-fn apply_functor(cell: &PureCell, map: &HashMap<PrimId, PureCell>) -> Result<PureCell> {
+fn apply_functor(cell: &PureCell, map: &HashMap<PrimId, FunctorEntry>) -> Result<PureCell> {
     match cell {
         PureCell::Prim(prim, _, dim) => match map.get(&prim.id) {
-            Some(replacement) => {
-                let mut result = replacement.clone();
+            Some(entry) => {
+                let mut result = entry.cell.clone();
+                // Substitute mapping params with actual args
+                if !entry.param_prims.is_empty() && !prim.args.is_empty() {
+                    let subst_map: HashMap<PrimId, PrimArg> = entry.param_prims.iter()
+                        .zip(prim.args.iter())
+                        .map(|(&param_id, arg)| (param_id, arg.clone()))
+                        .collect();
+                    result = result.subst(&subst_map);
+                }
                 while result.dim().in_space < dim.in_space {
                     result = PureCell::id(result);
                 }

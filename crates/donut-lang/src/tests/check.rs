@@ -422,6 +422,24 @@ fn functor_reject_unrelated_zero_cell() {
     assert!(err.contains("already implicitly defined"), "got: {}", err);
 }
 
+#[test]
+fn functor_parametric_mapping() {
+    // Functor mapping with decorator params should type-check
+    check_source(
+        r#"
+        import "base"
+        sys = import "sys"
+        C: *
+        u: C → C
+        x[n: base.nat]: C → u
+        F: C ~> sys.C
+        F(u) = sys.u32
+        [n: base.nat] F(x[n]) = sys.u32_lit[n]
+        "#,
+    )
+    .unwrap();
+}
+
 // --- Nested module instantiation (deep) ---
 
 #[test]

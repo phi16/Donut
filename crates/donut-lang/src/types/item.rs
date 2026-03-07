@@ -71,7 +71,7 @@ pub enum ItemKind {
     Param,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Param {
     pub name: String,
     pub ty: ValId,
@@ -79,6 +79,7 @@ pub struct Param {
 
 #[derive(Debug)]
 pub struct FunctorMapping {
+    pub params: Vec<Param>,
     pub applicand: ValId,
     pub val: ValId,
 }
@@ -108,6 +109,8 @@ pub struct Item {
 pub struct Module {
     pub entries: Vec<(String, ItemId)>,
     index: HashMap<String, usize>,
+    /// For imported modules, the source name (e.g. "sys") used as canonical prefix.
+    pub origin: Option<String>,
 }
 
 // --- Program ---
@@ -132,17 +135,28 @@ impl Module {
         Module {
             entries: Vec::new(),
             index: HashMap::new(),
+            origin: None,
         }
     }
 
-    pub fn define(&mut self, name: String, item: ItemId) {
+    /// Insert a new entry. Returns the existing ItemId if the name was already defined.
+    pub fn define(&mut self, name: String, item: ItemId) -> Option<ItemId> {
         if let Some(&idx) = self.index.get(&name) {
-            self.entries[idx].1 = item;
+            Some(self.entries[idx].1)
         } else {
             let idx = self.entries.len();
             self.index.insert(name.clone(), idx);
             self.entries.push((name, item));
+            None
         }
+    }
+
+
+    /// Replace an existing entry's ItemId (e.g., forward ref → real item).
+    /// Panics if the name does not exist.
+    pub fn replace(&mut self, name: &str, item: ItemId) {
+        let &idx = self.index.get(name).expect("replace: name not found");
+        self.entries[idx].1 = item;
     }
 
     pub fn get(&self, name: &str) -> Option<ItemId> {

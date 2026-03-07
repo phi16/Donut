@@ -184,7 +184,8 @@ struct Checker<'a> {
     vals: Vec<S<Val>>,
     scopes: Vec<Module>,
     errors: Vec<Error>,
-    deco_params: HashSet<ItemId>,
+    deco_param_stack: Vec<HashSet<ItemId>>,
+    used_deco_params: HashSet<ItemId>,
     in_applicand: bool,
     import_cache: HashMap<String, Module>,
 }
@@ -197,7 +198,8 @@ impl<'a> Checker<'a> {
             vals: Vec::new(),
             scopes: Vec::new(),
             errors: Vec::new(),
-            deco_params: HashSet::new(),
+            deco_param_stack: Vec::new(),
+            used_deco_params: HashSet::new(),
             in_applicand: false,
             import_cache: HashMap::new(),
         }
@@ -240,9 +242,12 @@ impl<'a> Checker<'a> {
         self.scopes.pop();
     }
 
-    fn define(&mut self, name: String, item: ItemId) {
+    /// Insert a name into the current scope. Returns true if newly defined, false if duplicate.
+    fn define(&mut self, name: String, item: ItemId) -> bool {
         if let Some(scope) = self.scopes.last_mut() {
-            scope.define(name, item);
+            scope.define(name, item).is_none()
+        } else {
+            false
         }
     }
 
@@ -297,14 +302,8 @@ impl<'a> Checker<'a> {
             }
             return;
         };
-        if self.deco_params.contains(&current) && !self.in_applicand {
-            self.error_at(
-                first_span,
-                format!(
-                    "decorator parameter `{}` can only be used in functor applicand",
-                    first_name
-                ),
-            );
+        if self.is_deco_param(current) && self.in_applicand {
+            self.used_deco_params.insert(current);
         }
         for &(name, span) in rest {
             match self.item(current).members().and_then(|m| m.get(name)) {
@@ -351,7 +350,8 @@ impl<'a> Checker<'a> {
                 }
                 match builtin_source(&name) {
                     Some(source) => {
-                        let module = self.resolve_import(source);
+                        let mut module = self.resolve_import(source);
+                        module.origin = Some(name.clone());
                         self.import_cache.insert(name, module.clone());
                         module
                     }
@@ -424,13 +424,28 @@ impl<'a> Checker<'a> {
 
     fn enter_inner_scope(&mut self, deco_param_defs: &[(String, ValId)]) {
         self.push_scope();
+        let mut params = HashSet::new();
         for (name, val_id) in deco_param_defs {
             let span = self.val(*val_id).1.clone();
             let item = Item::param(*val_id, span);
             let id = self.alloc_item(item);
-            self.deco_params.insert(id);
+            params.insert(id);
             self.define(name.clone(), id);
         }
+        self.deco_param_stack.push(params);
+    }
+
+    fn exit_inner_scope(&mut self) {
+        self.pop_scope();
+        self.deco_param_stack.pop();
+    }
+
+    fn is_deco_param(&self, id: ItemId) -> bool {
+        self.deco_param_stack.iter().any(|s| s.contains(&id))
+    }
+
+    fn has_deco_params(&self) -> bool {
+        self.deco_param_stack.iter().any(|s| !s.is_empty())
     }
 
     fn resolve_where_clauses(&mut self, where_clauses: Vec<S<semtree::Module>>) {
@@ -468,7 +483,10 @@ impl<'a> Checker<'a> {
         match segs.len() {
             0 => {}
             1 => {
-                self.define(segs[0].0.clone(), item_id);
+                // Forward ref already defined in outer scope; replace with real item
+                if let Some(scope) = self.scopes.last_mut() {
+                    scope.replace(&segs[0].0, item_id);
+                }
             }
             _ => self.insert_into_dotted(segs, item_id),
         }
@@ -569,22 +587,24 @@ impl<'a> Checker<'a> {
             None => (None, None),
         };
 
-        // --- Outer scope: extract seg_names (borrowing names) ---
-        let name_infos_partial: Vec<Vec<(String, TokenSpan)>> = names
+        // --- Outer scope: extract seg_names and applicand info (borrowing names) ---
+        let name_infos_partial: Vec<(Vec<(String, TokenSpan)>, bool)> = names
             .iter()
             .map(|name_s| {
                 let S(pd, _) = name_s;
-                pd.0.iter()
+                let seg_names = pd.0.iter()
                     .map(|seg_s| {
                         let S(seg, span) = seg_s;
                         (seg.0 .0.clone(), span.clone())
                     })
-                    .collect()
+                    .collect();
+                let has_applicand = pd.1.is_some();
+                (seg_names, has_applicand)
             })
             .collect();
 
         // --- Resolve prefixes (borrowing seg_names) ---
-        for seg_names in &name_infos_partial {
+        for (seg_names, _) in &name_infos_partial {
             if seg_names.len() > 1 {
                 let prefix: Vec<_> = seg_names[..seg_names.len() - 1]
                     .iter()
@@ -595,8 +615,9 @@ impl<'a> Checker<'a> {
         }
 
         // --- += pre-check (before inner scope) ---
-        if matches!(&op.0, semtree::AssignOp::Add) {
-            for seg_names in &name_infos_partial {
+        let is_add = matches!(&op.0, semtree::AssignOp::Add);
+        if is_add {
+            for (seg_names, _) in &name_infos_partial {
                 if seg_names.len() == 1 {
                     let (name, span) = &seg_names[0];
                     if self.lookup(name).is_none() {
@@ -609,6 +630,21 @@ impl<'a> Checker<'a> {
             }
         }
 
+        // --- Forward refs (outer scope, before inner scope) ---
+        // Functor app lines (has_applicand) don't define new names.
+        if !is_add {
+            for (seg_names, has_applicand) in &name_infos_partial {
+                if !has_applicand && seg_names.len() == 1 {
+                    let (name, span) = &seg_names[0];
+                    let item = Item::new(kind, span.clone());
+                    let id = self.alloc_item(item);
+                    if !self.define(name.clone(), id) {
+                        self.error_at(span, format!("duplicate definition `{}`", name));
+                    }
+                }
+            }
+        }
+
         // --- Inner scope (before params so params are defined incrementally) ---
         self.enter_inner_scope(&deco_param_defs);
 
@@ -616,7 +652,7 @@ impl<'a> Checker<'a> {
         // Params are defined immediately so subsequent params can reference earlier ones.
         let mut params = Vec::new();
         let mut name_infos: Vec<NameInfo> = Vec::new();
-        for (i, (name_s, seg_names)) in names.into_iter().zip(name_infos_partial).enumerate() {
+        for (i, (name_s, (seg_names, _))) in names.into_iter().zip(name_infos_partial).enumerate() {
             let S(pd, _) = name_s;
             let semtree::Path(segs, applicand) = pd;
             for seg_s in segs {
@@ -644,16 +680,6 @@ impl<'a> Checker<'a> {
             });
         }
 
-        // Forward refs
-        let is_add = matches!(&op.0, semtree::AssignOp::Add);
-        for ni in &name_infos {
-            if !is_add && ni.seg_names.len() == 1 {
-                let item = Item::new(kind, ni.seg_names[0].1.clone());
-                let id = self.alloc_item(item);
-                self.define(ni.seg_names[0].0.clone(), id);
-            }
-        }
-
         // Where clauses (after forward refs so declared names are visible)
         self.resolve_where_clauses(where_clauses);
 
@@ -678,6 +704,8 @@ impl<'a> Checker<'a> {
                     "functor application cannot have `with` clauses",
                 );
             }
+        } else if self.has_deco_params() {
+            self.error_at(&op.1, "decorator parameters require a functor application");
         }
 
         // --- Resolve body (owned) ---
@@ -707,11 +735,49 @@ impl<'a> Checker<'a> {
 
         // With clauses + pop scope
         let result = self.merge_with_clauses(body_members, with_clauses);
-        self.pop_scope();
+
+        // Resolve functor applicands before popping scope (deco params must be visible)
+        let resolved_apps = if has_functor_app {
+            let mapping_params: Vec<Param> = deco_param_defs
+                .iter()
+                .map(|(name, val_id)| Param {
+                    name: name.clone(),
+                    ty: *val_id,
+                })
+                .collect();
+            let apps: Vec<Option<ValId>> = name_infos
+                .iter_mut()
+                .map(|ni| {
+                    ni.applicand.take().map(|applicand| {
+                        let fspan = &ni.seg_names[0].1;
+                        self.used_deco_params.clear();
+                        self.in_applicand = true;
+                        let app_resolved = applicand.resolve(self);
+                        self.in_applicand = false;
+                        let all_deco_params: HashSet<ItemId> = self.deco_param_stack.iter().flatten().copied().collect();
+                        for dp in &all_deco_params {
+                            if !self.used_deco_params.contains(dp) {
+                                self.error_at(
+                                    fspan,
+                                    "decorator parameter must appear in functor applicand",
+                                );
+                                break;
+                            }
+                        }
+                        app_resolved
+                    })
+                })
+                .collect();
+            Some((apps, mapping_params))
+        } else {
+            None
+        };
+
+        self.exit_inner_scope();
 
         // --- Registration ---
-        if has_functor_app {
-            self.register_functor_app(name_infos, body_val_resolved);
+        if let Some((resolved_apps, mapping_params)) = resolved_apps {
+            self.register_functor_app(name_infos, body_val_resolved, mapping_params, resolved_apps);
         } else if is_add {
             let all_seg_names: Vec<&[(String, TokenSpan)]> =
                 name_infos.iter().map(|ni| ni.seg_names.as_slice()).collect();
@@ -777,13 +843,12 @@ impl<'a> Checker<'a> {
         &mut self,
         name_infos: Vec<NameInfo>,
         body_val_resolved: Option<ValId>,
+        mapping_params: Vec<Param>,
+        resolved_apps: Vec<Option<ValId>>,
     ) {
-        for ni in name_infos {
-            if let Some(applicand) = ni.applicand {
+        for (ni, app_resolved) in name_infos.into_iter().zip(resolved_apps) {
+            if let Some(app_resolved) = app_resolved {
                 let (fname, fspan) = (&ni.seg_names[0].0, &ni.seg_names[0].1);
-                self.in_applicand = true;
-                let app_resolved = applicand.resolve(self);
-                self.in_applicand = false;
                 let lookup_result = self.lookup(fname);
                 match lookup_result {
                     Some(id) => {
@@ -795,6 +860,7 @@ impl<'a> Checker<'a> {
                                     &mut self.item_mut(id).body
                                 {
                                     mappings.push(FunctorMapping {
+                                        params: mapping_params.clone(),
                                         applicand: app_resolved,
                                         val: v,
                                     });
@@ -833,7 +899,7 @@ impl<'a> Checker<'a> {
         let result = self.resolve_module(mod_s);
         let result = self.merge_with_clauses(result, with_clauses);
 
-        self.pop_scope();
+        self.exit_inner_scope();
 
         // Mod → promote to current scope
         if let Some(scope) = self.scopes.last_mut() {

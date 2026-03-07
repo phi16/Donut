@@ -57,6 +57,24 @@ fn undefined_name() {
 }
 
 #[test]
+fn duplicate_definition() {
+    let errs = check_errs("x = \"a\"\nx = \"b\"");
+    assert!(
+        errs.iter().any(|e| e.contains("duplicate definition")),
+        "{errs:?}"
+    );
+}
+
+#[test]
+fn duplicate_definition_in_module() {
+    let errs = check_errs("m = {\n  x = \"a\"\n  x = \"b\"\n}");
+    assert!(
+        errs.iter().any(|e| e.contains("duplicate definition")),
+        "{errs:?}"
+    );
+}
+
+#[test]
 fn scope_ordering() {
     // y is not yet defined when x is checked
     let errs = check_errs("x = y\ny = \"a\"");
@@ -656,7 +674,7 @@ base = {
     util = "u"
 }
 
-[p: T] ext[q: U] = base.core.v
+ext[q: U] = base.core.v
   with {
     sub = "s"
   }
@@ -1011,15 +1029,17 @@ x = "base"
 
 #[test]
 fn module_output_deco_param_not_in_module() {
-    // Decorator params should not appear in the module output
-    let p = check_module(
+    // Decorator params require a functor application
+    let errs = check_errs(
         r#"
 T = "t"
 [p: T] f = "v"
 "#,
     );
-    assert!(p.root.get("p").is_none(), "deco param should not be in module");
-    assert!(p.root.get("f").is_some());
+    assert!(
+        errs.iter().any(|e| e.contains("decorator parameters require a functor application")),
+        "{errs:?}"
+    );
 }
 
 #[test]
@@ -1195,6 +1215,65 @@ fn functor_app_undefined_functor() {
     assert!(
         errs.iter().any(|e| e.contains("undefined functor")),
         "expected undefined functor error: {errs:?}"
+    );
+}
+
+#[test]
+fn functor_app_deco_param_stored() {
+    // Decorator params should be stored in FunctorMapping
+    let p = check_module(
+        r#"
+A = "a"
+B = "b"
+T = "t"
+a[n: T] = "x"
+f: A ~> B
+[n: T] f(a[n]) = "y"
+"#,
+    );
+    let f = get_item(&p, "f");
+    match &f.body {
+        ItemBody::Functor { mappings } => {
+            assert_eq!(mappings.len(), 1);
+            assert_eq!(mappings[0].params.len(), 1);
+            assert_eq!(mappings[0].params[0].name, "n");
+        }
+        _ => panic!("expected Functor body"),
+    }
+}
+
+#[test]
+fn functor_app_deco_param_must_appear_in_applicand() {
+    // Decorator param not used in applicand should error
+    let errs = check_errs(
+        r#"
+A = "a"
+B = "b"
+T = "t"
+a = "x"
+f: A ~> B
+[n: T] f(a) = "y"
+"#,
+    );
+    assert!(
+        errs.iter().any(|e| e.contains("decorator parameter must appear in functor applicand")),
+        "{errs:?}"
+    );
+}
+
+#[test]
+fn functor_app_deco_param_usable_in_body() {
+    // Decorator param should be usable on the right side (no error)
+    check_ok(
+        r#"
+A = "a"
+B = "b"
+T = "t"
+a[n: T] = "x"
+b[n: T] = "y"
+f: A ~> B
+[n: T] f(a[n]) = b[n]
+"#,
     );
 }
 
