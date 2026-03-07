@@ -190,6 +190,8 @@ struct Checker<'a> {
     import_cache: HashMap<String, Module>,
     /// Origin name for items being resolved inside an import (e.g. "sys").
     current_origin: Option<String>,
+    /// Extra import sources (name → source code) for testing/extensibility.
+    extra_sources: HashMap<String, String>,
 }
 
 impl<'a> Checker<'a> {
@@ -205,6 +207,7 @@ impl<'a> Checker<'a> {
             in_applicand: false,
             import_cache: HashMap::new(),
             current_origin: None,
+            extra_sources: HashMap::new(),
         }
     }
 
@@ -353,11 +356,14 @@ impl<'a> Checker<'a> {
                 if let Some(cached) = self.import_cache.get(&name) {
                     return cached.clone();
                 }
-                match builtin_source(&name) {
+                let source = builtin_source(&name)
+                    .map(|s| s.to_string())
+                    .or_else(|| self.extra_sources.get(&name).cloned());
+                match source {
                     Some(source) => {
                         let old_origin = self.current_origin.take();
                         self.current_origin = Some(name.clone());
-                        let mut module = self.resolve_import(source);
+                        let mut module = self.resolve_import(&source);
                         self.current_origin = old_origin;
                         module.origin = Some(name.clone());
                         self.import_cache.insert(name, module.clone());
@@ -940,7 +946,16 @@ fn builtin_source(name: &str) -> Option<&'static str> {
 }
 
 pub fn resolve(program: semtree::Program, tokens: &[Token]) -> (Program, Vec<Error>) {
+    resolve_with_sources(program, tokens, HashMap::new())
+}
+
+pub fn resolve_with_sources(
+    program: semtree::Program,
+    tokens: &[Token],
+    extra_sources: HashMap<String, String>,
+) -> (Program, Vec<Error>) {
     let mut checker = Checker::new(tokens);
+    checker.extra_sources = extra_sources;
     // User scope
     checker.push_scope();
     for d in program.0 {

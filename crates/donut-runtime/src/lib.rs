@@ -102,15 +102,6 @@ impl Runtime {
         None
     }
 
-    fn has_all_ops(&self, cell: &Cell) -> bool {
-        match cell.0.as_ref() {
-            CellF::Prim(prim, _, _) => self.ops.contains_key(&prim.id),
-            CellF::Id(_) => true,
-            CellF::Comp(0 | 1, children) => children.iter().all(|c| self.has_all_ops(c)),
-            CellF::Comp(_, _) | CellF::Zero(_) => false,
-        }
-    }
-
     fn collect_missing_ops(&self, cell: &Cell, missing: &mut Vec<String>, prim_names: &HashMap<PrimId, String>) {
         match cell.0.as_ref() {
             CellF::Prim(prim, _, _) => {

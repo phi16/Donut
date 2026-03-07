@@ -320,6 +320,89 @@ fn test_canonical_names_match() {
         "canonical names should be identical regardless of import style");
 }
 
+// --- cross-import (module that imports another module) ---
+
+fn setup_with_sources(user_code: &str, sources: HashMap<String, String>) -> (Runtime, donut_lang::check::Env) {
+    let (env, errors) = donut_lang::load::load_with_sources(user_code, sources);
+    for (_, msg) in &errors {
+        eprintln!("  warning: {}", msg);
+    }
+
+    let lookup: HashMap<String, PrimId> = env.prim_decls.iter()
+        .map(|(&id, decl)| (decl.name.clone(), id))
+        .collect();
+
+    let mut rt = Runtime::new();
+    register_sys(&mut rt, &lookup);
+    (rt, env)
+}
+
+#[test]
+fn test_cross_import_named() {
+    // "mylib" imports "sys" and re-exports operations
+    let mut sources = HashMap::new();
+    sources.insert("mylib".to_string(), "\
+import \"base\"
+import \"ui\"
+import \"sys\"
+inc: u32 → u32
+inc = u32.lit[1] u32; u32.add
+".to_string());
+
+    let code = "import \"base\"\nimport \"ui\"\nmylib = import \"mylib\"\nx = mylib.u32.lit[0]; mylib.inc; mylib.inc\n";
+    let (rt, env) = setup_with_sources(code, sources);
+    assert_eq!(eval_entry(&rt, &env, "x"), vec![Value::U32(2)]);
+}
+
+#[test]
+fn test_cross_import_bare() {
+    let mut sources = HashMap::new();
+    sources.insert("mylib".to_string(), "\
+import \"base\"
+import \"ui\"
+import \"sys\"
+inc: u32 → u32
+inc = u32.lit[1] u32; u32.add
+".to_string());
+
+    let code = "import \"base\"\nimport \"ui\"\nimport \"mylib\"\nx = u32.lit[0]; inc; inc; inc\n";
+    let (rt, env) = setup_with_sources(code, sources);
+    assert_eq!(eval_entry(&rt, &env, "x"), vec![Value::U32(3)]);
+}
+
+#[test]
+fn test_cross_import_canonical_names() {
+    // sys items accessed through mylib should still have sys:: canonical names
+    let mut sources = HashMap::new();
+    sources.insert("mylib".to_string(), "\
+import \"base\"
+import \"ui\"
+import \"sys\"
+".to_string());
+
+    let named_code = "import \"base\"\nimport \"ui\"\nmylib = import \"mylib\"\n";
+    let bare_code = "import \"base\"\nimport \"ui\"\nimport \"mylib\"\n";
+
+    let (named_env, _) = donut_lang::load::load_with_sources(named_code, sources.clone());
+    let (bare_env, _) = donut_lang::load::load_with_sources(bare_code, sources);
+
+    let mut named_names: Vec<String> = named_env.prim_decls.values()
+        .map(|d| d.name.clone()).collect();
+    let mut bare_names: Vec<String> = bare_env.prim_decls.values()
+        .map(|d| d.name.clone()).collect();
+    named_names.sort();
+    bare_names.sort();
+
+    assert_eq!(named_names, bare_names,
+        "canonical names should match across import styles for cross-imports");
+
+    // sys items accessed through mylib should retain sys:: prefix
+    assert!(bare_names.iter().any(|n| n == "sys::u32.lit"),
+        "expected sys::u32.lit, got: {:?}", bare_names);
+    assert!(bare_names.iter().any(|n| n == "sys::C"),
+        "expected sys::C, got: {:?}", bare_names);
+}
+
 // --- mixed import styles ---
 
 #[test]
