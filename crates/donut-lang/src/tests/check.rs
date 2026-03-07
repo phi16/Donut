@@ -928,3 +928,67 @@ fn typed_donut_example() {
     let dimmed = &env.entries[env.lookup["dimmed"]];
     assert_ne!(colored.color, dimmed.color);
 }
+
+// --- Use (internal loading vs path access) ---
+
+#[test]
+fn use_decorator_works_via_import_ui() {
+    // `import "ui"` alone is sufficient for decorators — base items are loaded internally
+    check_source(
+        r#"
+        import "ui"
+        [style[gray[128]]]
+        u: *
+        "#,
+    )
+    .unwrap();
+}
+
+#[test]
+fn use_no_conflict_with_user_nat() {
+    // User can define `nat` without conflicting with base.nat (via import "ui")
+    check_source(
+        r#"
+        import "ui"
+        nat = {
+            [style[hue[0.3]]]
+            C: *
+            x: C → C
+        }
+        "#,
+    )
+    .unwrap();
+}
+
+#[test]
+fn use_meta_types_available_for_params() {
+    // Meta types from `use "base"` are available for parametric declarations via import chain
+    let env = check_source(
+        r#"
+        import "base"
+        import "ui"
+        f[x: nat]: nat = x
+        [style[gray[f[42]]]]
+        u: *
+        "#,
+    )
+    .unwrap();
+    let u = &env.entries[env.lookup["u"]];
+    assert_eq!(u.color, (42, 42, 42));
+}
+
+#[test]
+fn use_internal_propagation_through_imports() {
+    // sys uses base and ui internally; decorators in sys work when imported
+    check_source(
+        r#"
+        import "ui"
+        sys = import "sys"
+        [style[hue[0.5]]]
+        u: *
+        x: u → u
+        y = sys.u32_lit[1]
+        "#,
+    )
+    .unwrap();
+}

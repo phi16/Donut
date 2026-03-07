@@ -174,6 +174,7 @@ impl Marking for syntree::Module {
         match self {
             syntree::Module::Block(ds) => ds.mark(x),
             syntree::Module::Import(l) => l.mark(x),
+            syntree::Module::Use(l) => l.mark(x),
         }
     }
 }

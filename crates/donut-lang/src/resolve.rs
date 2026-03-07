@@ -332,7 +332,9 @@ impl<'a> Checker<'a> {
                 for d in decls {
                     self.resolve_decl(d);
                 }
-                self.scopes.pop().unwrap()
+                let mut module = self.scopes.pop().unwrap();
+                module.finalize_used();
+                module
             }
             semtree::Module::Import(lit_s) | semtree::Module::Use(lit_s) => {
                 let name = match &lit_s.0 {
@@ -370,7 +372,9 @@ impl<'a> Checker<'a> {
         for d in sem_prog.0 {
             self.resolve_decl(d);
         }
-        self.scopes.pop().unwrap()
+        let mut module = self.scopes.pop().unwrap();
+        module.finalize_used();
+        module
     }
 
     fn resolve_decl(&mut self, decl: semtree::Decl) {
@@ -932,7 +936,8 @@ pub fn resolve(program: semtree::Program, tokens: &[Token]) -> (Program, Vec<Err
     for d in program.0 {
         checker.resolve_decl(d);
     }
-    let module = checker.scopes.pop().unwrap();
+    let mut module = checker.scopes.pop().unwrap();
+    module.finalize_used();
     let prog = Program {
         root: module,
         items: checker.items,

@@ -239,6 +239,11 @@ impl<'a> Checker<'a> {
     // --- Module processing ---
 
     fn check_module(&mut self, module: &Module) {
+        // Process internal items first (meta type registration etc.)
+        for (name, item_id) in &module.internal {
+            let item = self.program.item(*item_id);
+            self.check_item(name, item, *item_id);
+        }
         for (name, item_id) in &module.entries {
             let item = self.program.item(*item_id);
             self.check_item(name, item, *item_id);
@@ -724,17 +729,21 @@ impl<'a> Checker<'a> {
 
         self.prefixes.push(canonical.to_string());
         self.param_count_stack.push(parent_param_count);
+        // Process internal items first (for meta type registration etc.)
+        for (member_name, item_id) in &module.internal {
+            let item = self.program.item(*item_id);
+            self.check_item(member_name, item, *item_id);
+        }
+        // Process exported entries
         let mut members = Vec::new();
-        for (i, (member_name, item_id)) in module.entries.iter().enumerate() {
+        for (member_name, item_id) in &module.entries {
             let full_name = format!("{}.{}", canonical, member_name);
             let item = self.program.item(*item_id);
             self.check_item(member_name, item, *item_id);
-            if module.is_exported(i) {
-                let entry_idx = self.lookup.get(&full_name).copied();
-                let is_sub_module = self.module_members.contains_key(&full_name);
-                if entry_idx.is_some() || is_sub_module {
-                    members.push((member_name.clone(), entry_idx));
-                }
+            let entry_idx = self.lookup.get(&full_name).copied();
+            let is_sub_module = self.module_members.contains_key(&full_name);
+            if entry_idx.is_some() || is_sub_module {
+                members.push((member_name.clone(), entry_idx));
             }
         }
         self.param_count_stack.pop();

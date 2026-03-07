@@ -1313,3 +1313,85 @@ fn import_unknown() {
         "expected unknown import error: {errs:?}"
     );
 }
+
+// --- Use ---
+
+#[test]
+fn use_base_not_exported() {
+    // `use "base"` makes entries available internally but not exported
+    let p = check_module("\
+use \"base\"
+x = \"hello\"
+");
+    assert!(p.root.get("x").is_some());
+    assert!(p.root.get("nat").is_none(), "used entries should not be exported");
+}
+
+#[test]
+fn use_base_available_for_resolution() {
+    // `use "base"` entries are available for name resolution within the module
+    check_ok("\
+use \"base\"
+f[n: nat] = \"x\"
+");
+}
+
+#[test]
+fn use_conflicts_with_same_name() {
+    // Defining a name that exists in a `use`d module is a duplicate error
+    let errs = check_errs("\
+use \"base\"
+nat = \"user_nat\"
+");
+    assert!(
+        errs.iter().any(|e| e.contains("duplicate definition")),
+        "expected duplicate definition error: {errs:?}"
+    );
+}
+
+#[test]
+fn import_ui_no_conflict_with_user_nat() {
+    // `import "ui"` does not bring base entries, so user can define `nat`
+    check_ok("\
+import \"ui\"
+nat = \"user_nat\"
+");
+}
+
+#[test]
+fn import_does_not_reexport_used() {
+    // `import "ui"` brings ui's exports but not base entries (ui uses `use "base"`)
+    let p = check_module("\
+import \"ui\"
+C: *
+x: C → C
+");
+    assert!(p.root.get("C").is_some());
+    // ui exports (e.g. style) should be present
+    assert!(p.root.get("style").is_some());
+    // base entries should NOT be present
+    assert!(p.root.get("nat").is_none());
+    assert!(p.root.get("decorator").is_none());
+}
+
+#[test]
+fn use_in_block_not_exported() {
+    // `use` inside a block module does not leak to outer scope
+    let p = check_module("\
+m = {
+    use \"base\"
+    f[n: nat] = \"x\"
+}
+");
+    assert!(p.root.get("m").is_some());
+    assert!(p.root.get("nat").is_none());
+}
+
+#[test]
+fn use_unknown() {
+    let errs = check_errs("use \"unknown\"");
+    assert!(
+        errs.iter().any(|e| e.contains("unknown import")),
+        "expected unknown import error: {errs:?}"
+    );
+}
