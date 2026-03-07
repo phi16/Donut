@@ -5,7 +5,7 @@ use crate::types::token::*;
 
 fn is_keyword(s: &str) -> bool {
     match s {
-        "with" | "where" | "import" => true,
+        "with" | "where" | "import" | "use" => true,
         _ => false,
     }
 }

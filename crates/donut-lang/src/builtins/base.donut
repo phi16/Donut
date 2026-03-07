@@ -1,6 +1,4 @@
-base = {
-    nat: meta
-    rat: meta
-    color: meta
-    decorator: meta
-}
+nat: meta
+rat: meta
+color: meta
+decorator: meta

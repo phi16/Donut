@@ -247,6 +247,10 @@ impl Prettyable for Module {
                 pp.str("import ");
                 s.pretty(pp);
             }
+            Module::Use(s) => {
+                pp.str("use ");
+                s.pretty(pp);
+            }
         }
     }
 }

@@ -1,5 +1,5 @@
-import "base"
-import "ui"
+use "base"
+use "ui"
 
 C: *
 
@@ -13,7 +13,7 @@ f32: C → C
 bool: C → C
 
 // u32 constants
-u32_lit[n: base.nat]: C → u32
+u32_lit[n: nat]: C → u32
 
 // u32 arithmetic
 u32_add: u32 u32 → u32
@@ -24,7 +24,7 @@ u32_mod: u32 u32 → u32
 u32_neg: u32 → u32
 
 // f32 constants
-f32_lit[n: base.nat]: C → f32
+f32_lit[n: nat]: C → f32
 
 // f32 arithmetic
 f32_add: f32 f32 → f32
@@ -34,7 +34,7 @@ f32_div: f32 f32 → f32
 f32_neg: f32 → f32
 
 // bool constants
-bool_lit[n: base.nat]: C → bool
+bool_lit[n: nat]: C → bool
 
 // bool operations
 bool_not: bool → bool

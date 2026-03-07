@@ -244,11 +244,8 @@ impl<'a> Checker<'a> {
 
     /// Insert a name into the current scope. Returns true if newly defined, false if duplicate.
     fn define(&mut self, name: String, item: ItemId) -> bool {
-        if let Some(scope) = self.scopes.last_mut() {
-            scope.define(name, item).is_none()
-        } else {
-            false
-        }
+        let scope = self.scopes.last_mut().unwrap();
+        scope.define(name, item).is_none()
     }
 
     fn lookup(&self, name: &str) -> Option<ItemId> {
@@ -337,7 +334,7 @@ impl<'a> Checker<'a> {
                 }
                 self.scopes.pop().unwrap()
             }
-            semtree::Module::Import(lit_s) => {
+            semtree::Module::Import(lit_s) | semtree::Module::Use(lit_s) => {
                 let name = match &lit_s.0 {
                     semtree::Lit::String(s) => s.trim_matches('"').to_string(),
                     _ => {
@@ -391,7 +388,17 @@ impl<'a> Checker<'a> {
                 self.process_unit_decl(unit, deco_param_defs, deco_vals, with_clauses, where_clauses);
             }
             semtree::DeclMain::Mod(mod_s) => {
-                self.process_mod_decl(mod_s, deco_param_defs, with_clauses, where_clauses);
+                if matches!(&mod_s.0, semtree::Module::Use(_)) {
+                    let span = mod_s.1.clone();
+                    let result = self.resolve_module(mod_s);
+                    let scope = self.scopes.last_mut().unwrap();
+                    let conflicts = scope.merge_used(result);
+                    for key in conflicts {
+                        self.error_at(&span, format!("duplicate member `{}`", key));
+                    }
+                } else {
+                    self.process_mod_decl(mod_s, deco_param_defs, with_clauses, where_clauses);
+                }
             }
         }
     }
@@ -484,9 +491,8 @@ impl<'a> Checker<'a> {
             0 => {}
             1 => {
                 // Forward ref already defined in outer scope; replace with real item
-                if let Some(scope) = self.scopes.last_mut() {
-                    scope.replace(&segs[0].0, item_id);
-                }
+                let scope = self.scopes.last_mut().unwrap();
+                scope.replace(&segs[0].0, item_id);
             }
             _ => self.insert_into_dotted(segs, item_id),
         }
@@ -902,11 +908,10 @@ impl<'a> Checker<'a> {
         self.exit_inner_scope();
 
         // Mod → promote to current scope
-        if let Some(scope) = self.scopes.last_mut() {
-            let conflicts = scope.merge(result);
-            for key in conflicts {
-                self.error_at(&span, format!("duplicate member `{}`", key));
-            }
+        let scope = self.scopes.last_mut().unwrap();
+        let conflicts = scope.merge(result);
+        for key in conflicts {
+            self.error_at(&span, format!("duplicate member `{}`", key));
         }
     }
 }

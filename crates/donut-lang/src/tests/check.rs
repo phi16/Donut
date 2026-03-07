@@ -431,10 +431,10 @@ fn functor_parametric_mapping() {
         sys = import "sys"
         C: *
         u: C → C
-        x[n: base.nat]: C → u
+        x[n: nat]: C → u
         F: C ~> sys.C
         F(u) = sys.u32
-        [n: base.nat] F(x[n]) = sys.u32_lit[n]
+        [n: nat] F(x[n]) = sys.u32_lit[n]
         "#,
     )
     .unwrap();
@@ -503,7 +503,7 @@ fn meta_typed_body() {
         r#"
         import "base"
         import "ui"
-        g: base.nat = 80
+        g: nat = 80
         [style[gray[g]]]
         u: *
         "#,
@@ -519,7 +519,7 @@ fn meta_typed_body_mismatch() {
     let result = check_source(
         r#"
         import "base"
-        g: base.meta = 80
+        g: meta = 80
         "#,
     );
     assert!(result.is_err());
@@ -532,7 +532,7 @@ fn meta_parametric_function() {
         r#"
         import "base"
         import "ui"
-        f[x: base.nat]: base.nat = x
+        f[x: nat]: nat = x
         [style[gray[f[120]]]]
         u: *
         "#,
@@ -549,7 +549,7 @@ fn meta_parametric_color_function() {
         r#"
         import "base"
         import "ui"
-        mycolor[r g b: base.nat]: base.color = rgb[r, g, b]
+        mycolor[r g b: nat]: color = rgb[r, g, b]
         [style[mycolor[10, 20, 30]]]
         u: *
         "#,
@@ -581,7 +581,7 @@ fn meta_hsv_stored_variable() {
         r#"
         import "base"
         import "ui"
-        c: base.color = hsv[0.0, 1, 1]
+        c: color = hsv[0.0, 1, 1]
         [style[c]]
         u: *
         "#,
@@ -803,9 +803,10 @@ fn module_meta_value_instantiation() {
     // Meta values inside a parametric module should be accessible after instantiation
     let env = check_source(
         r#"
+        import "base"
         import "ui"
         config[C: *] = {
-            my_gray: base.nat = 120
+            my_gray: nat = 120
         }
         u: *
         c = config[u]
@@ -847,9 +848,10 @@ fn module_member_meta_reference() {
     // config.my_hue used in decorator
     let env = check_source(
         r#"
+        import "base"
         import "ui"
         config = {
-            my_hue: base.rat = 0.6
+            my_hue: rat = 0.6
         }
         u: *
         [style[hue[config.my_hue]]]

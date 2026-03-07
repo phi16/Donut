@@ -344,6 +344,12 @@ impl<'a> Converter<'a> {
                 }
                 A::Error(_) => semtree::Module::Block(vec![]),
             },
+            syntree::Module::Use(lit) => match lit {
+                A::Accepted(lit, span) => {
+                    semtree::Module::Use(S(self.convert_lit(lit), span))
+                }
+                A::Error(_) => semtree::Module::Block(vec![]),
+            },
         }
     }
 

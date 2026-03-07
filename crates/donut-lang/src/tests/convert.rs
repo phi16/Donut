@@ -129,6 +129,7 @@ impl Fmt for semtree::Module {
                 p.s(" }");
             }
             semtree::Module::Import(l) => { p.s("import "); l.fmt(p); }
+            semtree::Module::Use(l) => { p.s("use "); l.fmt(p); }
         }
     }
 }

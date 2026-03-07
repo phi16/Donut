@@ -1,3 +1,4 @@
+use "base"
 import "ui"
 
 // ============================================================
@@ -68,8 +69,8 @@ witness = id_cell[u, f]
 // ============================================================
 
 config = {
-    my_hue: base.rat = 0.45
-    my_gray: base.nat = 120
+    my_hue: rat = 0.45
+    my_gray: nat = 120
 }
 
 [style[hue[config.my_hue]]]

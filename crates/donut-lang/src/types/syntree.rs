@@ -69,6 +69,7 @@ pub struct Val {
 pub enum Module {
     Block(Vec<A<Decl>>),
     Import(A<Lit>),
+    Use(A<Lit>),
 }
 
 #[derive(Debug, Clone)]

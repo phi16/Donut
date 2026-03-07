@@ -725,14 +725,16 @@ impl<'a> Checker<'a> {
         self.prefixes.push(canonical.to_string());
         self.param_count_stack.push(parent_param_count);
         let mut members = Vec::new();
-        for (member_name, item_id) in &module.entries {
+        for (i, (member_name, item_id)) in module.entries.iter().enumerate() {
             let full_name = format!("{}.{}", canonical, member_name);
             let item = self.program.item(*item_id);
             self.check_item(member_name, item, *item_id);
-            let entry_idx = self.lookup.get(&full_name).copied();
-            let is_sub_module = self.module_members.contains_key(&full_name);
-            if entry_idx.is_some() || is_sub_module {
-                members.push((member_name.clone(), entry_idx));
+            if module.is_exported(i) {
+                let entry_idx = self.lookup.get(&full_name).copied();
+                let is_sub_module = self.module_members.contains_key(&full_name);
+                if entry_idx.is_some() || is_sub_module {
+                    members.push((member_name.clone(), entry_idx));
+                }
             }
         }
         self.param_count_stack.pop();

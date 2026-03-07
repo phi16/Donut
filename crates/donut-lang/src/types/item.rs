@@ -1,6 +1,6 @@
 pub use crate::types::common::S;
 pub use crate::types::common::TokenSpan;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 // --- Index types ---
 
@@ -111,6 +111,8 @@ pub struct Module {
     index: HashMap<String, usize>,
     /// For imported modules, the source name (e.g. "sys") used as canonical prefix.
     pub origin: Option<String>,
+    /// Names added via `use` (available for resolution but not re-exported).
+    used: HashSet<String>,
 }
 
 // --- Program ---
@@ -136,13 +138,23 @@ impl Module {
             entries: Vec::new(),
             index: HashMap::new(),
             origin: None,
+            used: HashSet::new(),
         }
     }
 
-    /// Insert a new entry. Returns the existing ItemId if the name was already defined.
+    /// Insert a new entry. Returns the existing ItemId if already defined as non-used.
+    /// Used entries can be shadowed by new definitions.
     pub fn define(&mut self, name: String, item: ItemId) -> Option<ItemId> {
         if let Some(&idx) = self.index.get(&name) {
-            Some(self.entries[idx].1)
+            if self.used.contains(&name) {
+                // Shadow the used entry: add new entry, update index
+                let new_idx = self.entries.len();
+                self.index.insert(name.clone(), new_idx);
+                self.entries.push((name, item));
+                None
+            } else {
+                Some(self.entries[idx].1)
+            }
         } else {
             let idx = self.entries.len();
             self.index.insert(name.clone(), idx);
@@ -150,7 +162,6 @@ impl Module {
             None
         }
     }
-
 
     /// Replace an existing entry's ItemId (e.g., forward ref → real item).
     /// Panics if the name does not exist.
@@ -168,12 +179,21 @@ impl Module {
         self.index.contains_key(name)
     }
 
-    /// Merge source entries into self. Returns conflicting key names.
-    /// Duplicate entries with the same ItemId are silently skipped.
+    /// Merge source into self. Used entries from source are propagated as used.
+    /// Returns conflicting key names (non-used only).
     pub fn merge(&mut self, source: Module) -> Vec<String> {
         let mut conflicts = Vec::new();
+        let source_used = source.used;
         for (key, item) in source.entries {
-            if let Some(existing) = self.get(&key) {
+            if source_used.contains(&key) {
+                // Propagate used entries as used (skip if any entry already exists)
+                if !self.has_entry(&key) {
+                    self.used.insert(key.clone());
+                    let idx = self.entries.len();
+                    self.index.insert(key.clone(), idx);
+                    self.entries.push((key, item));
+                }
+            } else if let Some(existing) = self.get(&key) {
                 if existing != item {
                     conflicts.push(key);
                 }
@@ -182,6 +202,43 @@ impl Module {
             }
         }
         conflicts
+    }
+
+    /// Merge all source entries as "used" (internal only, not visible via `get()`).
+    pub fn merge_used(&mut self, source: Module) -> Vec<String> {
+        let mut conflicts = Vec::new();
+        for (key, item) in source.entries {
+            if self.has_entry(&key) {
+                // Already exists (used or non-used); check for conflict on non-used
+                if let Some(existing) = self.get(&key) {
+                    if existing != item {
+                        conflicts.push(key);
+                    }
+                }
+            } else {
+                self.used.insert(key.clone());
+                let idx = self.entries.len();
+                self.index.insert(key.clone(), idx);
+                self.entries.push((key, item));
+            }
+        }
+        conflicts
+    }
+
+    /// Check if a name exists in entries (including used).
+    fn has_entry(&self, name: &str) -> bool {
+        self.index.contains_key(name)
+    }
+
+    /// Check if a name is in the used set.
+    fn is_used_name(&self, name: &str) -> bool {
+        self.used.contains(name)
+    }
+
+    /// Check if an entry at the given index is exported (non-used and active in index).
+    pub fn is_exported(&self, idx: usize) -> bool {
+        let (name, _) = &self.entries[idx];
+        !self.used.contains(name) && self.index.get(name) == Some(&idx)
     }
 }
 

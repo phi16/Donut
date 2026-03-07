@@ -500,6 +500,13 @@ impl<'a> Tracker<'a> {
                 self.error()
             });
             Module::Import(s)
+        } else if self.keyword("use").is_some() {
+            // use (non-re-exporting import)
+            let s = self.lit().unwrap_or_else(|| {
+                self.expected_after("literal", "'use'");
+                self.error()
+            });
+            Module::Use(s)
         } else {
             return None;
         };

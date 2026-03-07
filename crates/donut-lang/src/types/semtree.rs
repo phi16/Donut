@@ -58,6 +58,7 @@ pub enum Val {
 pub enum Module {
     Block(Vec<Decl>),
     Import(S<Lit>),
+    Use(S<Lit>),
 }
 
 #[derive(Debug, Clone)]

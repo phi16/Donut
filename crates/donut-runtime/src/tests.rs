@@ -200,11 +200,11 @@ fn test_parametric_functor_mapping() {
     let (rt, env) = setup("\
 C: *
 K: C → C
-x[n: base.nat]: C → K
+x[n: nat]: C → K
 
 F: C ~> sys.C
 F(K) = sys.u32
-[n: base.nat] F(x[n]) = sys.u32_lit[n]
+[n: nat] F(x[n]) = sys.u32_lit[n]
 
 result = F(x[32])
 ");

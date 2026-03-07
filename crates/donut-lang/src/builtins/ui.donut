@@ -1,8 +1,8 @@
-import "base"
+use "base"
 
-rgb[r g b: base.nat]: base.color
-hsv[h s v: base.rat]: base.color
-hue[x: base.rat]: base.color = hsv[x, 1, 1]
-gray[v: base.nat]: base.color = rgb[v, v, v]
-lerp[a b: base.color, x: base.rat]: base.color
-style[c: base.color]: base.decorator
+rgb[r g b: nat]: color
+hsv[h s v: rat]: color
+hue[x: rat]: color = hsv[x, 1, 1]
+gray[v: nat]: color = rgb[v, v, v]
+lerp[a b: color, x: rat]: color
+style[c: color]: decorator
