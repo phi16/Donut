@@ -1,6 +1,9 @@
+use donut_lang::check::Env;
 use donut_lang::types;
 use donut_lang::types::common;
+use donut_lang::types::item::*;
 use donut_lang::types::syntree;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub enum TokenType {
@@ -28,6 +31,21 @@ pub struct TokenData {
     pub column: u32,
     pub length: u32,
     pub token_type: TokenType,
+    pub token_index: Option<usize>,
+}
+
+#[derive(Clone)]
+pub struct HoverInfo {
+    pub name: String,
+    pub detail: String,
+    pub type_expr: Option<String>,
+    pub params: String,
+}
+
+pub struct AnalysisResult {
+    pub tokens: Vec<TokenData>,
+    pub diagnostics: Vec<Diagnostic>,
+    pub hover_map: HashMap<usize, HoverInfo>,
 }
 
 struct Context {
@@ -249,7 +267,212 @@ fn to_utf16(lines: &[&str], line: usize, col: usize, len: usize) -> (u32, u32) {
     (utf16_col, utf16_len)
 }
 
-pub fn tokenize_example(code: &str) -> (Vec<TokenData>, Vec<Diagnostic>) {
+// --- Hover map construction ---
+
+struct HoverBuilder<'a> {
+    program: &'a Program,
+    env: &'a Env,
+    map: HashMap<usize, HoverInfo>,
+}
+
+impl<'a> HoverBuilder<'a> {
+    fn new(program: &'a Program, env: &'a Env) -> Self {
+        Self {
+            program,
+            env,
+            map: HashMap::new(),
+        }
+    }
+
+    fn make_hover(&self, qname: &str) -> Option<HoverInfo> {
+        let &idx = self.env.lookup.get(qname)?;
+        let entry = &self.env.entries[idx];
+        let detail = entry.kind_description();
+        let type_expr = entry.type_display(self.env);
+        let params = self.env.param_display(idx);
+        Some(HoverInfo {
+            name: qname.to_string(),
+            detail,
+            type_expr,
+            params,
+        })
+    }
+
+    fn try_resolve(&self, name: &str, prefixes: &[&str]) -> Option<String> {
+        for i in (0..=prefixes.len()).rev() {
+            let qname = if i == 0 {
+                name.to_string()
+            } else {
+                format!("{}.{}", prefixes[..i].join("."), name)
+            };
+            if self.env.lookup.contains_key(&qname) {
+                return Some(qname);
+            }
+        }
+        None
+    }
+
+    fn walk_val(&mut self, val_id: ValId, prefixes: &[&str]) {
+        let val_s = self.program.val(val_id);
+        match &val_s.0 {
+            Val::Path(path) => {
+                let path_name = {
+                    let parts: Vec<_> =
+                        path.segments.iter().map(|s| s.0.name.clone()).collect();
+                    if parts.is_empty() {
+                        return;
+                    }
+                    parts.join(".")
+                };
+                if path_name == "*" {
+                    let info = HoverInfo {
+                        name: "*".to_string(),
+                        detail: "meta".to_string(),
+                        type_expr: Some("meta".to_string()),
+                        params: String::new(),
+                    };
+                    self.map.insert(path.segments[0].1.start, info);
+                } else if let Some(resolved) = self.try_resolve(&path_name, prefixes) {
+                    if let Some(info) = self.make_hover(&resolved) {
+                        for seg in &path.segments {
+                            self.map.insert(seg.1.start, info.clone());
+                        }
+                    }
+                }
+                // Walk param vals
+                let param_vals: Vec<_> = path
+                    .segments
+                    .iter()
+                    .flat_map(|s| s.0.params.iter().map(|pv| pv.val))
+                    .collect();
+                for pv in param_vals {
+                    self.walk_val(pv, prefixes);
+                }
+                // Walk applicand
+                if let Some(app_id) = path.applicand {
+                    self.walk_val(app_id, prefixes);
+                }
+            }
+            Val::Arrow(_, l, r) => {
+                let (l, r) = (*l, *r);
+                self.walk_val(l, prefixes);
+                self.walk_val(r, prefixes);
+            }
+            Val::Comp(_, children) | Val::CompStar(children) => {
+                let children: Vec<_> = children.clone();
+                for c in children {
+                    self.walk_val(c, prefixes);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn walk_module(&mut self, module: &Module, prefixes: &[&str]) {
+        // Collect entry data to avoid borrow issues
+        let entries: Vec<_> = module.entries.clone();
+        let internal: Vec<_> = module.internal.clone();
+
+        for (name, item_id) in &entries {
+            let item = self.program.item(*item_id);
+            let qname = if prefixes.is_empty() {
+                name.clone()
+            } else {
+                format!("{}.{}", prefixes.join("."), name)
+            };
+
+            let has_members = item
+                .members()
+                .map_or(false, |m| !m.entries.is_empty());
+            let is_module_def = has_members && item.ty.is_none();
+
+            // Definition site hover
+            if is_module_def {
+                let params = self.env.module_param_display(&qname);
+                self.map.insert(
+                    item.span.start,
+                    HoverInfo {
+                        name: qname.clone(),
+                        detail: "module".to_string(),
+                        type_expr: None,
+                        params,
+                    },
+                );
+            } else if let Some(info) = self.make_hover(&qname) {
+                self.map.insert(item.span.start, info);
+            }
+
+            // Walk type expression
+            if let Some(ty_id) = item.ty {
+                self.walk_val(ty_id, prefixes);
+            }
+
+            // Walk body value
+            if let Some(val_id) = item.val() {
+                self.walk_val(val_id, prefixes);
+            }
+
+            // Walk decorators
+            let decos: Vec<_> = item.decos.clone();
+            for deco_id in decos {
+                self.walk_val(deco_id, prefixes);
+            }
+
+            // Walk params' type expressions
+            let param_tys: Vec<_> = item.params.iter().map(|p| p.ty).collect();
+            for ty in param_tys {
+                self.walk_val(ty, prefixes);
+            }
+
+            // Walk functor mappings
+            if let ItemBody::Functor { mappings } = &item.body {
+                let mapping_data: Vec<_> = mappings
+                    .iter()
+                    .map(|m| {
+                        let ptys: Vec<_> = m.params.iter().map(|p| p.ty).collect();
+                        (m.applicand, m.val, ptys)
+                    })
+                    .collect();
+                for (app, val, ptys) in mapping_data {
+                    self.walk_val(app, prefixes);
+                    self.walk_val(val, prefixes);
+                    for ty in ptys {
+                        self.walk_val(ty, prefixes);
+                    }
+                }
+            }
+
+            // Walk members (nested module)
+            if has_members {
+                let members = self.program.item(*item_id).members().unwrap().clone();
+                let mut new_prefixes: Vec<&str> = prefixes.to_vec();
+                new_prefixes.push(name);
+                self.walk_module(&members, &new_prefixes);
+            }
+        }
+
+        // Internal items (from use/import)
+        for (_name, item_id) in &internal {
+            let item = self.program.item(*item_id);
+            if let Some(ty_id) = item.ty {
+                self.walk_val(ty_id, prefixes);
+            }
+            if let Some(val_id) = item.val() {
+                self.walk_val(val_id, prefixes);
+            }
+        }
+    }
+
+    fn build(mut self) -> HashMap<usize, HoverInfo> {
+        let root = self.program.root.clone();
+        self.walk_module(&root, &[]);
+        self.map
+    }
+}
+
+// --- Main analysis ---
+
+pub fn analyze(code: &str) -> AnalysisResult {
     let lines = code.lines().collect::<Vec<_>>();
 
     let (tokens, comments, tokenize_errors) = donut_lang::tokenize::tokenize(code);
@@ -257,12 +480,14 @@ pub fn tokenize_example(code: &str) -> (Vec<TokenData>, Vec<Diagnostic>) {
     // tokenizer の型付けを初期値として TokenData を構築
     let token_data = tokens
         .iter()
-        .map(|t| {
+        .enumerate()
+        .map(|(i, t)| {
             let (utf16_col, utf16_len) = to_utf16(&lines, t.pos.line, t.pos.col, t.pos.len);
             TokenData {
                 line: t.pos.line as u32,
                 column: utf16_col,
                 length: utf16_len,
+                token_index: Some(i),
                 token_type: match t.ty {
                     types::token::TokenTy::Name => {
                         if donut_lang::convert::is_number_str(t.str) {
@@ -302,17 +527,20 @@ pub fn tokenize_example(code: &str) -> (Vec<TokenData>, Vec<Diagnostic>) {
         diags.push(to_diag(pos, msg, "[convert]"));
     }
 
-    // resolve（名前解決）を実行 — convert の出力は A なしの semtree::Program
+    // resolve（名前解決）を実行
     let (resolved, resolve_errors) = donut_lang::resolve::resolve(sem_program, &tokens);
     for (pos, msg) in &resolve_errors {
         diags.push(to_diag(pos, msg, "[resolve]"));
     }
 
     // check（型検査）を実行
-    let (_env, check_errors) = donut_lang::check::check(&resolved, &tokens);
+    let (env, check_errors) = donut_lang::check::check(&resolved, &tokens);
     for (pos, msg) in &check_errors {
         diags.push(to_diag(pos, msg, "[check]"));
     }
+
+    // hover map を構築
+    let hover_map = HoverBuilder::new(&resolved, &env).build();
 
     // コメントトークンを構築
     let comments_iter = comments.into_iter().map(|pos| {
@@ -322,6 +550,7 @@ pub fn tokenize_example(code: &str) -> (Vec<TokenData>, Vec<Diagnostic>) {
             column: utf16_col,
             length: utf16_len,
             token_type: TokenType::Comment,
+            token_index: None,
         }
     });
 
@@ -348,5 +577,10 @@ pub fn tokenize_example(code: &str) -> (Vec<TokenData>, Vec<Diagnostic>) {
             }
         }
     }
-    (res, diags)
+
+    AnalysisResult {
+        tokens: res,
+        diagnostics: diags,
+        hover_map,
+    }
 }

@@ -47,6 +47,67 @@ impl Entry {
             _ => None,
         }
     }
+
+    pub fn kind_description(&self) -> String {
+        match &self.body {
+            EntryBody::Cell(cell) => {
+                let dim = cell.pure.dim().in_space;
+                format!("{}-cell", dim)
+            }
+            EntryBody::Meta(_) => "meta".to_string(),
+            EntryBody::Type(_, _) => "type".to_string(),
+        }
+    }
+
+    pub fn type_display(&self, env: &Env) -> Option<String> {
+        match &self.body {
+            EntryBody::Cell(cell) => {
+                let dim = cell.pure.dim().in_space;
+                if dim == 0 {
+                    Some("*".to_string())
+                } else {
+                    let s = display_pure_cell(&cell.pure.s(), &env.prim_decls);
+                    let t = display_pure_cell(&cell.pure.t(), &env.prim_decls);
+                    Some(format!("{} → {}", s, t))
+                }
+            }
+            EntryBody::Meta(prim) => {
+                let sig = env.meta_sigs.get(&prim.id)?;
+                Some(env.display_meta_type(&sig.ret))
+            }
+            EntryBody::Type(_, _) => None,
+        }
+    }
+}
+
+fn display_pure_cell(cell: &PureCell, prim_decls: &HashMap<PrimId, PrimDecl>) -> String {
+    match cell {
+        PureCell::Prim(prim, _, _) => prim_decls
+            .get(&prim.id)
+            .map(|d| d.name.clone())
+            .unwrap_or_else(|| format!("?{}", prim.id)),
+        PureCell::Comp(axis, children, _) => {
+            let parts: Vec<_> = children
+                .iter()
+                .map(|c| {
+                    let s = display_pure_cell(c, prim_decls);
+                    // Parenthesize composites at higher axis (looser binding) inside lower axis (tighter)
+                    if let PureCell::Comp(child_axis, _, _) = c {
+                        if *child_axis > *axis {
+                            return format!("({})", s);
+                        }
+                    }
+                    s
+                })
+                .collect();
+            let sep = if *axis == 0 {
+                " "
+            } else {
+                "; "
+            };
+            parts.join(sep)
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -63,6 +124,57 @@ pub struct Env {
     pub lookup: HashMap<String, usize>,
     pub prim_decls: HashMap<PrimId, PrimDecl>,
     pub entry_params: HashMap<usize, Vec<ParamInfo>>,
+    pub module_params: HashMap<String, Vec<ParamInfo>>,
+    pub meta_sigs: HashMap<PrimId, MetaSig>,
+    pub meta_prim_names: HashMap<PrimId, String>,
+}
+
+impl Env {
+    pub fn param_display(&self, entry_idx: usize) -> String {
+        match self.entry_params.get(&entry_idx) {
+            Some(ps) if !ps.is_empty() => self.format_params(ps),
+            _ => String::new(),
+        }
+    }
+
+    pub fn module_param_display(&self, qname: &str) -> String {
+        match self.module_params.get(qname) {
+            Some(ps) if !ps.is_empty() => self.format_params(ps),
+            _ => String::new(),
+        }
+    }
+
+    fn format_params(&self, params: &[ParamInfo]) -> String {
+        let parts: Vec<_> = params
+            .iter()
+            .map(|(name, _, kind)| match kind {
+                ParamKind::Nat => format!("{}: nat", name),
+                ParamKind::Rat => format!("{}: rat", name),
+                ParamKind::Meta(mt) => format!("{}: {}", name, self.display_meta_type(mt)),
+                ParamKind::Cell => {
+                    if let Some(&idx) = self.lookup.get(name) {
+                        if let Some(ty) = self.entries[idx].type_display(self) {
+                            return format!("{}: {}", name, ty);
+                        }
+                    }
+                    name.clone()
+                }
+            })
+            .collect();
+        format!("[{}]", parts.join(", "))
+    }
+
+    pub fn display_meta_type(&self, mt: &MetaType) -> String {
+        let name = self.meta_prim_names.get(&mt.0)
+            .cloned()
+            .unwrap_or_else(|| format!("?{}", mt.0));
+        if mt.1.is_empty() {
+            name
+        } else {
+            let args: Vec<_> = mt.1.iter().map(|a| self.display_meta_type(a)).collect();
+            format!("{}[{}]", name, args.join(", "))
+        }
+    }
 }
 
 // --- Functor map entry ---
@@ -76,21 +188,22 @@ struct FunctorEntry {
 // --- Meta type ---
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct MetaType(PrimId, Vec<MetaType>);
+pub struct MetaType(pub PrimId, pub Vec<MetaType>);
 
-struct MetaSig {
-    params: Vec<MetaType>,
-    ret: MetaType,
+#[derive(Debug, Clone)]
+pub struct MetaSig {
+    pub params: Vec<MetaType>,
+    pub ret: MetaType,
 }
 
 // --- Param kind ---
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ParamKind {
     Cell,
     Nat,
     Rat,
-    Meta,
+    Meta(MetaType),
 }
 
 pub type ParamInfo = (String, PrimId, ParamKind);
@@ -163,11 +276,22 @@ impl<'a> Checker<'a> {
     }
 
     fn into_result(self) -> (Env, Vec<Error>) {
+        let meta_prim_names: HashMap<PrimId, String> = self
+            .entries
+            .iter()
+            .filter_map(|e| match &e.body {
+                EntryBody::Meta(prim) => Some((prim.id, e.name.clone())),
+                _ => None,
+            })
+            .collect();
         let env = Env {
             entries: self.entries,
             lookup: self.lookup,
             prim_decls: self.prim_decls,
             entry_params: self.entry_params,
+            module_params: self.module_params,
+            meta_sigs: self.meta_sigs,
+            meta_prim_names,
         };
         (env, self.errors)
     }
@@ -803,7 +927,7 @@ impl<'a> Checker<'a> {
                         param_counts: vec![],
                     });
                 }
-                ParamKind::Nat | ParamKind::Rat | ParamKind::Meta => {
+                ParamKind::Nat | ParamKind::Rat | ParamKind::Meta(_) => {
                     // Create a meta entry so it can be referenced in meta expressions
                     let prim = Prim::new(fresh_id);
                     let param_name = self.qualified_name(&param.name);
@@ -900,7 +1024,7 @@ impl<'a> Checker<'a> {
                 } else if self.meta_id("rat") == Some(mt.0) {
                     ParamKind::Rat
                 } else {
-                    ParamKind::Meta
+                    ParamKind::Meta(mt)
                 }
             }
             _ => ParamKind::Cell,
@@ -1180,7 +1304,7 @@ impl<'a> Checker<'a> {
             if let Some(params) = self.module_params.get(&resolved_name).cloned() {
                 for (i, (_, fresh_id, kind)) in params.iter().enumerate() {
                     if let Some(pv) = seg.params.get(i) {
-                        let arg = self.resolve_param_arg(pv, *kind)?;
+                        let arg = self.resolve_param_arg(pv, kind)?;
                         mapping.insert(*fresh_id, arg);
                     }
                 }
@@ -1492,17 +1616,17 @@ impl<'a> Checker<'a> {
         None
     }
 
-    fn resolve_param_arg(&self, pv: &ParamVal, kind: ParamKind) -> Result<PrimArg> {
+    fn resolve_param_arg(&self, pv: &ParamVal, kind: &ParamKind) -> Result<PrimArg> {
         let val_s = self.program.val(pv.val);
         match kind {
             ParamKind::Cell => {
                 let arg_cell = self.eval_val(&val_s.0)?;
                 Ok(PrimArg::Cell(arg_cell.pure.clone()))
             }
-            ParamKind::Nat | ParamKind::Rat | ParamKind::Meta => {
+            ParamKind::Nat | ParamKind::Rat | ParamKind::Meta(_) => {
                 let mut arg = self.eval_meta_val(&val_s.0)?;
                 // Nat→Rat coercion when param expects Rat
-                if kind == ParamKind::Rat {
+                if *kind == ParamKind::Rat {
                     if let PrimArg::Nat(n) = arg {
                         arg = PrimArg::rat(n as f64);
                     }
@@ -1539,7 +1663,7 @@ impl<'a> Checker<'a> {
             if let Some(params) = params {
                 for (i, (_, fresh_id, kind)) in params.iter().enumerate() {
                     if let Some(pv) = seg.params.get(i) {
-                        let arg = self.resolve_param_arg(pv, *kind)?;
+                        let arg = self.resolve_param_arg(pv, kind)?;
                         mapping.insert(*fresh_id, arg);
                     }
                 }

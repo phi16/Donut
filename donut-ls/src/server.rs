@@ -1,5 +1,5 @@
 use crate::doc::Doc;
-use crate::lang::{tokenize_example, TokenType};
+use crate::lang::{analyze, TokenType};
 use colored::Colorize;
 use lsp_server::{Connection, Message, Notification, Request, Response};
 use lsp_types::*;
@@ -59,21 +59,21 @@ fn from_token_type(t: TokenType) -> Option<(u32, u32)> {
     Some((res.0 .0, res.1))
 }
 
-fn semantic_tokens(
-    doc: Arc<Mutex<Doc>>,
+fn run_analysis(
+    doc: &mut Doc,
 ) -> Result<(Vec<SemanticToken>, Vec<crate::lang::Diagnostic>)> {
-    let doc = doc.lock().unwrap();
     let contents = doc.to_string();
-    let (tokens, diagnostics) = tokenize_example(&contents);
+    let result = analyze(&contents);
+    doc.hover_map = result.hover_map;
     let mut prev_line = 0;
     let mut prev_column = 0;
-    let mut result = Vec::new();
-    for t in tokens {
+    let mut semantic = Vec::new();
+    for t in &result.tokens {
         if prev_line != t.line {
             prev_column = 0;
         }
-        if let Some((token_type, token_modifiers_bitset)) = from_token_type(t.token_type) {
-            result.push(SemanticToken {
+        if let Some((token_type, token_modifiers_bitset)) = from_token_type(t.token_type.clone()) {
+            semantic.push(SemanticToken {
                 delta_line: t.line - prev_line,
                 delta_start: t.column - prev_column,
                 length: t.length,
@@ -84,7 +84,8 @@ fn semantic_tokens(
             prev_column = t.column;
         }
     }
-    Ok((result, diagnostics))
+    doc.tokens = result.tokens;
+    Ok((semantic, result.diagnostics))
 }
 
 struct Server<'a> {
@@ -194,9 +195,12 @@ impl<'a> Server<'a> {
     ) -> Result<Option<SemanticTokensResult>> {
         let uri = params.text_document.uri;
         let doc = self.get_doc(&uri)?;
-        let (result, diags) = match semantic_tokens(doc.clone()) {
-            Ok((r, diags)) => (r, diags),
-            Err(_) => (vec![], vec![]),
+        let (result, diags) = {
+            let mut doc = doc.lock().unwrap();
+            match run_analysis(&mut doc) {
+                Ok((r, diags)) => (r, diags),
+                Err(_) => (vec![], vec![]),
+            }
         };
         let result_id = self.fresh_result_id();
         {
@@ -216,9 +220,12 @@ impl<'a> Server<'a> {
     ) -> Result<Option<SemanticTokensFullDeltaResult>> {
         let uri = params.text_document.uri;
         let doc = self.get_doc(&uri)?;
-        let (result, diags) = match semantic_tokens(doc.clone()) {
-            Ok((r, diags)) => (r, diags),
-            Err(_) => (vec![], vec![]),
+        let (result, diags) = {
+            let mut doc = doc.lock().unwrap();
+            match run_analysis(&mut doc) {
+                Ok((r, diags)) => (r, diags),
+                Err(_) => (vec![], vec![]),
+            }
         };
         self.send_diagnostics(uri, diags)?;
         let result_id = self.fresh_result_id();
@@ -238,6 +245,32 @@ impl<'a> Server<'a> {
         _params: SemanticTokensRangeParams,
     ) -> Result<Option<SemanticTokensRangeResult>> {
         Ok(None)
+    }
+
+    fn hover(&mut self, params: HoverParams) -> Result<Option<Hover>> {
+        let uri = params.text_document_position_params.text_document.uri;
+        let pos = params.text_document_position_params.position;
+        let doc = self.get_doc(&uri)?;
+        let doc = doc.lock().unwrap();
+        let token_idx = doc.token_index_at(pos.line, pos.character);
+        let hover_info = token_idx.and_then(|idx| doc.hover_map.get(&idx));
+        match hover_info {
+            Some(info) => {
+                let content = if let Some(ty) = &info.type_expr {
+                    format!("```donut\n{}{}: {}\n```\n{}", info.name, info.params, ty, info.detail)
+                } else {
+                    format!("```donut\n{}{}\n```\n{}", info.name, info.params, info.detail)
+                };
+                Ok(Some(Hover {
+                    contents: HoverContents::Markup(MarkupContent {
+                        kind: MarkupKind::Markdown,
+                        value: content,
+                    }),
+                    range: None,
+                }))
+            }
+            None => Ok(None),
+        }
     }
 
     fn completion(&mut self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
@@ -396,6 +429,8 @@ pub fn main_loop(connection: Connection, _params: serde_json::Value) -> Result<(
                         Server::semantic_tokens_range,
                         req,
                     )?;
+                } else if method == method_of_req::<request::HoverRequest>() {
+                    server.process_request::<request::HoverRequest>(Server::hover, req)?;
                 } else if method == method_of_req::<request::Completion>() {
                     server.process_request::<request::Completion>(Server::completion, req)?;
                 } else {

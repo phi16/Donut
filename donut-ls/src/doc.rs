@@ -1,7 +1,10 @@
+use std::collections::HashMap;
+
 pub struct Doc {
     pub content: ropey::Rope,
     pub tokens: Vec<crate::lang::TokenData>,
     pub last_result_id: Option<u32>,
+    pub hover_map: HashMap<usize, crate::lang::HoverInfo>,
 }
 
 impl Doc {
@@ -10,6 +13,7 @@ impl Doc {
             content: ropey::Rope::from(text),
             tokens: Vec::new(),
             last_result_id: None,
+            hover_map: HashMap::new(),
         }
     }
 
@@ -29,5 +33,15 @@ impl Doc {
 
     pub fn substr(&self, start_ix: usize, end_ix: usize) -> String {
         self.content.slice(start_ix..end_ix).to_string()
+    }
+
+    /// Find the token index at the given UTF-16 position.
+    pub fn token_index_at(&self, line: u32, character: u32) -> Option<usize> {
+        for t in &self.tokens {
+            if t.line == line && t.column <= character && character < t.column + t.length {
+                return t.token_index;
+            }
+        }
+        None
     }
 }
