@@ -267,16 +267,7 @@ impl<'a> Checker<'a> {
     }
 
     fn resolve_functor_name(&self, name: &str) -> Option<String> {
-        for prefix in self.prefixes.iter().rev() {
-            let qualified = format!("{}.{}", prefix, name);
-            if self.functor_maps.contains_key(&qualified) {
-                return Some(qualified);
-            }
-        }
-        if self.functor_maps.contains_key(name) {
-            return Some(name.to_string());
-        }
-        None
+        self.resolve_qualified(name, |n| self.functor_maps.contains_key(n))
     }
 
     pub(super) fn resolve_param_arg(&self, pv: &ParamVal, kind: &ParamKind) -> Result<PrimArg> {
@@ -390,18 +381,9 @@ impl<'a> Checker<'a> {
     }
 
     fn resolve_module_name(&self, name: &str) -> Option<String> {
-        for prefix in self.prefixes.iter().rev() {
-            let qualified = format!("{}.{}", prefix, name);
-            if self.module_members.contains_key(&qualified)
-                || self.module_params.contains_key(&qualified)
-            {
-                return Some(qualified);
-            }
-        }
-        if self.module_members.contains_key(name) || self.module_params.contains_key(name) {
-            return Some(name.to_string());
-        }
-        None
+        self.resolve_qualified(name, |n| {
+            self.module_members.contains_key(n) || self.module_params.contains_key(n)
+        })
     }
 
     pub(super) fn instantiate_module(
@@ -417,11 +399,11 @@ impl<'a> Checker<'a> {
             .unwrap_or_default();
         let mut new_members = Vec::new();
 
-        for (member_name, src_idx) in &members {
-            let dest_member = format!("{}.{}", dest, member_name);
+        for m in &members {
+            let dest_member = format!("{}.{}", dest, m.name);
 
-            let new_idx = if let Some(src_idx) = src_idx {
-                let src_entry = &self.entries[*src_idx];
+            let new_idx = if let Some(src_idx) = m.entry {
+                let src_entry = &self.entries[src_idx];
                 let new_body = match &src_entry.body {
                     EntryBody::Cell(cell) => {
                         let new_pure = if mapping.is_empty() {
@@ -449,11 +431,11 @@ impl<'a> Checker<'a> {
                     new_body, src_pc,
                 );
 
-                if let Some(params) = self.entry_params.get(src_idx).cloned() {
+                if let Some(params) = self.entry_params.get(&src_idx).cloned() {
                     self.entry_params.insert(idx, params);
                 }
 
-                if let Some(val) = self.meta_values.get(src_idx).cloned() {
+                if let Some(val) = self.meta_values.get(&src_idx).cloned() {
                     let new_val = if mapping.is_empty() {
                         val
                     } else {
@@ -467,9 +449,9 @@ impl<'a> Checker<'a> {
                 None
             };
 
-            new_members.push((member_name.clone(), new_idx));
+            new_members.push(MemberRef { name: m.name.clone(), entry: new_idx });
 
-            let src_member_name = format!("{}.{}", source, member_name);
+            let src_member_name = format!("{}.{}", source, m.name);
             if self.module_members.contains_key(&src_member_name) {
                 self.instantiate_module(&src_member_name, &dest_member, mapping)?;
             }

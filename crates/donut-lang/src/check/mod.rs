@@ -17,6 +17,14 @@ pub use crate::types::env::{Entry, Env, MetaSig, MetaType, ParamInfo, ParamKind,
 
 type Result<T> = std::result::Result<T, String>;
 
+// --- Module member reference ---
+
+#[derive(Clone)]
+pub(super) struct MemberRef {
+    pub(super) name: String,
+    pub(super) entry: Option<usize>,
+}
+
 // --- Functor map entry ---
 
 pub(super) struct FunctorEntry {
@@ -38,7 +46,7 @@ pub(super) struct Checker<'a> {
     pub(super) prefixes: Vec<String>,
 
     pub(super) module_params: HashMap<String, Vec<ParamInfo>>,
-    pub(super) module_members: HashMap<String, Vec<(String, Option<usize>)>>,
+    pub(super) module_members: HashMap<String, Vec<MemberRef>>,
     pub(super) entry_params: HashMap<usize, Vec<ParamInfo>>,
     pub(super) accumulated_args: Vec<PrimArg>,
     pub(super) param_count_stack: Vec<usize>,
@@ -135,11 +143,6 @@ impl<'a> Checker<'a> {
         param_counts: Vec<usize>,
     ) -> usize {
         let idx = self.entries.len();
-        // Track meta prim ids by short name
-        if let EntryBody::Meta(prim) = &body {
-            let short_name = name.rsplit('.').next().unwrap_or(&name);
-            self.meta_prim_ids.insert(short_name.to_string(), prim.id);
-        }
         self.lookup.insert(name.clone(), idx);
         self.entries.push(Entry {
             name,
@@ -185,14 +188,24 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn resolve_name(&self, name: &str) -> Option<usize> {
+    /// Resolve a name with prefix search: try each prefix in reverse, then bare name.
+    fn resolve_qualified(&self, name: &str, exists: impl Fn(&str) -> bool) -> Option<String> {
         for prefix in self.prefixes.iter().rev() {
             let qualified = format!("{}.{}", prefix, name);
-            if let Some(&idx) = self.lookup.get(&qualified) {
-                return Some(idx);
+            if exists(&qualified) {
+                return Some(qualified);
             }
         }
-        self.lookup.get(name).copied()
+        if exists(name) {
+            Some(name.to_string())
+        } else {
+            None
+        }
+    }
+
+    fn resolve_name(&self, name: &str) -> Option<usize> {
+        let qname = self.resolve_qualified(name, |n| self.lookup.contains_key(n))?;
+        self.lookup.get(&qname).copied()
     }
 
     // --- Module processing ---
@@ -333,11 +346,11 @@ impl<'a> Checker<'a> {
     /// Create lookup aliases for all members of an already-checked module.
     fn alias_members(&mut self, old_prefix: &str, new_prefix: &str) {
         let Some(members) = self.module_members.get(old_prefix).cloned() else { return };
-        for (member_name, entry_idx) in &members {
-            let old_name = format!("{}.{}", old_prefix, member_name);
-            let new_name = format!("{}.{}", new_prefix, member_name);
-            if let Some(idx) = entry_idx {
-                self.lookup.insert(new_name.clone(), *idx);
+        for m in &members {
+            let old_name = format!("{}.{}", old_prefix, m.name);
+            let new_name = format!("{}.{}", new_prefix, m.name);
+            if let Some(idx) = m.entry {
+                self.lookup.insert(new_name.clone(), idx);
             }
             self.alias_members(&old_name, &new_name);
         }
@@ -697,7 +710,7 @@ impl<'a> Checker<'a> {
             let entry_idx = self.lookup.get(&full_name).copied();
             let is_sub_module = self.module_members.contains_key(&full_name);
             if entry_idx.is_some() || is_sub_module {
-                members.push((member_name.clone(), entry_idx));
+                members.push(MemberRef { name: member_name.clone(), entry: entry_idx });
             }
         }
         self.param_count_stack.pop();
@@ -813,6 +826,9 @@ impl<'a> Checker<'a> {
         if let Some(ret) = ret {
             self.meta_sigs.insert(prim.id, MetaSig { params: param_types, ret });
         }
+        // Register short name for meta_id() lookups
+        let short_name = qname.rsplit('.').next().unwrap_or(&qname).to_string();
+        self.meta_prim_ids.insert(short_name, prim.id);
         let idx = self.register_entry(qname, color, EntryBody::Meta(prim), param_freshes);
         if let Some(val) = meta_val {
             self.meta_values.insert(idx, val);

@@ -30,28 +30,10 @@ impl<'a> Checker<'a> {
     fn builtin_reduce(&self, id: PrimId, args: &[PrimArg]) -> Option<PrimArg> {
         let rgb_id = self.meta_id("rgb")?;
         if self.meta_id("hsv") == Some(id) {
-            let h = args.get(0)?.as_rat()?;
-            let s = args.get(1).and_then(|a| a.as_rat()).unwrap_or(1.0);
-            let v = args.get(2).and_then(|a| a.as_rat()).unwrap_or(1.0);
-            let (r, g, b) = hsv_to_rgb(h, s, v);
-            return Some(PrimArg::App(rgb_id, vec![
-                PrimArg::Nat(r as u64), PrimArg::Nat(g as u64), PrimArg::Nat(b as u64),
-            ]));
+            return reduce_hsv(rgb_id, args);
         }
         if self.meta_id("lerp") == Some(id) {
-            let a = args.get(0)?;
-            let b = args.get(1)?;
-            let x = args.get(2)?.as_rat()?;
-            if let (PrimArg::App(a_id, a_args), PrimArg::App(b_id, b_args)) = (a, b) {
-                if *a_id == rgb_id && *b_id == rgb_id {
-                    let interp = |i: usize| -> Option<PrimArg> {
-                        let av = match a_args.get(i)? { PrimArg::Nat(n) => *n as f64, _ => return None };
-                        let bv = match b_args.get(i)? { PrimArg::Nat(n) => *n as f64, _ => return None };
-                        Some(PrimArg::Nat((av + (bv - av) * x).round() as u64))
-                    };
-                    return Some(PrimArg::App(rgb_id, vec![interp(0)?, interp(1)?, interp(2)?]));
-                }
-            }
+            return reduce_lerp(rgb_id, args);
         }
         None
     }
@@ -197,6 +179,34 @@ impl<'a> Checker<'a> {
 }
 
 // --- Free functions ---
+
+fn reduce_hsv(rgb_id: PrimId, args: &[PrimArg]) -> Option<PrimArg> {
+    let h = args.get(0)?.as_rat()?;
+    let s = args.get(1).and_then(|a| a.as_rat()).unwrap_or(1.0);
+    let v = args.get(2).and_then(|a| a.as_rat()).unwrap_or(1.0);
+    let (r, g, b) = hsv_to_rgb(h, s, v);
+    Some(PrimArg::App(rgb_id, vec![
+        PrimArg::Nat(r as u64), PrimArg::Nat(g as u64), PrimArg::Nat(b as u64),
+    ]))
+}
+
+fn reduce_lerp(rgb_id: PrimId, args: &[PrimArg]) -> Option<PrimArg> {
+    let a = args.get(0)?;
+    let b = args.get(1)?;
+    let x = args.get(2)?.as_rat()?;
+    let (PrimArg::App(a_id, a_args), PrimArg::App(b_id, b_args)) = (a, b) else {
+        return None;
+    };
+    if *a_id != rgb_id || *b_id != rgb_id {
+        return None;
+    }
+    let interp = |i: usize| -> Option<PrimArg> {
+        let av = match a_args.get(i)? { PrimArg::Nat(n) => *n as f64, _ => return None };
+        let bv = match b_args.get(i)? { PrimArg::Nat(n) => *n as f64, _ => return None };
+        Some(PrimArg::Nat((av + (bv - av) * x).round() as u64))
+    };
+    Some(PrimArg::App(rgb_id, vec![interp(0)?, interp(1)?, interp(2)?]))
+}
 
 fn golden_angle_hue(index: usize) -> f64 {
     ((index as f64 * 137.508) % 360.0) / 360.0
