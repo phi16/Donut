@@ -16,7 +16,7 @@ bool: C → C with {
 
 [style.color[hue[0.1]]]
 f32: C → C with {
-    lit[n: nat]: C → f32
+    lit[n: rat]: C → f32
     add: f32 f32 → f32
     sub: f32 f32 → f32
     mul: f32 f32 → f32
@@ -47,6 +47,7 @@ u32: C → C with {
 
 [style.color[hue[0.05]]]
 f32x2: C → C with {
+    lit[x: rat, y: rat]: C → f32x2
     pack: f32 f32 → f32x2
     unpack: f32x2 → f32 f32
     add: f32x2 f32x2 → f32x2
@@ -62,6 +63,7 @@ f32x2: C → C with {
 
 [style.color[hue[0.95]]]
 f32x3: C → C with {
+    lit[x: rat, y: rat, z: rat]: C → f32x3
     pack: f32 f32 f32 → f32x3
     unpack: f32x3 → f32 f32 f32
     add: f32x3 f32x3 → f32x3

@@ -11,7 +11,6 @@ pub struct MetaType(pub PrimId, pub Vec<MetaType>);
 
 #[derive(Debug, Clone)]
 pub struct MetaSig {
-    pub params: Vec<MetaType>,
     pub ret: MetaType,
 }
 

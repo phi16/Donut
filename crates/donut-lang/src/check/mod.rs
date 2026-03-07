@@ -301,13 +301,11 @@ impl<'a> Checker<'a> {
                     }
                 }
 
-                let param_types = self.resolve_item_param_types(&item.params);
-
                 match (&item.ty, body_val) {
                     (Some(ty_id), None) => {
                         self.check_decl(
                             &qname, span, color, *ty_id,
-                            &param_types, &param_freshes,
+                            &param_freshes,
                         );
                     }
                     (dim_ty, Some(body_id)) => {
@@ -317,7 +315,7 @@ impl<'a> Checker<'a> {
                         });
                         self.check_body(
                             &qname, span, color, *body_id, declared_ty,
-                            &param_types, &param_freshes,
+                            &param_freshes,
                         );
                     }
                     (None, None) => {}
@@ -364,7 +362,6 @@ impl<'a> Checker<'a> {
         span: &TokenSpan,
         color: Option<ColorSpec>,
         ty_id: ValId,
-        param_types: &[MetaType],
         param_freshes: &[ParamInfo],
     ) {
         let ty_s = self.program.val(ty_id);
@@ -374,7 +371,7 @@ impl<'a> Checker<'a> {
                 let prim_id = prim.id;
                 let idx = self.register_meta_entry(
                     qname.to_string(), color, prim, Some(mt),
-                    param_types.to_vec(), None, param_freshes,
+                    None, param_freshes,
                 );
                 self.register_prim_decl(prim_id, qname, 0, idx);
             }
@@ -404,7 +401,6 @@ impl<'a> Checker<'a> {
         color: Option<ColorSpec>,
         body_val: &Val,
         declared_ret: Option<MetaType>,
-        param_types: &[MetaType],
         param_freshes: &[ParamInfo],
     ) -> Result<()> {
         let meta_val = self.eval_meta_val(body_val)?;
@@ -425,7 +421,7 @@ impl<'a> Checker<'a> {
 
         let idx = self.register_meta_entry(
             qname.to_string(), color, prim, ret,
-            param_types.to_vec(), Some(meta_val), param_freshes,
+            Some(meta_val), param_freshes,
         );
         self.register_prim_decl(prim_id, qname, 0, idx);
         Ok(())
@@ -438,7 +434,6 @@ impl<'a> Checker<'a> {
         color: Option<ColorSpec>,
         body_id: ValId,
         declared_ty: Option<(u8, Ty)>,
-        param_types: &[MetaType],
         param_freshes: &[ParamInfo],
     ) {
         let declared_meta = match &declared_ty {
@@ -451,7 +446,7 @@ impl<'a> Checker<'a> {
             let body_val = &self.program.val(body_id).0;
             if let Err(msg) = self.try_register_meta(
                 qname, span, color, body_val, Some(declared_ret),
-                param_types, param_freshes,
+                param_freshes,
             ) {
                 self.error_at(span, msg);
             }
@@ -498,7 +493,8 @@ impl<'a> Checker<'a> {
 
         // Try meta fallback
         if self.try_register_meta(
-            qname, span, color, body_val, None, param_types, param_freshes,
+            qname, span, color, body_val, None,
+            param_freshes,
         ).is_ok() {
             return;
         }
@@ -819,12 +815,11 @@ impl<'a> Checker<'a> {
         color: Option<ColorSpec>,
         prim: Prim,
         ret: Option<MetaType>,
-        param_types: Vec<MetaType>,
         meta_val: Option<PrimArg>,
         param_freshes: &[ParamInfo],
     ) -> usize {
         if let Some(ret) = ret {
-            self.meta_sigs.insert(prim.id, MetaSig { params: param_types, ret });
+            self.meta_sigs.insert(prim.id, MetaSig { ret });
         }
         // Register short name for meta_id() lookups
         let short_name = qname.rsplit('.').next().unwrap_or(&qname).to_string();

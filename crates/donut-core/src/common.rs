@@ -11,27 +11,27 @@ pub type Vec2<T> = Vec<T>;
 
 pub type PrimId = u64;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum PrimArg {
     Cell(crate::pure_cell::PureCell),
     Nat(u64),
-    Rat(u64), // f64 stored as bits (for Eq)
+    Rat(f64),
     App(PrimId, Vec<PrimArg>),
 }
 
 impl PrimArg {
     pub fn rat(v: f64) -> Self {
-        PrimArg::Rat(v.to_bits())
+        PrimArg::Rat(v)
     }
     pub fn as_rat(&self) -> Option<f64> {
         match self {
-            PrimArg::Rat(bits) => Some(f64::from_bits(*bits)),
+            PrimArg::Rat(v) => Some(*v),
             _ => None,
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Prim {
     pub id: PrimId,
     pub args: Vec<PrimArg>,

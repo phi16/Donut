@@ -992,3 +992,26 @@ fn use_internal_propagation_through_imports() {
     )
     .unwrap();
 }
+
+// --- Parameter arity errors ---
+
+#[test]
+fn star_does_not_take_params() {
+    let result = check_source(
+        r#"
+        x = *[1]
+        "#,
+    );
+    assert!(result.is_err());
+}
+
+#[test]
+fn excess_params_error() {
+    let result = check_source(
+        r#"
+        import "sys"
+        y = sys.f32.lit[1, 1]
+        "#,
+    );
+    assert!(result.is_err());
+}

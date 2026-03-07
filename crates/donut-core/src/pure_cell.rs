@@ -3,7 +3,7 @@ use crate::common::*;
 use std::collections::HashMap;
 use std::fmt;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Shape {
     Zero,
     Succ {
@@ -12,7 +12,7 @@ pub enum Shape {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum PureCell {
     Prim(Prim, Shape, Dim),
     Comp(Axis, Vec2<PureCell>, Dim),
@@ -241,7 +241,7 @@ impl fmt::Display for PrimArg {
         match self {
             PrimArg::Cell(pc) => write!(f, "{}", pc),
             PrimArg::Nat(n) => write!(f, "{}", n),
-            PrimArg::Rat(bits) => write!(f, "{}", f64::from_bits(*bits)),
+            PrimArg::Rat(v) => write!(f, "{}", v),
             PrimArg::App(id, args) => {
                 write!(f, "P{}", id)?;
                 if !args.is_empty() {

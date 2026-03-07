@@ -125,6 +125,10 @@ impl<'a> Checker<'a> {
                 let sig = self.meta_sigs.get(&prim.id)?;
 
                 let seg = path.segments.last()?;
+                let params = self.entry_params.get(&index)
+                    .map(|v| v.as_slice())
+                    .unwrap_or(&[]);
+
                 let arg_types: Vec<Option<MetaType>> = seg.0.params.iter()
                     .map(|pv| {
                         let v = self.program.val(pv.val);
@@ -132,14 +136,15 @@ impl<'a> Checker<'a> {
                     })
                     .collect();
 
-                if arg_types.len() != sig.params.len() {
+                if arg_types.len() != params.len() {
                     return None;
                 }
 
-                for (arg_ty, param_ty) in arg_types.iter().zip(sig.params.iter()) {
+                for (arg_ty, (_, _, kind)) in arg_types.iter().zip(params.iter()) {
+                    let expected = self.param_kind_to_meta_type(kind)?;
                     match arg_ty {
-                        Some(ty) if ty == param_ty => {}
-                        Some(ty) if self.meta_type_coercible(ty, param_ty) => {}
+                        Some(ty) if *ty == expected => {}
+                        Some(ty) if self.meta_type_coercible(ty, &expected) => {}
                         _ => return None,
                     }
                 }
@@ -150,6 +155,15 @@ impl<'a> Checker<'a> {
         }
     }
 
+    fn param_kind_to_meta_type(&self, kind: &ParamKind) -> Option<MetaType> {
+        match kind {
+            ParamKind::Nat => Some(MetaType(self.meta_id("nat")?, vec![])),
+            ParamKind::Rat => Some(MetaType(self.meta_id("rat")?, vec![])),
+            ParamKind::Meta(mt) => Some(mt.clone()),
+            ParamKind::Cell => None,
+        }
+    }
+
     // --- Type evaluation ---
 
     pub(super) fn eval_ty(&self, val: &Val) -> Result<(u8, Ty)> {
@@ -157,6 +171,9 @@ impl<'a> Checker<'a> {
             Val::Path(path) => {
                 let name = path_name(path).ok_or_else(|| "invalid type".to_string())?;
                 if name == "*" {
+                    if path.segments.iter().any(|s| !s.0.params.is_empty()) {
+                        return Err("* does not take parameters".to_string());
+                    }
                     return Ok((0, Ty::Zero));
                 }
                 if let Some(idx) = self.resolve_name(&name) {
@@ -313,12 +330,20 @@ impl<'a> Checker<'a> {
                 });
 
             if let Some(params) = params {
+                if seg.params.len() > params.len() {
+                    return Err(format!(
+                        "{}: expected {} parameter(s), got {}",
+                        current, params.len(), seg.params.len()
+                    ));
+                }
                 for (i, (_, fresh_id, kind)) in params.iter().enumerate() {
                     if let Some(pv) = seg.params.get(i) {
                         let arg = self.resolve_param_arg(pv, kind)?;
                         mapping.insert(*fresh_id, arg);
                     }
                 }
+            } else if !seg.params.is_empty() {
+                return Err(format!("{} does not take parameters", current));
             }
         }
 
@@ -362,6 +387,9 @@ impl<'a> Checker<'a> {
             };
 
             if let Some(params) = self.module_params.get(&resolved_name).cloned() {
+                if seg.params.len() > params.len() {
+                    return Ok(None);
+                }
                 for (i, (_, fresh_id, kind)) in params.iter().enumerate() {
                     if let Some(pv) = seg.params.get(i) {
                         let arg = self.resolve_param_arg(pv, kind)?;
@@ -461,14 +489,6 @@ impl<'a> Checker<'a> {
         Ok(())
     }
 
-    pub(super) fn resolve_item_param_types(&self, params: &[Param]) -> Vec<MetaType> {
-        params.iter()
-            .filter_map(|p| {
-                let ty_s = self.program.val(p.ty);
-                self.resolve_meta_type(&ty_s.0)
-            })
-            .collect()
-    }
 }
 
 // --- Free functions ---

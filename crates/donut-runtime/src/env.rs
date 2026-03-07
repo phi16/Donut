@@ -9,6 +9,22 @@ fn extract_nat(args: &[PrimArg]) -> Result<u64, String> {
     }
 }
 
+fn extract_rat(args: &[PrimArg]) -> Result<f64, String> {
+    match args.first() {
+        Some(PrimArg::Rat(r)) => Ok(*r),
+        Some(PrimArg::Nat(n)) => Ok(*n as f64),
+        _ => Err("missing rat parameter".to_string()),
+    }
+}
+
+fn extract_rat_at(args: &[PrimArg], index: usize) -> Result<f64, String> {
+    match args.get(index) {
+        Some(PrimArg::Rat(r)) => Ok(*r),
+        Some(PrimArg::Nat(n)) => Ok(*n as f64),
+        _ => Err(format!("missing rat parameter at index {}", index)),
+    }
+}
+
 struct Op {
     name: &'static str,
     f: fn(&[PrimArg], &[Value]) -> Result<Vec<Value>, String>,
@@ -81,7 +97,7 @@ fn ops() -> Vec<Op> {
             _ => type_error(),
         }},
         // f32
-        Op { name: "sys::f32.lit", f: |args, _| Ok(vec![Value::F32(extract_nat(args)? as f64)]) },
+        Op { name: "sys::f32.lit", f: |args, _| Ok(vec![Value::F32(extract_rat(args)?)]) },
         Op { name: "sys::f32.add", f: |_, v| match (&v[0], &v[1]) {
             (Value::F32(a), Value::F32(b)) => Ok(vec![Value::F32(a + b)]),
             _ => type_error(),
@@ -141,6 +157,7 @@ fn ops() -> Vec<Op> {
             _ => type_error(),
         }},
         // f32x2
+        Op { name: "sys::f32x2.lit", f: |args, _| Ok(vec![Value::F32x2(extract_rat_at(args, 0)?, extract_rat_at(args, 1)?)]) },
         Op { name: "sys::f32x2.pack", f: |_, v| match (&v[0], &v[1]) {
             (Value::F32(a), Value::F32(b)) => Ok(vec![Value::F32x2(*a, *b)]),
             _ => type_error(),
@@ -186,6 +203,7 @@ fn ops() -> Vec<Op> {
             _ => type_error(),
         }},
         // f32x3
+        Op { name: "sys::f32x3.lit", f: |args, _| Ok(vec![Value::F32x3(extract_rat_at(args, 0)?, extract_rat_at(args, 1)?, extract_rat_at(args, 2)?)]) },
         Op { name: "sys::f32x3.pack", f: |_, v| match (&v[0], &v[1], &v[2]) {
             (Value::F32(a), Value::F32(b), Value::F32(c)) => Ok(vec![Value::F32x3(*a, *b, *c)]),
             _ => type_error(),

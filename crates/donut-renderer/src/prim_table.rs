@@ -133,7 +133,7 @@ impl PrimTable {
             PrimArg::Cell(PureCell::Prim(prim, _, _)) => self.format_prim(prim),
             PrimArg::Cell(_) => "..".to_string(),
             PrimArg::Nat(n) => n.to_string(),
-            PrimArg::Rat(bits) => format!("{}", f64::from_bits(*bits)),
+            PrimArg::Rat(v) => format!("{}", v),
             PrimArg::App(id, args) => {
                 let base = self
                     .table
