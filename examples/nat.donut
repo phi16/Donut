@@ -5,13 +5,13 @@ import "ui"
 // ============================================================
 
 nat = {
-    [style[hue[0.33]]]
+    [style.color[hue[0.33]]]
     C: *
 
     // Types
-    [style[hue[0.55]]]
+    [style.color[hue[0.55]]]
     Nat: C → C
-    [style[hue[0.08]]]
+    [style.color[hue[0.08]]]
     Bool: C → C
 
     // Nat constants
@@ -89,11 +89,11 @@ succ_add: nat.succ nat.Nat; nat.add ~ nat.Nat nat.succ; nat.add
 // ============================================================
 
 u8 = {
-    [style[hue[0.75]]]
+    [style.color[hue[0.75]]]
     D: *
 
     // Types
-    [style[hue[0.85]]]
+    [style.color[hue[0.85]]]
     U8: D → D
 
     // Constants

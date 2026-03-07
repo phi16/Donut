@@ -18,6 +18,13 @@ enum Ty {
     Meta(MetaType),
 }
 
+#[derive(Clone, Copy)]
+enum ColorSpec {
+    Absolute(u8, u8, u8),
+    Lighten(f64),
+    Darken(f64),
+}
+
 #[derive(Debug, Clone)]
 enum EntryBody {
     Cell(FreeCell),
@@ -189,11 +196,22 @@ impl<'a> Checker<'a> {
     fn add_entry(
         &mut self,
         name: String,
-        color: Option<(u8, u8, u8)>,
+        color: Option<ColorSpec>,
         body: EntryBody,
         param_counts: Vec<usize>,
     ) -> usize {
-        let color = color.unwrap_or_else(|| auto_color(self.entries.len()));
+        let color = match color {
+            Some(ColorSpec::Absolute(r, g, b)) => (r, g, b),
+            Some(ColorSpec::Lighten(amount)) => {
+                let base = self.auto_color(&body);
+                lighten_color(base, amount)
+            }
+            Some(ColorSpec::Darken(amount)) => {
+                let base = self.auto_color(&body);
+                darken_color(base, amount)
+            }
+            None => self.auto_color(&body),
+        };
         let idx = self.entries.len();
         // Track meta prim ids by short name
         if let EntryBody::Meta(prim) = &body {
@@ -375,7 +393,7 @@ impl<'a> Checker<'a> {
         &mut self,
         qname: &str,
         span: &TokenSpan,
-        color: Option<(u8, u8, u8)>,
+        color: Option<ColorSpec>,
         ty_id: ValId,
         params: &[Param],
         param_freshes: &[ParamInfo],
@@ -427,7 +445,7 @@ impl<'a> Checker<'a> {
         &mut self,
         qname: &str,
         span: &TokenSpan,
-        color: Option<(u8, u8, u8)>,
+        color: Option<ColorSpec>,
         body_val: &Val,
         declared_ret: Option<MetaType>,
         params: &[Param],
@@ -468,7 +486,7 @@ impl<'a> Checker<'a> {
         &mut self,
         qname: &str,
         span: &TokenSpan,
-        color: Option<(u8, u8, u8)>,
+        color: Option<ColorSpec>,
         body_id: &ValId,
         declared_ty: Option<(u8, Ty)>,
         params: &[Param],
@@ -832,7 +850,7 @@ impl<'a> Checker<'a> {
     fn register_entry(
         &mut self,
         qname: String,
-        color: Option<(u8, u8, u8)>,
+        color: Option<ColorSpec>,
         body: EntryBody,
         param_freshes: &[ParamInfo],
     ) -> usize {
@@ -848,7 +866,7 @@ impl<'a> Checker<'a> {
     fn register_meta_entry(
         &mut self,
         qname: String,
-        color: Option<(u8, u8, u8)>,
+        color: Option<ColorSpec>,
         prim: Prim,
         ret: Option<MetaType>,
         param_types: Vec<MetaType>,
@@ -1018,22 +1036,109 @@ impl<'a> Checker<'a> {
         result
     }
 
-    /// Extract color from evaluated decorators.
-    /// Looks for style[rgb[r, g, b]] by checking PrimIds.
-    fn extract_color(&self, decos: &[PrimArg]) -> Option<(u8, u8, u8)> {
-        let style_id = self.meta_id("style")?;
+    fn style_meta_id(&self, name: &str) -> Option<PrimId> {
+        let full = format!("style.{}", name);
+        self.lookup.get(&full).and_then(|&idx| {
+            match &self.entries[idx].body {
+                EntryBody::Meta(prim) => Some(prim.id),
+                _ => None,
+            }
+        })
+    }
+
+    /// Extract color spec from evaluated decorators.
+    /// Recognizes style.color[rgb[r, g, b]], style.lighten[x], style.darken[x].
+    fn extract_color(&self, decos: &[PrimArg]) -> Option<ColorSpec> {
         let rgb_id = self.meta_id("rgb")?;
+        let color_id = self.style_meta_id("color");
+        let lighten_id = self.style_meta_id("lighten");
+        let darken_id = self.style_meta_id("darken");
         for deco in decos {
             let PrimArg::App(id, args) = deco else { continue };
-            if *id != style_id { continue; }
-            let Some(PrimArg::App(color_id, color_args)) = args.first() else { continue };
-            if *color_id != rgb_id { continue; }
-            let r = match color_args.get(0)? { PrimArg::Nat(n) => *n as u8, _ => continue };
-            let g = match color_args.get(1)? { PrimArg::Nat(n) => *n as u8, _ => continue };
-            let b = match color_args.get(2)? { PrimArg::Nat(n) => *n as u8, _ => continue };
-            return Some((r, g, b));
+            if color_id == Some(*id) {
+                let Some(PrimArg::App(cid, color_args)) = args.first() else { continue };
+                if *cid != rgb_id { continue; }
+                let r = match color_args.get(0)? { PrimArg::Nat(n) => *n as u8, _ => continue };
+                let g = match color_args.get(1)? { PrimArg::Nat(n) => *n as u8, _ => continue };
+                let b = match color_args.get(2)? { PrimArg::Nat(n) => *n as u8, _ => continue };
+                return Some(ColorSpec::Absolute(r, g, b));
+            }
+            if lighten_id == Some(*id) {
+                let amount = args.first().and_then(|a| a.as_rat()).unwrap_or(0.3);
+                return Some(ColorSpec::Lighten(amount));
+            }
+            if darken_id == Some(*id) {
+                let amount = args.first().and_then(|a| a.as_rat()).unwrap_or(0.3);
+                return Some(ColorSpec::Darken(amount));
+            }
         }
         None
+    }
+
+    // --- Auto color ---
+
+    fn boundary_avg_hue(&self, pure: &PureCell) -> Option<f64> {
+        let s = pure.s();
+        let t = pure.t();
+        let mut prim_ids = collect_prim_ids(&s);
+        prim_ids.extend(collect_prim_ids(&t));
+        prim_ids.sort();
+        prim_ids.dedup();
+
+        let pi2 = 2.0 * std::f64::consts::PI;
+        let mut sin_sum = 0.0;
+        let mut cos_sum = 0.0;
+        let mut count = 0;
+
+        for id in &prim_ids {
+            if let Some(decl) = self.prim_decls.get(id) {
+                let (hue, sat, _) = rgb_to_hsv(decl.color);
+                if sat < 0.05 {
+                    continue;
+                }
+                let angle = hue * pi2;
+                sin_sum += angle.sin();
+                cos_sum += angle.cos();
+                count += 1;
+            }
+        }
+
+        if count == 0 {
+            return None;
+        }
+        let avg = sin_sum.atan2(cos_sum);
+        Some(((avg / pi2) % 1.0 + 1.0) % 1.0)
+    }
+
+    fn auto_color(&self, body: &EntryBody) -> (u8, u8, u8) {
+        let index = self.entries.len();
+        match body {
+            EntryBody::Cell(cell) => {
+                let dim = cell.pure.dim().in_space;
+                match dim {
+                    0 => {
+                        // 0-cell: dark, muted
+                        let hue = golden_angle_hue(index);
+                        hsv_to_rgb(hue, 0.3, 0.35)
+                    }
+                    1 => {
+                        // 1-cell: medium brightness, inherit boundary hue
+                        let base_hue = self.boundary_avg_hue(&cell.pure)
+                            .unwrap_or_else(|| golden_angle_hue(index));
+                        let hue = base_hue + golden_angle_hue(index) * 0.4;
+                        hsv_to_rgb(hue, 0.55, 0.65)
+                    }
+                    _ => {
+                        // 2-cell+: pastel, inherit boundary hue
+                        let base_hue = self.boundary_avg_hue(&cell.pure)
+                            .unwrap_or_else(|| golden_angle_hue(index));
+                        let hue = base_hue + golden_angle_hue(index) * 0.25;
+                        hsv_to_rgb(hue, 0.35, 0.88)
+                    }
+                }
+            }
+            _ => (128, 128, 128),
+        }
     }
 
     // --- Module alias / instantiation ---
@@ -1145,7 +1250,8 @@ impl<'a> Checker<'a> {
                     }
                 };
                 let src_pc = src_entry.param_counts.clone();
-                let idx = self.add_entry(dest_member.clone(), Some(src_entry.color), new_body, src_pc);
+                let c = src_entry.color;
+                let idx = self.add_entry(dest_member.clone(), Some(ColorSpec::Absolute(c.0, c.1, c.2)), new_body, src_pc);
 
                 if let Some(params) = self.entry_params.get(src_idx).cloned() {
                     self.entry_params.insert(idx, params);
@@ -1514,20 +1620,72 @@ fn match_ty(x: &Ty, y: &Ty) -> Result<()> {
     }
 }
 
-fn auto_color(index: usize) -> (u8, u8, u8) {
-    let pi = std::f64::consts::PI;
-    let hue = (index as f64 * 137.5) % 360.0 * (pi / 180.0);
-    let color = (hue, hue + 2.0 * pi / 3.0, hue + 4.0 * pi / 3.0);
-    let color = (
-        color.0.sin() * 0.5 + 0.5,
-        color.1.sin() * 0.5 + 0.5,
-        color.2.sin() * 0.5 + 0.5,
-    );
+fn golden_angle_hue(index: usize) -> f64 {
+    ((index as f64 * 137.508) % 360.0) / 360.0
+}
+
+fn hsv_to_rgb(h: f64, s: f64, v: f64) -> (u8, u8, u8) {
+    let h = ((h % 1.0) + 1.0) % 1.0;
+    let c = v * s;
+    let h6 = h * 6.0;
+    let x = c * (1.0 - ((h6 % 2.0) - 1.0).abs());
+    let m = v - c;
+    let (r, g, b) = match h6 as u32 {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
     (
-        (color.0 * 255.0) as u8,
-        (color.1 * 255.0) as u8,
-        (color.2 * 255.0) as u8,
+        ((r + m) * 255.0) as u8,
+        ((g + m) * 255.0) as u8,
+        ((b + m) * 255.0) as u8,
     )
+}
+
+fn rgb_to_hsv(color: (u8, u8, u8)) -> (f64, f64, f64) {
+    let r = color.0 as f64 / 255.0;
+    let g = color.1 as f64 / 255.0;
+    let b = color.2 as f64 / 255.0;
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let d = max - min;
+    if d < 1e-6 {
+        return (0.0, 0.0, max);
+    }
+    let h = if (max - r).abs() < 1e-6 {
+        (((g - b) / d) % 6.0 + 6.0) % 6.0
+    } else if (max - g).abs() < 1e-6 {
+        (b - r) / d + 2.0
+    } else {
+        (r - g) / d + 4.0
+    };
+    (h / 6.0, if max > 0.0 { d / max } else { 0.0 }, max)
+}
+
+fn lighten_color(base: (u8, u8, u8), amount: f64) -> (u8, u8, u8) {
+    let (h, s, v) = rgb_to_hsv(base);
+    let v = v + (1.0 - v) * amount;
+    let s = s * (1.0 - amount * 0.3);
+    hsv_to_rgb(h, s, v)
+}
+
+fn darken_color(base: (u8, u8, u8), amount: f64) -> (u8, u8, u8) {
+    let (h, s, v) = rgb_to_hsv(base);
+    let v = v * (1.0 - amount);
+    hsv_to_rgb(h, s, v)
+}
+
+fn collect_prim_ids(pure: &PureCell) -> Vec<PrimId> {
+    match pure {
+        PureCell::Prim(prim, _, dim) if dim.effective == dim.in_space => vec![prim.id],
+        PureCell::Prim(_, _, _) => vec![],
+        PureCell::Comp(_, children, _) => {
+            children.iter().flat_map(collect_prim_ids).collect()
+        }
+    }
 }
 
 fn lift_dim(mut cell: FreeCell, target: u8) -> FreeCell {

@@ -5,4 +5,8 @@ hsv[h s v: rat]: color
 hue[x: rat]: color = hsv[x, 1, 1]
 gray[v: nat]: color = rgb[v, v, v]
 lerp[a b: color, x: rat]: color
-style[c: color]: decorator
+style = {
+    color[c: color]: decorator
+    lighten[x: rat]: decorator
+    darken[x: rat]: decorator
+}

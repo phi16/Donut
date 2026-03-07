@@ -3,13 +3,13 @@ use "ui"
 
 C: *
 
-[style[hue[0.6]]]
+[style.color[hue[0.6]]]
 u32: C → C
 
-[style[hue[0.1]]]
+[style.color[hue[0.1]]]
 f32: C → C
 
-[style[hue[0.3]]]
+[style.color[hue[0.3]]]
 bool: C → C
 
 // u32 constants

@@ -487,7 +487,7 @@ fn meta_variable_reference() {
         import "base"
         import "ui"
         g = 80
-        [style[gray[g]]]
+        [style.color[gray[g]]]
         u: *
         "#,
     )
@@ -504,7 +504,7 @@ fn meta_typed_body() {
         import "base"
         import "ui"
         g: nat = 80
-        [style[gray[g]]]
+        [style.color[gray[g]]]
         u: *
         "#,
     )
@@ -533,7 +533,7 @@ fn meta_parametric_function() {
         import "base"
         import "ui"
         f[x: nat]: nat = x
-        [style[gray[f[120]]]]
+        [style.color[gray[f[120]]]]
         u: *
         "#,
     )
@@ -550,7 +550,7 @@ fn meta_parametric_color_function() {
         import "base"
         import "ui"
         mycolor[r g b: nat]: color = rgb[r, g, b]
-        [style[mycolor[10, 20, 30]]]
+        [style.color[mycolor[10, 20, 30]]]
         u: *
         "#,
     )
@@ -565,7 +565,7 @@ fn meta_hsv_reduces_to_rgb() {
         r#"
         import "base"
         import "ui"
-        [style[hsv[0.0, 1, 1]]]
+        [style.color[hsv[0.0, 1, 1]]]
         u: *
         "#,
     )
@@ -582,7 +582,7 @@ fn meta_hsv_stored_variable() {
         import "base"
         import "ui"
         c: color = hsv[0.0, 1, 1]
-        [style[c]]
+        [style.color[c]]
         u: *
         "#,
     )
@@ -597,7 +597,7 @@ fn meta_lerp_colors() {
         r#"
         import "base"
         import "ui"
-        [style[lerp[rgb[0, 0, 0], rgb[100, 200, 50], 0.5]]]
+        [style.color[lerp[rgb[0, 0, 0], rgb[100, 200, 50], 0.5]]]
         u: *
         "#,
     )
@@ -612,7 +612,7 @@ fn meta_lerp_with_gray() {
         r#"
         import "base"
         import "ui"
-        [style[lerp[gray[0], gray[200], 0.5]]]
+        [style.color[lerp[gray[0], gray[200], 0.5]]]
         u: *
         "#,
     )
@@ -627,7 +627,7 @@ fn meta_lerp_with_hsv_and_rgb() {
         r#"
         import "base"
         import "ui"
-        [style[lerp[hsv[0.0, 1, 1], rgb[0, 0, 255], 0.5]]]
+        [style.color[lerp[hsv[0.0, 1, 1], rgb[0, 0, 255], 0.5]]]
         u: *
         "#,
     )
@@ -810,7 +810,7 @@ fn module_meta_value_instantiation() {
         }
         u: *
         c = config[u]
-        [style[gray[c.my_gray]]]
+        [style.color[gray[c.my_gray]]]
         x: u → u
         "#,
     )
@@ -854,7 +854,7 @@ fn module_member_meta_reference() {
             my_hue: rat = 0.6
         }
         u: *
-        [style[hue[config.my_hue]]]
+        [style.color[hue[config.my_hue]]]
         x: u → u
         "#,
     )
@@ -937,7 +937,7 @@ fn use_decorator_works_via_import_ui() {
     check_source(
         r#"
         import "ui"
-        [style[gray[128]]]
+        [style.color[gray[128]]]
         u: *
         "#,
     )
@@ -951,7 +951,7 @@ fn use_no_conflict_with_user_nat() {
         r#"
         import "ui"
         nat = {
-            [style[hue[0.3]]]
+            [style.color[hue[0.3]]]
             C: *
             x: C → C
         }
@@ -968,7 +968,7 @@ fn use_meta_types_available_for_params() {
         import "base"
         import "ui"
         f[x: nat]: nat = x
-        [style[gray[f[42]]]]
+        [style.color[gray[f[42]]]]
         u: *
         "#,
     )
@@ -984,7 +984,7 @@ fn use_internal_propagation_through_imports() {
         r#"
         import "ui"
         sys = import "sys"
-        [style[hue[0.5]]]
+        [style.color[hue[0.5]]]
         u: *
         x: u → u
         y = sys.u32_lit[1]

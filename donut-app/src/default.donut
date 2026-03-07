@@ -1,16 +1,8 @@
-import "ui"
-
-[style[gray[80]]]
 u: *
-[style[hsv[0.6, 1, 1]]]
 x: u → u
-[style[hsv[0.1, 1.0, 1]]]
 m: x x → x
-[style[hsv[0.2, 1.0, 1]]]
 a: m x; m → x m; m
-[style[gray[200]]]
 chl: (x m; m) x → x m x; m x
-[style[gray[200]]]
 chr: x m x; x m → x (m x; m)
 aaa =
     a x; m ;;
@@ -18,14 +10,10 @@ aaa =
     x m x; a ;;
     chr; m ;;
     x a; m
-[style[gray[200]]]
 ch0: m x x; x m → m m
-[style[gray[200]]]
 ch1: m m → x x m; m x
 
-[style[gray[200]]]
 kl: (m x; m) x → m x x; m x
-[style[gray[200]]]
 kr: x x m; x m → x (x m; m)
 oao =
     kl; m ;;
@@ -34,6 +22,5 @@ oao =
     x x m; a ;;
     kr; m
 
-[style[gray[255]]]
 pentagon: aaa → oao
 result = pentagon
