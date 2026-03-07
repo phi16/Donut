@@ -15,6 +15,7 @@ pub enum TokenType {
     String,
     Comment,
     Parameter, // [x: T] の x などパラメータ名
+    Namespace, // module 名
 }
 
 pub struct Diagnostic {
@@ -273,6 +274,7 @@ struct HoverBuilder<'a> {
     program: &'a Program,
     env: &'a Env,
     map: HashMap<usize, HoverInfo>,
+    styles: HashMap<usize, TokenType>,
 }
 
 impl<'a> HoverBuilder<'a> {
@@ -281,6 +283,7 @@ impl<'a> HoverBuilder<'a> {
             program,
             env,
             map: HashMap::new(),
+            styles: HashMap::new(),
         }
     }
 
@@ -316,14 +319,12 @@ impl<'a> HoverBuilder<'a> {
         let val_s = self.program.val(val_id);
         match &val_s.0 {
             Val::Path(path) => {
-                let path_name = {
-                    let parts: Vec<_> =
-                        path.segments.iter().map(|s| s.0.name.clone()).collect();
-                    if parts.is_empty() {
-                        return;
-                    }
-                    parts.join(".")
-                };
+                let parts: Vec<_> =
+                    path.segments.iter().map(|s| s.0.name.clone()).collect();
+                if parts.is_empty() {
+                    return;
+                }
+                let path_name = parts.join(".");
                 if path_name == "*" {
                     let info = HoverInfo {
                         name: "*".to_string(),
@@ -336,6 +337,13 @@ impl<'a> HoverBuilder<'a> {
                     if let Some(info) = self.make_hover(&resolved) {
                         for seg in &path.segments {
                             self.map.insert(seg.1.start, info.clone());
+                        }
+                    }
+                    // . の左側のセグメントを Namespace として色付け
+                    if parts.len() > 1 {
+                        for i in 0..parts.len() - 1 {
+                            self.styles
+                                .insert(path.segments[i].1.start, TokenType::Namespace);
                         }
                     }
                 }
@@ -463,10 +471,10 @@ impl<'a> HoverBuilder<'a> {
         }
     }
 
-    fn build(mut self) -> HashMap<usize, HoverInfo> {
+    fn build(mut self) -> (HashMap<usize, HoverInfo>, HashMap<usize, TokenType>) {
         let root = self.program.root.clone();
         self.walk_module(&root, &[]);
-        self.map
+        (self.map, self.styles)
     }
 }
 
@@ -539,8 +547,8 @@ pub fn analyze(code: &str) -> AnalysisResult {
         diags.push(to_diag(pos, msg, "[check]"));
     }
 
-    // hover map を構築
-    let hover_map = HoverBuilder::new(&resolved, &env).build();
+    // hover map とスタイルオーバーライドを構築
+    let (hover_map, style_overrides) = HoverBuilder::new(&resolved, &env).build();
 
     // コメントトークンを構築
     let comments_iter = comments.into_iter().map(|pos| {
@@ -554,8 +562,18 @@ pub fn analyze(code: &str) -> AnalysisResult {
         }
     });
 
+    // スタイルオーバーライドを適用
+    let mut token_data = ctx.into_inner();
+    for td in &mut token_data {
+        if let Some(idx) = td.token_index {
+            if let Some(style) = style_overrides.get(&idx) {
+                td.token_type = style.clone();
+            }
+        }
+    }
+
     // トークンとコメントを行・列順にマージ
-    let mut tokens_iter = ctx.into_inner().into_iter().peekable();
+    let mut tokens_iter = token_data.into_iter().peekable();
     let mut comments_iter = comments_iter.peekable();
     let mut res = Vec::new();
     loop {

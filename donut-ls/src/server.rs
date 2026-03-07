@@ -55,6 +55,7 @@ fn from_token_type(t: TokenType) -> Option<(u32, u32)> {
         TokenType::Number => (Sig::NUMBER, 0),
         TokenType::String => (Sig::STRING, 0),
         TokenType::Comment => (Sig::COMMENT, 0),
+        TokenType::Namespace => (Sig::NAMESPACE, 0),
     };
     Some((res.0 .0, res.1))
 }
