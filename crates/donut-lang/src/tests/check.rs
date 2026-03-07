@@ -434,7 +434,7 @@ fn functor_parametric_mapping() {
         x[n: nat]: C → u
         F: C ~> sys.C
         F(u) = sys.u32
-        [n: nat] F(x[n]) = sys.u32_lit[n]
+        [n: nat] F(x[n]) = sys.u32.lit[n]
         "#,
     )
     .unwrap();
@@ -987,7 +987,7 @@ fn use_internal_propagation_through_imports() {
         [style.color[hue[0.5]]]
         u: *
         x: u → u
-        y = sys.u32_lit[1]
+        y = sys.u32.lit[1]
         "#,
     )
     .unwrap();

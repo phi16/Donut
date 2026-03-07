@@ -3,53 +3,38 @@ use "ui"
 
 C: *
 
-[style.color[hue[0.6]]]
-u32: C → C
+[style.color[hue[0.3]]]
+bool: C → C with {
+    lit[n: nat]: C → bool
+    not: bool → bool
+    and: bool bool → bool
+    or: bool bool → bool
+    dup: bool → bool bool
+}
 
 [style.color[hue[0.1]]]
-f32: C → C
+f32: C → C with {
+    lit[n: nat]: C → f32
+    add: f32 f32 → f32
+    sub: f32 f32 → f32
+    mul: f32 f32 → f32
+    div: f32 f32 → f32
+    neg: f32 → f32
+    dup: f32 → f32 f32
+}
 
-[style.color[hue[0.3]]]
-bool: C → C
-
-// u32 constants
-u32_lit[n: nat]: C → u32
-
-// u32 arithmetic
-u32_add: u32 u32 → u32
-u32_sub: u32 u32 → u32
-u32_mul: u32 u32 → u32
-u32_div: u32 u32 → u32
-u32_mod: u32 u32 → u32
-u32_neg: u32 → u32
-
-// f32 constants
-f32_lit[n: nat]: C → f32
-
-// f32 arithmetic
-f32_add: f32 f32 → f32
-f32_sub: f32 f32 → f32
-f32_mul: f32 f32 → f32
-f32_div: f32 f32 → f32
-f32_neg: f32 → f32
-
-// bool constants
-bool_lit[n: nat]: C → bool
-
-// bool operations
-bool_not: bool → bool
-bool_and: bool bool → bool
-bool_or: bool bool → bool
-
-// comparison
-u32_eq: u32 u32 → bool
-u32_lt: u32 u32 → bool
-u32_le: u32 u32 → bool
-
-// conversion
-u32_to_f32: u32 → f32
-
-// structural
-u32_dup: u32 → u32 u32
-f32_dup: f32 → f32 f32
-bool_dup: bool → bool bool
+[style.color[hue[0.6]]]
+u32: C → C with {
+    lit[n: nat]: C → u32
+    add: u32 u32 → u32
+    sub: u32 u32 → u32
+    mul: u32 u32 → u32
+    div: u32 u32 → u32
+    mod: u32 u32 → u32
+    neg: u32 → u32
+    eq: u32 u32 → bool
+    lt: u32 u32 → bool
+    le: u32 u32 → bool
+    to_f32: u32 → f32
+    dup: u32 → u32 u32
+}

@@ -1299,7 +1299,7 @@ fn import_sys_after_base() {
     let p = check_module("\
 import \"base\"
 sys = import \"sys\"
-x = sys.u32_lit[42]
+x = sys.u32.lit[42]
 ");
     assert!(p.root.get("sys").is_some());
     assert!(p.root.get("x").is_some());
