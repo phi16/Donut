@@ -10,7 +10,7 @@ use donut_core::cell::{check_prim, Diagram, Globular};
 use donut_core::common::{Level, Prim, PrimArg, PrimId};
 use donut_core::free_cell::FreeCell;
 use donut_core::pure_cell::PureCell;
-use eval::*;
+use eval::{apply_functor, make_cell, match_ty};
 use std::collections::HashMap;
 
 pub use crate::types::env::{Entry, Env, MetaSig, MetaType, ParamInfo, ParamKind, PrimDecl};
@@ -130,11 +130,10 @@ impl<'a> Checker<'a> {
     fn add_entry(
         &mut self,
         name: String,
-        color: Option<ColorSpec>,
+        color: (u8, u8, u8),
         body: EntryBody,
         param_counts: Vec<usize>,
     ) -> usize {
-        let color = self.resolve_color(color, &body);
         let idx = self.entries.len();
         // Track meta prim ids by short name
         if let EntryBody::Meta(prim) = &body {
@@ -289,11 +288,13 @@ impl<'a> Checker<'a> {
                     }
                 }
 
+                let param_types = self.resolve_item_param_types(&item.params);
+
                 match (&item.ty, body_val) {
                     (Some(ty_id), None) => {
                         self.check_decl(
                             &qname, span, color, *ty_id,
-                            &item.params, &param_freshes,
+                            &param_types, &param_freshes,
                         );
                     }
                     (dim_ty, Some(body_id)) => {
@@ -302,8 +303,8 @@ impl<'a> Checker<'a> {
                             self.eval_ty(&ty_s.0).ok()
                         });
                         self.check_body(
-                            &qname, span, color, body_id, declared_ty,
-                            &item.params, &param_freshes,
+                            &qname, span, color, *body_id, declared_ty,
+                            &param_types, &param_freshes,
                         );
                     }
                     (None, None) => {}
@@ -350,7 +351,7 @@ impl<'a> Checker<'a> {
         span: &TokenSpan,
         color: Option<ColorSpec>,
         ty_id: ValId,
-        params: &[Param],
+        param_types: &[MetaType],
         param_freshes: &[ParamInfo],
     ) {
         let ty_s = self.program.val(ty_id);
@@ -358,10 +359,9 @@ impl<'a> Checker<'a> {
             Ok((_, Ty::Meta(mt))) => {
                 let prim = self.make_prim();
                 let prim_id = prim.id;
-                let param_types = self.resolve_item_param_types(params);
                 let idx = self.register_meta_entry(
                     qname.to_string(), color, prim, Some(mt),
-                    param_types, None, param_freshes,
+                    param_types.to_vec(), None, param_freshes,
                 );
                 self.register_prim_decl(prim_id, qname, 0, idx);
             }
@@ -391,7 +391,7 @@ impl<'a> Checker<'a> {
         color: Option<ColorSpec>,
         body_val: &Val,
         declared_ret: Option<MetaType>,
-        params: &[Param],
+        param_types: &[MetaType],
         param_freshes: &[ParamInfo],
     ) -> Result<()> {
         let meta_val = self.eval_meta_val(body_val)?;
@@ -410,10 +410,9 @@ impl<'a> Checker<'a> {
             (None, body_ty) => body_ty.clone(),
         };
 
-        let param_types = self.resolve_item_param_types(params);
         let idx = self.register_meta_entry(
             qname.to_string(), color, prim, ret,
-            param_types, Some(meta_val), param_freshes,
+            param_types.to_vec(), Some(meta_val), param_freshes,
         );
         self.register_prim_decl(prim_id, qname, 0, idx);
         Ok(())
@@ -424,9 +423,9 @@ impl<'a> Checker<'a> {
         qname: &str,
         span: &TokenSpan,
         color: Option<ColorSpec>,
-        body_id: &ValId,
+        body_id: ValId,
         declared_ty: Option<(u8, Ty)>,
-        params: &[Param],
+        param_types: &[MetaType],
         param_freshes: &[ParamInfo],
     ) {
         let declared_meta = match &declared_ty {
@@ -436,10 +435,10 @@ impl<'a> Checker<'a> {
 
         if let Some(declared_ret) = declared_meta {
             // Declared as meta type → must be meta
-            let body_val = &self.program.val(*body_id).0;
+            let body_val = &self.program.val(body_id).0;
             if let Err(msg) = self.try_register_meta(
                 qname, span, color, body_val, Some(declared_ret),
-                params, param_freshes,
+                param_types, param_freshes,
             ) {
                 self.error_at(span, msg);
             }
@@ -447,7 +446,7 @@ impl<'a> Checker<'a> {
         }
 
         // Try cell interpretation first
-        let body_s = self.program.val(*body_id);
+        let body_s = self.program.val(body_id);
         let cell_err = match self.eval_val(&body_s.0) {
             Ok(cell) => {
                 if let Some((declared_dim, ref declared_ty)) = declared_ty {
@@ -482,11 +481,11 @@ impl<'a> Checker<'a> {
             return;
         }
 
-        let body_val = &self.program.val(*body_id).0;
+        let body_val = &self.program.val(body_id).0;
 
         // Try meta fallback
         if self.try_register_meta(
-            qname, span, color, body_val, None, params, param_freshes,
+            qname, span, color, body_val, None, param_types, param_freshes,
         ).is_ok() {
             return;
         }
@@ -724,6 +723,7 @@ impl<'a> Checker<'a> {
             let param_kind = self.detect_param_kind(&ty_s.0);
             let fresh_id = self.fresh_prim_id();
 
+            const PARAM_COLOR: (u8, u8, u8) = (128, 128, 128);
             match param_kind {
                 ParamKind::Cell => {
                     let (_, ty) = self.eval_ty(&ty_s.0)?;
@@ -731,14 +731,14 @@ impl<'a> Checker<'a> {
                     let cell = make_cell(prim, &ty)?;
                     let level = cell.pure.dim().in_space;
                     let param_name = self.qualified_name(&param.name);
-                    self.add_entry(param_name.clone(), None, EntryBody::Cell(cell.clone()), vec![]);
+                    self.add_entry(param_name.clone(), PARAM_COLOR, EntryBody::Cell(cell.clone()), vec![]);
                     self.accumulated_args.push(PrimArg::Cell(cell.pure.clone()));
                     self.register_param_prim_decl(fresh_id, &param_name, level);
                 }
                 ParamKind::Nat | ParamKind::Rat | ParamKind::Meta(_) => {
                     let prim = Prim::new(fresh_id);
                     let param_name = self.qualified_name(&param.name);
-                    let idx = self.add_entry(param_name.clone(), None, EntryBody::Meta(prim), vec![]);
+                    let idx = self.add_entry(param_name.clone(), PARAM_COLOR, EntryBody::Meta(prim), vec![]);
                     self.meta_values.insert(idx, PrimArg::App(fresh_id, vec![]));
                     self.accumulated_args.push(PrimArg::App(fresh_id, vec![]));
                     self.register_param_prim_decl(fresh_id, &param_name, 0);
@@ -790,6 +790,7 @@ impl<'a> Checker<'a> {
         body: EntryBody,
         param_freshes: &[ParamInfo],
     ) -> usize {
+        let color = self.resolve_color(color, &body);
         let pc = self.current_param_counts(param_freshes.len());
         let idx = self.add_entry(qname, color, body, pc);
         if !param_freshes.is_empty() {

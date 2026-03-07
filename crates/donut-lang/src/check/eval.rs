@@ -443,10 +443,9 @@ impl<'a> Checker<'a> {
                     }
                 };
                 let src_pc = src_entry.param_counts.clone();
-                let c = src_entry.color;
                 let idx = self.add_entry(
                     dest_member.clone(),
-                    Some(color::ColorSpec::Absolute(c.0, c.1, c.2)),
+                    src_entry.color,
                     new_body, src_pc,
                 );
 
@@ -521,7 +520,7 @@ pub(super) fn apply_functor(cell: &PureCell, map: &HashMap<PrimId, FunctorEntry>
     }
 }
 
-pub(super) fn subst_ty(ty: &(u8, Ty), mapping: &HashMap<PrimId, PrimArg>) -> (u8, Ty) {
+fn subst_ty(ty: &(u8, Ty), mapping: &HashMap<PrimId, PrimArg>) -> (u8, Ty) {
     let (dim, t) = ty;
     let new_t = match t {
         Ty::Zero => Ty::Zero,
@@ -559,7 +558,7 @@ pub(super) fn match_ty(x: &Ty, y: &Ty) -> Result<()> {
     }
 }
 
-pub(super) fn lift_dim(mut cell: FreeCell, target: u8) -> FreeCell {
+fn lift_dim(mut cell: FreeCell, target: u8) -> FreeCell {
     while cell.pure.dim().in_space < target {
         cell = FreeCell::id(cell);
     }
@@ -595,7 +594,7 @@ fn try_path_as_number(path: &Path) -> Option<ImplicitNum> {
     }
 }
 
-pub(super) fn path_name(path: &Path) -> Option<String> {
+fn path_name(path: &Path) -> Option<String> {
     let parts: Vec<_> = path.segments.iter().map(|s| s.0.name.clone()).collect();
     if parts.is_empty() {
         return None;
