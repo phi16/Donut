@@ -6,12 +6,12 @@ use donut_core::cell::*;
 use donut_core::common::*;
 use donut_core::free_cell::FreeCell;
 use donut_lang::check::Env;
-use donut_runtime::Runtime;
-use wasm_bindgen::JsCast;
 use donut_layout::layout_solver::LayoutSolver;
 use donut_renderer::geometry::{Geometry, R};
 use donut_renderer::prim_table::PrimTable;
 use donut_renderer::render::Renderer;
+use donut_runtime::Runtime;
+use wasm_bindgen::JsCast;
 
 const MARGIN: R = 100.0;
 const GAP: R = 100.0;
@@ -47,7 +47,10 @@ impl App {
         let (env, table, runtime, diagnostics) = Self::load(input);
         let selected = Self::find_last_cell(&env);
         let cell = selected.map(|i| Self::build_geometry(env.entries[i].as_cell().unwrap()));
-        let slice_pos = cell.as_ref().map(|c| Self::init_slice_pos(&c.size)).unwrap_or_default();
+        let slice_pos = cell
+            .as_ref()
+            .map(|c| Self::init_slice_pos(&c.size))
+            .unwrap_or_default();
 
         let app = Self {
             canvas,
@@ -71,7 +74,9 @@ impl App {
     }
 
     fn find_last_cell(env: &Env) -> Option<usize> {
-        env.entries.iter().enumerate()
+        env.entries
+            .iter()
+            .enumerate()
             .rev()
             .find_map(|(i, e)| e.as_cell().map(|_| i))
     }
@@ -79,13 +84,20 @@ impl App {
     fn load(code: &str) -> (Env, PrimTable, Runtime, Vec<String>) {
         let user_code = dedent(code);
         let (env, errors) = donut_lang::load::load(&user_code);
-        let diagnostics: Vec<String> = errors.into_iter()
+        let diagnostics: Vec<String> = errors
+            .into_iter()
             .map(|(pos, msg)| format!("{}:{}: {}", pos.line + 1, pos.col + 1, msg))
             .collect();
 
         let mut table = PrimTable::new();
         for (&id, decl) in &env.prim_decls {
-            table.insert(id, &decl.name, decl.level, decl.color, decl.param_counts.clone());
+            table.insert(
+                id,
+                &decl.name,
+                decl.level,
+                decl.color,
+                decl.param_counts.clone(),
+            );
         }
 
         // Build runtime
@@ -130,7 +142,9 @@ impl App {
                 .unwrap()
                 .dyn_into::<web_sys::HtmlOptionElement>()
                 .unwrap();
-            let Some(cell) = entry.as_cell() else { continue };
+            let Some(cell) = entry.as_cell() else {
+                continue;
+            };
             let dim = cell.pure.dim().in_space;
             let label = format!("{} ({}d)", entry.name, dim);
             option.set_text_content(Some(&label));
@@ -146,7 +160,10 @@ impl App {
         let (env, table, runtime, diagnostics) = Self::load(code);
         let selected = Self::find_last_cell(&env);
         let cell = selected.map(|i| Self::build_geometry(env.entries[i].as_cell().unwrap()));
-        self.slice_pos = cell.as_ref().map(|c| Self::init_slice_pos(&c.size)).unwrap_or_default();
+        self.slice_pos = cell
+            .as_ref()
+            .map(|c| Self::init_slice_pos(&c.size))
+            .unwrap_or_default();
         self.env = env;
         self.table = table;
         self.runtime = runtime;
@@ -161,7 +178,9 @@ impl App {
         if index >= self.env.entries.len() {
             return;
         }
-        let Some(cell) = self.env.entries[index].as_cell() else { return };
+        let Some(cell) = self.env.entries[index].as_cell() else {
+            return;
+        };
         self.selected = Some(index);
         let geom = Self::build_geometry(cell);
         self.slice_pos = Self::init_slice_pos(&geom.size);
@@ -259,8 +278,7 @@ impl App {
 
             let sx = self.slice_pos[2 * i];
             let sy = self.slice_pos[2 * i + 1];
-            self.context
-                .set_stroke_style_str("rgba(255 255 255 / 0.4)");
+            self.context.set_stroke_style_str("rgba(255 255 255 / 0.4)");
             self.context.set_line_width(1.0);
             self.context.begin_path();
             self.context.move_to(sx, 0.0);
@@ -276,6 +294,9 @@ impl App {
 
             self.context.restore();
         }
+
+        // --- Params label ---
+        self.draw_params(20.0, 30.0);
 
         // --- Slice view ---
         {
@@ -317,7 +338,9 @@ impl App {
             self.diagnostics_el.set_inner_text("");
         } else {
             let _ = self.diagnostics_el.class_list().add_1("has-errors");
-            let diag_text: String = self.diagnostics.iter()
+            let diag_text: String = self
+                .diagnostics
+                .iter()
                 .map(|d| d.as_str())
                 .collect::<Vec<_>>()
                 .join("\n");
@@ -332,7 +355,8 @@ impl App {
         };
         let entry = &self.env.entries[selected];
         let Some(cell) = entry.as_cell() else {
-            self.eval_result_el.set_inner_text(&format!("{}: meta", entry.name));
+            self.eval_result_el
+                .set_inner_text(&format!("{}: meta", entry.name));
             let _ = self.eval_result_el.class_list().remove_1("evaluable");
             return;
         };
@@ -360,5 +384,51 @@ impl App {
         self.context.set_fill_style_str("rgb(255 255 255)");
         self.context.set_font("14px monospace");
         let _ = self.context.fill_text(text, x, y);
+    }
+
+    fn draw_params(&self, x: R, y: R) {
+        let Some(selected) = self.selected else {
+            return;
+        };
+        let Some(params) = self.env.entry_params.get(&selected) else {
+            return;
+        };
+        if params.is_empty() {
+            return;
+        }
+
+        let parts: Vec<String> = params
+            .iter()
+            .map(|(name, id, kind)| {
+                use donut_lang::check::ParamKind;
+                match kind {
+                    ParamKind::Cell => {
+                        let type_str = self
+                            .env
+                            .entries
+                            .iter()
+                            .find_map(|e| {
+                                let cell = e.as_cell()?;
+                                if cell.pure.extract_prim_id()? == *id {
+                                    Some(cell)
+                                } else {
+                                    None
+                                }
+                            })
+                            .map(|cell| self.table.format_cell_type(&cell.pure))
+                            .unwrap_or_else(|| "*".to_string());
+                        format!("{}: {}", name, type_str)
+                    }
+                    ParamKind::Nat => format!("{}: nat", name),
+                    ParamKind::Rat => format!("{}: rat", name),
+                    ParamKind::Meta => format!("{}: meta", name),
+                }
+            })
+            .collect();
+
+        let text = parts.join(", ");
+        self.context.set_fill_style_str("rgba(255, 255, 255, 0.6)");
+        self.context.set_font("20px monospace");
+        let _ = self.context.fill_text(&text, x, y);
     }
 }

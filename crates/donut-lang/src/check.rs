@@ -55,6 +55,7 @@ pub struct Env {
     pub entries: Vec<Entry>,
     pub lookup: HashMap<String, usize>,
     pub prim_decls: HashMap<PrimId, PrimDecl>,
+    pub entry_params: HashMap<usize, Vec<ParamInfo>>,
 }
 
 // --- Meta type ---
@@ -70,14 +71,14 @@ struct MetaSig {
 // --- Param kind ---
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-enum ParamKind {
+pub enum ParamKind {
     Cell,
     Nat,
     Rat,
     Meta,
 }
 
-type ParamInfo = (String, PrimId, ParamKind);
+pub type ParamInfo = (String, PrimId, ParamKind);
 
 // --- Checker ---
 
@@ -151,6 +152,7 @@ impl<'a> Checker<'a> {
             entries: self.entries,
             lookup: self.lookup,
             prim_decls: self.prim_decls,
+            entry_params: self.entry_params,
         };
         (env, self.errors)
     }
@@ -716,9 +718,16 @@ impl<'a> Checker<'a> {
                     let (_, ty) = self.eval_ty(&ty_s.0)?;
                     let prim = Prim::new(fresh_id);
                     let cell = make_cell(prim, &ty)?;
+                    let level = cell.pure.dim().in_space;
                     let param_name = self.qualified_name(&param.name);
                     self.add_entry(param_name, None, EntryBody::Cell(cell.clone()), vec![]);
                     self.accumulated_args.push(PrimArg::Cell(cell.pure.clone()));
+                    self.prim_decls.insert(fresh_id, PrimDecl {
+                        name: param.name.clone(),
+                        level,
+                        color: (128, 128, 128),
+                        param_counts: vec![],
+                    });
                 }
                 ParamKind::Nat | ParamKind::Rat | ParamKind::Meta => {
                     // Create a meta entry so it can be referenced in meta expressions
@@ -727,6 +736,12 @@ impl<'a> Checker<'a> {
                     let idx = self.add_entry(param_name, None, EntryBody::Meta(prim), vec![]);
                     self.meta_values.insert(idx, PrimArg::App(fresh_id, vec![]));
                     self.accumulated_args.push(PrimArg::App(fresh_id, vec![]));
+                    self.prim_decls.insert(fresh_id, PrimDecl {
+                        name: param.name.clone(),
+                        level: 0,
+                        color: (128, 128, 128),
+                        param_counts: vec![],
+                    });
                 }
             }
             freshes.push((param.name.clone(), fresh_id, param_kind));
