@@ -126,7 +126,7 @@ fn ops() -> Vec<Op> {
 }
 
 /// Build a Runtime from a lookup table (entry name → PrimId).
-pub fn register_env(rt: &mut Runtime, lookup: &HashMap<String, PrimId>) {
+pub fn register_sys(rt: &mut Runtime, lookup: &HashMap<String, PrimId>) {
     for op in ops() {
         if let Some(&id) = lookup.get(op.name) {
             rt.register(id, op.f);

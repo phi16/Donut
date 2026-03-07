@@ -586,7 +586,7 @@ impl<'a> Checker<'a> {
         });
 
         for mapping in mappings {
-            // Enter mapping-level params (e.g., [n: base.nat])
+            // Enter mapping-level params (e.g., [n: nat])
             let mapping_freshes = match self.enter_params(&mapping.params) {
                 Ok(f) => f,
                 Err(msg) => {

@@ -1,11 +1,11 @@
-use crate::env::register_env;
+use crate::env::register_sys;
 use crate::{Runtime, Value};
 use donut_core::cell::Globular;
 use donut_core::common::PrimId;
 use std::collections::HashMap;
 
 fn setup(user_code: &str) -> (Runtime, donut_lang::check::Env) {
-    let prelude = "import \"base\"\nimport \"ui\"\nenv = import \"sys\"\n";
+    let prelude = "import \"base\"\nimport \"ui\"\nsys = import \"sys\"\n";
     let code = format!("{}{}", prelude, user_code);
     let (env, errors) = donut_lang::load::load(&code);
     for (_, msg) in &errors {
@@ -24,7 +24,7 @@ fn setup(user_code: &str) -> (Runtime, donut_lang::check::Env) {
     }
 
     let mut rt = Runtime::new();
-    register_env(&mut rt, &lookup);
+    register_sys(&mut rt, &lookup);
     (rt, env)
 }
 
@@ -36,21 +36,21 @@ fn eval_entry(rt: &Runtime, env: &donut_lang::check::Env, name: &str) -> Vec<Val
 
 #[test]
 fn test_constant() {
-    let (rt, env) = setup("x = env.u32_lit[0]");
+    let (rt, env) = setup("x = sys.u32_lit[0]");
     assert_eq!(eval_entry(&rt, &env, "x"), vec![Value::U32(0)]);
 }
 
 #[test]
 fn test_constant_42() {
-    let (rt, env) = setup("x = env.u32_lit[42]");
+    let (rt, env) = setup("x = sys.u32_lit[42]");
     assert_eq!(eval_entry(&rt, &env, "x"), vec![Value::U32(42)]);
 }
 
 #[test]
 fn test_successor() {
     let (rt, env) = setup("\
-one = env.u32_lit[1]
-two = env.u32_lit[1] env.u32_lit[1]; env.u32_add
+one = sys.u32_lit[1]
+two = sys.u32_lit[1] sys.u32_lit[1]; sys.u32_add
 ");
     assert_eq!(eval_entry(&rt, &env, "one"), vec![Value::U32(1)]);
     assert_eq!(eval_entry(&rt, &env, "two"), vec![Value::U32(2)]);
@@ -59,7 +59,7 @@ two = env.u32_lit[1] env.u32_lit[1]; env.u32_add
 #[test]
 fn test_add() {
     let (rt, env) = setup("\
-sum = env.u32_lit[1] env.u32_lit[1]; env.u32_add
+sum = sys.u32_lit[1] sys.u32_lit[1]; sys.u32_add
 ");
     assert_eq!(eval_entry(&rt, &env, "sum"), vec![Value::U32(2)]);
 }
@@ -67,9 +67,9 @@ sum = env.u32_lit[1] env.u32_lit[1]; env.u32_add
 #[test]
 fn test_mul() {
     let (rt, env) = setup("\
-two = env.u32_lit[1] env.u32_lit[1]; env.u32_add
-three = two env.u32_lit[1]; env.u32_add
-nine = three; env.u32_dup; env.u32_mul
+two = sys.u32_lit[1] sys.u32_lit[1]; sys.u32_add
+three = two sys.u32_lit[1]; sys.u32_add
+nine = three; sys.u32_dup; sys.u32_mul
 ");
     assert_eq!(eval_entry(&rt, &env, "three"), vec![Value::U32(3)]);
     assert_eq!(eval_entry(&rt, &env, "nine"), vec![Value::U32(9)]);
@@ -79,9 +79,9 @@ nine = three; env.u32_dup; env.u32_mul
 fn test_parallel_and_sequential() {
     // (1 + 1) * (1 + 1 + 1) = 2 * 3 = 6
     let (rt, env) = setup("\
-two = env.u32_lit[1] env.u32_lit[1]; env.u32_add
-three = two env.u32_lit[1]; env.u32_add
-result = two three; env.u32_mul
+two = sys.u32_lit[1] sys.u32_lit[1]; sys.u32_add
+three = two sys.u32_lit[1]; sys.u32_add
+result = two three; sys.u32_mul
 ");
     assert_eq!(eval_entry(&rt, &env, "result"), vec![Value::U32(6)]);
 }
@@ -89,11 +89,11 @@ result = two three; env.u32_mul
 #[test]
 fn test_bool() {
     let (rt, env) = setup("\
-t = env.bool_lit[1]
-f = env.bool_lit[0]
-notf = env.bool_lit[0]; env.bool_not
-and_tf = env.bool_lit[1] env.bool_lit[0]; env.bool_and
-or_tf = env.bool_lit[1] env.bool_lit[0]; env.bool_or
+t = sys.bool_lit[1]
+f = sys.bool_lit[0]
+notf = sys.bool_lit[0]; sys.bool_not
+and_tf = sys.bool_lit[1] sys.bool_lit[0]; sys.bool_and
+or_tf = sys.bool_lit[1] sys.bool_lit[0]; sys.bool_or
 ");
     assert_eq!(eval_entry(&rt, &env, "t"), vec![Value::Bool(true)]);
     assert_eq!(eval_entry(&rt, &env, "f"), vec![Value::Bool(false)]);
@@ -105,11 +105,11 @@ or_tf = env.bool_lit[1] env.bool_lit[0]; env.bool_or
 #[test]
 fn test_comparison() {
     let (rt, env) = setup("\
-one = env.u32_lit[1]
-two = env.u32_lit[1] env.u32_lit[1]; env.u32_add
-eq_11 = one; env.u32_dup; env.u32_eq
-lt_12 = one two; env.u32_lt
-lt_21 = two one; env.u32_lt
+one = sys.u32_lit[1]
+two = sys.u32_lit[1] sys.u32_lit[1]; sys.u32_add
+eq_11 = one; sys.u32_dup; sys.u32_eq
+lt_12 = one two; sys.u32_lt
+lt_21 = two one; sys.u32_lt
 ");
     assert_eq!(eval_entry(&rt, &env, "eq_11"), vec![Value::Bool(true)]);
     assert_eq!(eval_entry(&rt, &env, "lt_12"), vec![Value::Bool(true)]);
@@ -119,7 +119,7 @@ lt_21 = two one; env.u32_lt
 #[test]
 fn test_f32() {
     let (rt, env) = setup("\
-x = env.f32_lit[1] env.f32_lit[1]; env.f32_add
+x = sys.f32_lit[1] sys.f32_lit[1]; sys.f32_add
 ");
     assert_eq!(eval_entry(&rt, &env, "x"), vec![Value::F32(2.0)]);
 }
@@ -127,7 +127,7 @@ x = env.f32_lit[1] env.f32_lit[1]; env.f32_add
 #[test]
 fn test_conversion() {
     let (rt, env) = setup("\
-x = env.u32_lit[1] env.u32_lit[1]; env.u32_add; env.u32_to_f32
+x = sys.u32_lit[1] sys.u32_lit[1]; sys.u32_add; sys.u32_to_f32
 ");
     assert_eq!(eval_entry(&rt, &env, "x"), vec![Value::F32(2.0)]);
 }
@@ -135,7 +135,7 @@ x = env.u32_lit[1] env.u32_lit[1]; env.u32_add; env.u32_to_f32
 #[test]
 fn test_dup() {
     let (rt, env) = setup("\
-x = env.u32_lit[1]; env.u32_dup; env.u32_add
+x = sys.u32_lit[1]; sys.u32_dup; sys.u32_add
 ");
     assert_eq!(eval_entry(&rt, &env, "x"), vec![Value::U32(2)]);
 }
@@ -148,14 +148,14 @@ x: C → C
 one: C → x
 add: x x → x
 
-F: C ~> env.C
-F(x) = env.u32
-F(one) = env.u32_lit[1]
-F(add) = env.u32_add
+F: C ~> sys.C
+F(x) = sys.u32
+F(one) = sys.u32_lit[1]
+F(add) = sys.u32_add
 
-two = env.u32_lit[1] env.u32_lit[1]; env.u32_add
-three = two env.u32_lit[1]; env.u32_add
-result = two three; env.u32_mul
+two = sys.u32_lit[1] sys.u32_lit[1]; sys.u32_add
+three = two sys.u32_lit[1]; sys.u32_add
+result = two three; sys.u32_mul
 
 result2 = F(add)
 ";
@@ -180,12 +180,12 @@ mycat = {
     add: nat nat → nat
     dup: nat → nat nat
 }
-F: mycat.C ~> env.C
-F(mycat.nat) = env.u32
-F(mycat.zero) = env.u32_lit[0]
-F(mycat.succ) = env.u32_lit[1] env.u32; env.u32_add
-F(mycat.add) = env.u32_add
-F(mycat.dup) = env.u32_dup
+F: mycat.C ~> sys.C
+F(mycat.nat) = sys.u32
+F(mycat.zero) = sys.u32_lit[0]
+F(mycat.succ) = sys.u32_lit[1] sys.u32; sys.u32_add
+F(mycat.add) = sys.u32_add
+F(mycat.dup) = sys.u32_dup
 one = F(mycat.zero; mycat.succ)
 two = F(mycat.zero; mycat.succ; mycat.succ)
 sum = F(mycat.zero; mycat.succ) F(mycat.zero; mycat.succ); F(mycat.add)
@@ -202,9 +202,9 @@ C: *
 K: C → C
 x[n: base.nat]: C → K
 
-F: C ~> env.C
-F(K) = env.u32
-[n: base.nat] F(x[n]) = env.u32_lit[n]
+F: C ~> sys.C
+F(K) = sys.u32
+[n: base.nat] F(x[n]) = sys.u32_lit[n]
 
 result = F(x[32])
 ");
@@ -219,9 +219,9 @@ C: *
 x: C → C
 th: x → x
 
-F: C ~> env.C
-F(x) = env.u32
-F(th) = env.u32
+F: C ~> sys.C
+F(x) = sys.u32
+F(th) = sys.u32
 
 result = F(th)
 ");

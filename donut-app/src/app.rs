@@ -111,7 +111,7 @@ impl App {
             }
         }
         let mut runtime = Runtime::new();
-        donut_runtime::env::register_env(&mut runtime, &prim_lookup);
+        donut_runtime::env::register_sys(&mut runtime, &prim_lookup);
 
         (env, table, runtime, diagnostics)
     }

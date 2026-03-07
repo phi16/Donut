@@ -515,7 +515,7 @@ fn meta_typed_body() {
 
 #[test]
 fn meta_typed_body_mismatch() {
-    // g: base.meta = 80 should be a type error (80 is nat, not meta)
+    // g: meta = 80 should be a type error (80 is nat, not meta)
     let result = check_source(
         r#"
         import "base"
