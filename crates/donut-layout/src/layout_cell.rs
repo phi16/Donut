@@ -1,5 +1,3 @@
-use std::vec;
-
 use donut_core::cell::*;
 use donut_core::common::*;
 use donut_core::pure_cell;

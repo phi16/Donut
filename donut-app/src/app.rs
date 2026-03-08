@@ -208,7 +208,7 @@ impl App {
 
         let Some(ref cell) = self.cell else { return };
 
-        let size = cell.size.clone();
+        let size = &cell.size;
         let n_extra = size.len() - 2;
         let n_views = n_extra / 2;
 

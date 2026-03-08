@@ -1,5 +1,6 @@
 pub use crate::types::common::S;
 pub use crate::types::common::TokenSpan;
+use donut_core::common::Axis;
 use std::collections::{HashMap, HashSet};
 
 // --- Index types ---
@@ -55,7 +56,7 @@ pub enum Hole {
 pub enum Val {
     Path(Path),
     Lit(Lit),
-    Comp(u32, Vec<ValId>),
+    Comp(Axis, Vec<ValId>),
     CompStar(Vec<ValId>),
     Arrow(ArrowKind, ValId, ValId),
     Hole(Hole),

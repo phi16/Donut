@@ -103,6 +103,7 @@ impl Resolve for S<semtree::Path<semtree::ParamVal>> {
             .collect();
 
         let applicand = path.1.map(|v| {
+            assert!(!ctx.in_applicand);
             ctx.in_applicand = true;
             let result = v.resolve(ctx);
             ctx.in_applicand = false;
@@ -268,7 +269,7 @@ impl<'a> Checker<'a> {
 
     // --- Comp flat helpers ---
 
-    fn resolve_comp_flat(&mut self, val_s: S<semtree::Val>, axis: u32, out: &mut Vec<ValId>) {
+    fn resolve_comp_flat(&mut self, val_s: S<semtree::Val>, axis: donut_core::common::Axis, out: &mut Vec<ValId>) {
         match val_s {
             S(semtree::Val::Op(l, op_s, _, r), _)
                 if matches!(&op_s.0, semtree::Op::Comp(n) if *n == axis) =>
@@ -776,6 +777,7 @@ impl<'a> Checker<'a> {
                     ni.applicand.take().map(|applicand| {
                         let fspan = &ni.seg_names[0].1;
                         self.used_deco_params.clear();
+                        assert!(!self.in_applicand);
                         self.in_applicand = true;
                         let app_resolved = applicand.resolve(self);
                         self.in_applicand = false;

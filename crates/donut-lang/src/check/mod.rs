@@ -14,8 +14,8 @@ use eval::{apply_functor, make_cell, match_ty};
 use std::collections::HashMap;
 
 pub use crate::types::env::{
-    display_cell_type, display_prim, display_pure_cell, Entry, Env, MetaType, ParamInfo, ParamKind,
-    PrimDecl,
+    display_cell_type, display_prim, display_pure_cell, Color, Entry, Env, MetaType, ParamInfo,
+    ParamKind, PrimDecl,
 };
 
 type Result<T> = std::result::Result<T, String>;
@@ -141,7 +141,7 @@ impl<'a> Checker<'a> {
     fn add_entry(
         &mut self,
         name: String,
-        color: (u8, u8, u8),
+        color: Color,
         body: EntryBody,
         param_counts: Vec<usize>,
     ) -> usize {
@@ -293,7 +293,7 @@ impl<'a> Checker<'a> {
                                 self.exit_params(&param_freshes);
                                 if has_params {
                                     self.module_params
-                                        .insert(qname.clone(), param_freshes.clone());
+                                        .insert(qname.clone(), param_freshes);
                                 }
                                 self.item_cache.insert(item_id, qname);
                                 return;
@@ -676,7 +676,7 @@ impl<'a> Checker<'a> {
             }
 
             let param_prims: Vec<PrimId> = mapping_freshes.iter()
-                .map(|(_, id, _)| *id)
+                .map(|p| p.prim_id)
                 .collect();
             functor_map.insert(app_prim_id, FunctorEntry {
                 param_prims,
@@ -739,7 +739,7 @@ impl<'a> Checker<'a> {
             let param_kind = self.detect_param_kind(&ty_s.0);
             let fresh_id = self.fresh_prim_id();
 
-            const PARAM_COLOR: (u8, u8, u8) = (128, 128, 128);
+            let param_color = Color::gray();
             match param_kind {
                 ParamKind::Cell => {
                     let (_, ty) = self.eval_ty(&ty_s.0)?;
@@ -748,19 +748,19 @@ impl<'a> Checker<'a> {
                     let level = cell.pure.dim().in_space;
                     self.accumulated_args.push(PrimArg::Cell(cell.pure.clone()));
                     let param_name = self.qualified_name(&param.name);
-                    self.add_entry(param_name, PARAM_COLOR, EntryBody::Cell(cell), vec![]);
+                    self.add_entry(param_name, param_color, EntryBody::Cell(cell), vec![]);
                     self.register_param_prim_decl(fresh_id, &param.name, level);
                 }
                 ParamKind::Meta(_) => {
                     let prim = Prim::new(fresh_id);
                     let param_name = self.qualified_name(&param.name);
-                    let idx = self.add_entry(param_name, PARAM_COLOR, EntryBody::Meta(prim), vec![]);
+                    let idx = self.add_entry(param_name, param_color, EntryBody::Meta(prim), vec![]);
                     self.meta_values.insert(idx, PrimArg::App(fresh_id, vec![]));
                     self.accumulated_args.push(PrimArg::App(fresh_id, vec![]));
                     self.register_param_prim_decl(fresh_id, &param.name, 0);
                 }
             }
-            freshes.push((param.name.clone(), fresh_id, param_kind));
+            freshes.push(ParamInfo { name: param.name.clone(), prim_id: fresh_id, kind: param_kind });
         }
         Ok(freshes)
     }
@@ -793,7 +793,7 @@ impl<'a> Checker<'a> {
         self.prim_decls.insert(prim_id, PrimDecl {
             name: local_name.to_string(),
             level,
-            color: (128, 128, 128),
+            color: Color::gray(),
             param_counts: vec![],
         });
     }

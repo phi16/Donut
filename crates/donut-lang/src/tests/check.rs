@@ -1,4 +1,4 @@
-use crate::check::Env;
+use crate::check::{Color, Env};
 use donut_core::cell::Globular;
 
 fn check_source(code: &str) -> Result<Env, String> {
@@ -493,7 +493,7 @@ fn meta_variable_reference() {
     )
     .unwrap();
     let u = &env.entries[env.lookup["u"]];
-    assert_eq!(u.color, (80, 80, 80));
+    assert_eq!(u.color, Color::new(80, 80, 80));
 }
 
 #[test]
@@ -510,7 +510,7 @@ fn meta_typed_body() {
     )
     .unwrap();
     let u = &env.entries[env.lookup["u"]];
-    assert_eq!(u.color, (80, 80, 80));
+    assert_eq!(u.color, Color::new(80, 80, 80));
 }
 
 #[test]
@@ -539,7 +539,7 @@ fn meta_parametric_function() {
     )
     .unwrap();
     let u = &env.entries[env.lookup["u"]];
-    assert_eq!(u.color, (120, 120, 120));
+    assert_eq!(u.color, Color::new(120, 120, 120));
 }
 
 #[test]
@@ -556,7 +556,7 @@ fn meta_parametric_color_function() {
     )
     .unwrap();
     let u = &env.entries[env.lookup["u"]];
-    assert_eq!(u.color, (10, 20, 30));
+    assert_eq!(u.color, Color::new(10, 20, 30));
 }
 
 #[test]
@@ -572,7 +572,7 @@ fn meta_hsv_reduces_to_rgb() {
     .unwrap();
     let u = &env.entries[env.lookup["u"]];
     // hsv(0, 1, 1) = red
-    assert_eq!(u.color, (255, 0, 0));
+    assert_eq!(u.color, Color::new(255, 0, 0));
 }
 
 #[test]
@@ -588,7 +588,7 @@ fn meta_hsv_stored_variable() {
     )
     .unwrap();
     let u = &env.entries[env.lookup["u"]];
-    assert_eq!(u.color, (255, 0, 0));
+    assert_eq!(u.color, Color::new(255, 0, 0));
 }
 
 #[test]
@@ -603,7 +603,7 @@ fn meta_lerp_colors() {
     )
     .unwrap();
     let u = &env.entries[env.lookup["u"]];
-    assert_eq!(u.color, (50, 100, 25));
+    assert_eq!(u.color, Color::new(50, 100, 25));
 }
 
 #[test]
@@ -618,7 +618,7 @@ fn meta_lerp_with_gray() {
     )
     .unwrap();
     let u = &env.entries[env.lookup["u"]];
-    assert_eq!(u.color, (100, 100, 100));
+    assert_eq!(u.color, Color::new(100, 100, 100));
 }
 
 #[test]
@@ -634,7 +634,7 @@ fn meta_lerp_with_hsv_and_rgb() {
     .unwrap();
     let u = &env.entries[env.lookup["u"]];
     // hsv(0,1,1)=rgb(255,0,0), lerp with rgb(0,0,255) at 0.5 = (128, 0, 128)
-    assert_eq!(u.color, (128, 0, 128));
+    assert_eq!(u.color, Color::new(128, 0, 128));
 }
 
 #[test]
@@ -816,7 +816,7 @@ fn module_meta_value_instantiation() {
     )
     .unwrap();
     let x = &env.entries[env.lookup["x"]];
-    assert_eq!(x.color, (120, 120, 120));
+    assert_eq!(x.color, Color::new(120, 120, 120));
 }
 
 #[test]
@@ -974,7 +974,7 @@ fn use_meta_types_available_for_params() {
     )
     .unwrap();
     let u = &env.entries[env.lookup["u"]];
-    assert_eq!(u.color, (42, 42, 42));
+    assert_eq!(u.color, Color::new(42, 42, 42));
 }
 
 #[test]
@@ -1033,12 +1033,12 @@ fn parametric_module_entry_params_include_parent() {
     // entry_params has only own params
     let own_params = env.entry_params.get(&idx).unwrap();
     assert_eq!(own_params.len(), 1);
-    assert_eq!(own_params[0].0, "n");
+    assert_eq!(own_params[0].name, "n");
     // all_params includes parent module params
     let all = env.all_params(idx);
     assert_eq!(all.len(), 2);
-    assert_eq!(all[0].0, "m");
-    assert_eq!(all[1].0, "n");
+    assert_eq!(all[0].name, "m");
+    assert_eq!(all[1].name, "n");
 }
 
 #[test]
@@ -1101,8 +1101,8 @@ fn parametric_module_prim_decl_display() {
     assert_eq!(decl.param_counts, vec![1, 1]);
 
     // Param prims should have local (unqualified) names
-    let m_prim_id = env.all_params(idx)[0].1;
-    let n_prim_id = env.all_params(idx)[1].1;
+    let m_prim_id = env.all_params(idx)[0].prim_id;
+    let n_prim_id = env.all_params(idx)[1].prim_id;
     assert_eq!(env.prim_decls.get(&m_prim_id).unwrap().name, "m");
     assert_eq!(env.prim_decls.get(&n_prim_id).unwrap().name, "n");
 
@@ -1263,9 +1263,9 @@ fn all_params_nested_module() {
     let &x_idx = env.lookup.get("u.v.x").unwrap();
     let params = env.all_params(x_idx);
     assert_eq!(params.len(), 3);
-    assert_eq!(params[0].0, "m");
-    assert_eq!(params[1].0, "n");
-    assert_eq!(params[2].0, "k");
+    assert_eq!(params[0].name, "m");
+    assert_eq!(params[1].name, "n");
+    assert_eq!(params[2].name, "k");
 }
 
 #[test]
@@ -1324,10 +1324,10 @@ fn meta_display_params() {
     let &f_idx = env.lookup.get("f").unwrap();
     let params = env.all_params(f_idx);
     assert_eq!(params.len(), 1);
-    assert_eq!(params[0].0, "c");
-    match &params[0].2 {
+    assert_eq!(params[0].name, "c");
+    match &params[0].kind {
         crate::check::ParamKind::Meta(mt) => {
-            assert_eq!(env.display_meta_type(mt), "color");
+            assert_eq!(env.display_meta_type(&mt), "color");
         }
         _ => panic!("expected Meta param kind"),
     }

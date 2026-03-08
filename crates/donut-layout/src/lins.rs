@@ -125,7 +125,7 @@ impl Lins {
             for factor in &l.0 {
                 match factor {
                     Factor::Var(id) => {
-                        lhs.entry(id.clone()).and_modify(|e| *e += 1).or_insert(1);
+                        lhs.entry(*id).and_modify(|e| *e += 1).or_insert(1);
                     }
                     Factor::Const(n) => {
                         rhs -= *n as f64;
@@ -135,7 +135,7 @@ impl Lins {
             for factor in &r.0 {
                 match factor {
                     Factor::Var(id) => {
-                        lhs.entry(id.clone()).and_modify(|e| *e -= 1).or_insert(-1);
+                        lhs.entry(*id).and_modify(|e| *e -= 1).or_insert(-1);
                     }
                     Factor::Const(n) => {
                         rhs += *n as f64;

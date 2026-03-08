@@ -4,7 +4,7 @@ use super::*;
 
 #[derive(Clone, Copy)]
 pub(super) enum ColorSpec {
-    Absolute(u8, u8, u8),
+    Absolute(Color),
     Lighten(f64),
     Darken(f64),
 }
@@ -85,7 +85,7 @@ impl<'a> Checker<'a> {
                 let r = match color_args.get(0)? { PrimArg::Nat(n) => *n as u8, _ => continue };
                 let g = match color_args.get(1)? { PrimArg::Nat(n) => *n as u8, _ => continue };
                 let b = match color_args.get(2)? { PrimArg::Nat(n) => *n as u8, _ => continue };
-                return Some(ColorSpec::Absolute(r, g, b));
+                return Some(ColorSpec::Absolute(Color::new(r, g, b)));
             }
             if lighten_id == Some(*id) {
                 let amount = args.first().and_then(|a| a.as_rat()).unwrap_or(0.3);
@@ -134,7 +134,7 @@ impl<'a> Checker<'a> {
         Some(((avg / pi2) % 1.0 + 1.0) % 1.0)
     }
 
-    pub(super) fn auto_color(&self, body: &EntryBody) -> (u8, u8, u8) {
+    pub(super) fn auto_color(&self, body: &EntryBody) -> Color {
         let index = self.entries.len();
         match body {
             EntryBody::Cell(cell) => {
@@ -158,13 +158,13 @@ impl<'a> Checker<'a> {
                     }
                 }
             }
-            _ => (128, 128, 128),
+            _ => Color::gray(),
         }
     }
 
-    pub(super) fn resolve_color(&self, spec: Option<ColorSpec>, body: &EntryBody) -> (u8, u8, u8) {
+    pub(super) fn resolve_color(&self, spec: Option<ColorSpec>, body: &EntryBody) -> Color {
         match spec {
-            Some(ColorSpec::Absolute(r, g, b)) => (r, g, b),
+            Some(ColorSpec::Absolute(c)) => c,
             Some(ColorSpec::Lighten(amount)) => {
                 let base = self.auto_color(body);
                 lighten_color(base, amount)
@@ -184,9 +184,9 @@ fn reduce_hsv(rgb_id: PrimId, args: &[PrimArg]) -> Option<PrimArg> {
     let h = args.get(0)?.as_rat()?;
     let s = args.get(1).and_then(|a| a.as_rat()).unwrap_or(1.0);
     let v = args.get(2).and_then(|a| a.as_rat()).unwrap_or(1.0);
-    let (r, g, b) = hsv_to_rgb(h, s, v);
+    let c = hsv_to_rgb(h, s, v);
     Some(PrimArg::App(rgb_id, vec![
-        PrimArg::Nat(r as u64), PrimArg::Nat(g as u64), PrimArg::Nat(b as u64),
+        PrimArg::Nat(c.r as u64), PrimArg::Nat(c.g as u64), PrimArg::Nat(c.b as u64),
     ]))
 }
 
@@ -212,7 +212,7 @@ fn golden_angle_hue(index: usize) -> f64 {
     ((index as f64 * 137.508) % 360.0) / 360.0
 }
 
-pub(super) fn hsv_to_rgb(h: f64, s: f64, v: f64) -> (u8, u8, u8) {
+pub(super) fn hsv_to_rgb(h: f64, s: f64, v: f64) -> Color {
     let h = ((h % 1.0) + 1.0) % 1.0;
     let c = v * s;
     let h6 = h * 6.0;
@@ -226,17 +226,17 @@ pub(super) fn hsv_to_rgb(h: f64, s: f64, v: f64) -> (u8, u8, u8) {
         4 => (x, 0.0, c),
         _ => (c, 0.0, x),
     };
-    (
+    Color::new(
         ((r + m) * 255.0) as u8,
         ((g + m) * 255.0) as u8,
         ((b + m) * 255.0) as u8,
     )
 }
 
-fn rgb_to_hsv(color: (u8, u8, u8)) -> (f64, f64, f64) {
-    let r = color.0 as f64 / 255.0;
-    let g = color.1 as f64 / 255.0;
-    let b = color.2 as f64 / 255.0;
+fn rgb_to_hsv(color: Color) -> (f64, f64, f64) {
+    let r = color.r as f64 / 255.0;
+    let g = color.g as f64 / 255.0;
+    let b = color.b as f64 / 255.0;
     let max = r.max(g).max(b);
     let min = r.min(g).min(b);
     let d = max - min;
@@ -253,14 +253,14 @@ fn rgb_to_hsv(color: (u8, u8, u8)) -> (f64, f64, f64) {
     (h / 6.0, if max > 0.0 { d / max } else { 0.0 }, max)
 }
 
-fn lighten_color(base: (u8, u8, u8), amount: f64) -> (u8, u8, u8) {
+fn lighten_color(base: Color, amount: f64) -> Color {
     let (h, s, v) = rgb_to_hsv(base);
     let v = v + (1.0 - v) * amount;
     let s = s * (1.0 - amount * 0.3);
     hsv_to_rgb(h, s, v)
 }
 
-fn darken_color(base: (u8, u8, u8), amount: f64) -> (u8, u8, u8) {
+fn darken_color(base: Color, amount: f64) -> Color {
     let (h, s, v) = rgb_to_hsv(base);
     let v = v * (1.0 - amount);
     hsv_to_rgb(h, s, v)

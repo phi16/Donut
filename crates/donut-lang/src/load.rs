@@ -9,7 +9,7 @@ pub fn load(code: &str) -> (Env, Vec<Error>) {
 pub fn load_with_sources(code: &str, extra_sources: HashMap<String, String>) -> (Env, Vec<Error>) {
     let mut errors: Vec<Error> = Vec::new();
 
-    let (tokens, _, tok_errors) = crate::tokenize::tokenize(&code);
+    let (tokens, _, tok_errors) = crate::tokenize::tokenize(code);
     errors.extend(tok_errors);
 
     let (program, parse_errors) = crate::parse::parse(&tokens);

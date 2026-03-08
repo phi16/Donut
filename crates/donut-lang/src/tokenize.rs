@@ -4,24 +4,15 @@ use crate::types::common::*;
 use crate::types::token::*;
 
 fn is_keyword(s: &str) -> bool {
-    match s {
-        "with" | "where" | "import" | "use" => true,
-        _ => false,
-    }
+    matches!(s, "with" | "where" | "import" | "use")
 }
 
 fn is_operator(s: &str) -> bool {
-    match s {
-        "=" | ":=" | "+=" | "->" | "→" | "~" | "~>" => true,
-        _ => false,
-    }
+    matches!(s, "=" | ":=" | "+=" | "->" | "→" | "~" | "~>")
 }
 
 fn is_separator(c: char) -> bool {
-    match c {
-        '.' | ',' | ':' | ';' | '(' | ')' | '{' | '}' | '[' | ']' => true,
-        _ => false,
-    }
+    matches!(c, '.' | ',' | ':' | ';' | '(' | ')' | '{' | '}' | '[' | ']')
 }
 
 #[derive(Debug, Clone)]
@@ -248,7 +239,7 @@ pub fn tokenize<'a>(code: &'a str) -> (Vec<Token<'a>>, Vec<TokenPos>, Vec<Error>
             (line_iter, comment)
         })
         .unzip();
-    let comments = comments.into_iter().filter_map(|c| c).collect();
+    let comments = comments.into_iter().flatten().collect();
     let iter = lines.into_iter().flatten();
     let mut tokenizer = Tokenizer::new(iter);
     let mut tokens = vec![];

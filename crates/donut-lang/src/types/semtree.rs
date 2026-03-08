@@ -1,4 +1,5 @@
 use crate::types::common::S;
+use donut_core::common::Axis;
 
 #[derive(Debug)]
 pub struct Name(pub String);
@@ -42,7 +43,7 @@ pub enum ArrowTy {
 }
 #[derive(Debug)]
 pub enum Op {
-    Comp(u32),
+    Comp(Axis),
     CompStar,
     Arrow(ArrowTy),
 }

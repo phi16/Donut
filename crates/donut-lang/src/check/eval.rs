@@ -107,8 +107,8 @@ impl<'a> Checker<'a> {
                     return None;
                 }
 
-                for (arg_ty, (_, _, kind)) in arg_types.iter().zip(params.iter()) {
-                    let ParamKind::Meta(expected) = kind else { return None };
+                for (arg_ty, p) in arg_types.iter().zip(params.iter()) {
+                    let ParamKind::Meta(expected) = &p.kind else { return None };
                     match arg_ty {
                         Some(ty) if ty == expected => {}
                         Some(ty) if self.meta_type_coercible(ty, expected) => {}
@@ -195,7 +195,7 @@ impl<'a> Checker<'a> {
                     .max()
                     .unwrap();
                 cells = cells.into_iter().map(|c| lift_dim(c, max)).collect();
-                Ok(FreeCell::comp(*axis as u8, cells)?)
+                Ok(FreeCell::comp(*axis, cells)?)
             }
             _ => Err("not a cell value".to_string()),
         }
@@ -291,10 +291,10 @@ impl<'a> Checker<'a> {
                         current, params.len(), seg.params.len()
                     ));
                 }
-                for (i, (_, fresh_id, kind)) in params.iter().enumerate() {
+                for (i, p) in params.iter().enumerate() {
                     if let Some(pv) = seg.params.get(i) {
-                        let arg = self.resolve_param_arg(pv, kind)?;
-                        mapping.insert(*fresh_id, arg);
+                        let arg = self.resolve_param_arg(pv, &p.kind)?;
+                        mapping.insert(p.prim_id, arg);
                     }
                 }
             } else if !seg.params.is_empty() {
@@ -341,14 +341,14 @@ impl<'a> Checker<'a> {
                 None => current.clone(),
             };
 
-            if let Some(params) = self.module_params.get(&resolved_name).cloned() {
+            if let Some(params) = self.module_params.get(&resolved_name) {
                 if seg.params.len() > params.len() {
                     return Ok(None);
                 }
-                for (i, (_, fresh_id, kind)) in params.iter().enumerate() {
+                for (i, p) in params.iter().enumerate() {
                     if let Some(pv) = seg.params.get(i) {
-                        let arg = self.resolve_param_arg(pv, kind)?;
-                        mapping.insert(*fresh_id, arg);
+                        let arg = self.resolve_param_arg(pv, &p.kind)?;
+                        mapping.insert(p.prim_id, arg);
                     }
                 }
             }

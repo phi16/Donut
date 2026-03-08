@@ -11,7 +11,7 @@ fn to_f64(q: &Q) -> R {
     numer / denom * 100.0 // TODO
 }
 
-fn lerp(a: R, b: R, t: R) -> R {
+pub(crate) fn lerp(a: R, b: R, t: R) -> R {
     a * (1.0 - t) + b * t
 }
 
@@ -45,11 +45,7 @@ fn inverse_bezier(x0: R, t0: R, x1: R, t1: R, x: R) -> R {
 
 fn lerp_v(a: &CoordR, b: &CoordR, t: R) -> CoordR {
     assert_eq!(a.len(), b.len());
-    let mut v = vec![];
-    for i in 0..a.len() {
-        v.push(lerp(a[i], b[i], t));
-    }
-    v
+    a.iter().zip(b).map(|(&ai, &bi)| lerp(ai, bi, t)).collect()
 }
 
 fn from_tangent(t: Tangent, d: Level) -> CoordR {
@@ -113,12 +109,7 @@ impl Cuboid {
     fn lerp(a: &Cuboid, b: &Cuboid, t: R) -> Cuboid {
         match (a, b) {
             (Cuboid::Point(pa), Cuboid::Point(pb)) => {
-                assert_eq!(pa.len(), pb.len());
-                let mut p = vec![];
-                for i in 0..pa.len() {
-                    p.push(lerp(pa[i], pb[i], t));
-                }
-                Cuboid::Point(p)
+                Cuboid::Point(lerp_v(pa, pb, t))
             }
             (
                 Cuboid::Bridge {
@@ -185,20 +176,19 @@ impl Cuboid {
     fn squashed(&self) -> Self {
         match self {
             Cuboid::Point(center) => {
-                assert!(center.len() >= 1);
-                let center = center.iter().skip(1).cloned().collect::<Vec<_>>();
-                Cuboid::Point(center)
+                assert!(!center.is_empty());
+                Cuboid::Point(center[1..].to_vec())
             }
             Cuboid::Bridge { source, target } => {
                 let source = (
                     Box::new(source.0.squashed()),
                     source.1,
-                    source.2.iter().skip(1).cloned().collect(),
+                    source.2[1..].to_vec(),
                 );
                 let target = (
                     Box::new(target.0.squashed()),
                     target.1,
-                    target.2.iter().skip(1).cloned().collect(),
+                    target.2[1..].to_vec(),
                 );
                 Cuboid::Bridge { source, target }
             }
@@ -208,20 +198,13 @@ impl Cuboid {
 
 impl Geometry {
     pub fn from(cell: &q::Geometry) -> Self {
-        let mut cubes = vec![];
-        for qcs in &cell.cubes {
-            let mut rcs = vec![];
-            for (prim, c) in qcs {
-                let c = Cuboid::from(c).0;
-                rcs.push((prim.clone(), c));
-            }
-            cubes.push(rcs);
-        }
-        let spheres = vec![];
-        let size = cell.max.iter().map(to_f64).collect::<Vec<_>>();
+        let cubes = cell.cubes.iter()
+            .map(|qcs| qcs.iter().map(|(prim, c)| (prim.clone(), Cuboid::from(c).0)).collect())
+            .collect();
+        let size = cell.max.iter().map(to_f64).collect();
         Geometry {
             cubes,
-            spheres,
+            spheres: vec![],
             size,
         }
     }
@@ -230,12 +213,9 @@ impl Geometry {
         let mut css = vec![];
         let mut spheres = vec![];
         for (prim, center, r2) in &self.spheres {
-            let c = center.last().unwrap();
-            let d = *c - x;
-            let mut center = center.clone();
-            center.pop();
+            let d = center.last().unwrap() - x;
             if d * d < *r2 {
-                spheres.push((prim.clone(), center, *r2 - d * d));
+                spheres.push((prim.clone(), center[..center.len() - 1].to_vec(), *r2 - d * d));
             }
         }
         for cubes in &self.cubes {
@@ -262,21 +242,16 @@ impl Geometry {
         let mut css = vec![];
         let mut spheres = vec![];
         for (prim, center, r2) in &self.spheres {
-            let center = center.iter().skip(1).cloned().collect::<Vec<_>>();
-            spheres.push((prim.clone(), center, *r2));
+            spheres.push((prim.clone(), center[1..].to_vec(), *r2));
         }
-        for cubes in self.cubes.iter().skip(1) {
+        for cubes in &self.cubes[1..] {
             let cs = cubes
                 .iter()
-                .filter_map(|(prim, cube)| {
-                    let cube = cube.squashed();
-                    Some((prim.clone(), cube))
-                })
+                .map(|(prim, cube)| (prim.clone(), cube.squashed()))
                 .collect();
             css.push(cs);
         }
-        let mut size = self.size.clone();
-        size.remove(0);
+        let size = self.size[1..].to_vec();
         Self {
             cubes: css,
             spheres,

@@ -24,7 +24,7 @@ impl LayoutSolver {
         self.0.add_constraint(a, b);
     }
 
-    fn eqs(&mut self, va: &Vec<X>, vb: &Vec<X>) {
+    fn eqs(&mut self, va: &[X], vb: &[X]) {
         assert_eq!(va.len(), vb.len());
         va.iter().zip(vb.iter()).for_each(|(a, b)| {
             self.eq(a, b);

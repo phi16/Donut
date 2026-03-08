@@ -288,8 +288,7 @@ impl<'a> Tracker<'a> {
     }
 
     fn bracket(&mut self) -> Option<(A<Symbol>, Vec<A<Param>>, A<Symbol>)> {
-        let (open, items, close) = self.separated("parameter", "[", "]", |s| s.param())?;
-        Some((open, items, close))
+        self.separated("parameter", "[", "]", |s| s.param())
     }
 
     pub fn params(&mut self) -> Option<A<Params>> {
@@ -404,10 +403,10 @@ impl<'a> Tracker<'a> {
         } else if t.str == ";*" {
             Op::CompStar
         } else if t.str.starts_with(";;") {
-            Op::CompRep(t.str.len() as u32)
+            Op::CompRep(t.str.len() as Axis)
         } else if t.str == ";" {
             if let Some(n) = self.eat(|t| t.connected && t.str.chars().all(|c| c.is_ascii_digit())) {
-                let n = n.str.parse::<u32>().unwrap_or_else(|_| {
+                let n = n.str.parse::<Axis>().unwrap_or_else(|_| {
                     self.add_error("invalid number literal in comp level");
                     0
                 });

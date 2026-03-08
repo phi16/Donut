@@ -50,7 +50,7 @@ impl Pretty {
         self.str("?");
     }
 
-    fn sep<T: Prettyable>(&mut self, items: &Vec<T>, sep: &str) {
+    fn sep<T: Prettyable>(&mut self, items: &[T], sep: &str) {
         for (i, item) in items.iter().enumerate() {
             if i > 0 {
                 self.str(sep);

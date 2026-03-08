@@ -21,8 +21,8 @@ pub enum PureCell {
 impl Globular for PureCell {
     fn dim(&self) -> Dim {
         match self {
-            PureCell::Prim(_, _, dim) => dim.clone(),
-            PureCell::Comp(_, _, dim) => dim.clone(),
+            PureCell::Prim(_, _, dim) => *dim,
+            PureCell::Comp(_, _, dim) => *dim,
         }
     }
     fn s(&self) -> Self {
@@ -94,7 +94,7 @@ impl Diagram for PureCell {
             PureCell::Prim(prim, shape, dim) => PureCell::Prim(prim, shape, dim.shifted()),
             PureCell::Comp(axis, children, dim) => PureCell::Comp(
                 axis,
-                children.into_iter().map(|child| Self::id(child)).collect(),
+                children.into_iter().map(Self::id).collect(),
                 dim.shifted(),
             ),
         }
@@ -105,7 +105,6 @@ impl Diagram for PureCell {
         if n == 0 {
             return Err("No elements".to_string());
         }
-        assert!(n >= 1);
 
         let children = children
             .into_iter()

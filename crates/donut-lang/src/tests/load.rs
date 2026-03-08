@@ -1,4 +1,4 @@
-use crate::check::Env;
+use crate::check::{Color, Env};
 use donut_core::cell::Globular;
 use donut_core::common::PrimArg;
 use donut_core::pure_cell::PureCell;
@@ -92,11 +92,11 @@ fn test_load_colors() {
     let u = table.lookup["u"];
     let x = table.lookup["x"];
     let m = table.lookup["m"];
-    assert_eq!(table.entries[u].color, (80, 80, 80));
+    assert_eq!(table.entries[u].color, Color::new(80, 80, 80));
     // hsv(0.6, 1, 1) should produce a blue-ish color
     let c = table.entries[x].color;
-    assert!(c.2 > c.0 && c.2 > c.1, "hsv(0.6) should be blue-ish: {:?}", c);
-    assert_eq!(table.entries[m].color, (255, 0, 128));
+    assert!(c.b > c.r && c.b > c.g, "hsv(0.6) should be blue-ish: {:?}", c);
+    assert_eq!(table.entries[m].color, Color::new(255, 0, 128));
 }
 
 #[test]

@@ -30,7 +30,7 @@ pub trait Diagram: Clone {
         Self::id(face.clone())
     }
     fn comp_c(axis: Axis, children: Vec2<&Self>) -> Self {
-        let children: Vec2<Self> = children.into_iter().map(|child| child.clone()).collect();
+        let children: Vec2<Self> = children.into_iter().cloned().collect();
         Self::comp(axis, children).unwrap()
     }
 }
@@ -74,11 +74,11 @@ pub fn compatible<T: Globular>(a: &T, b: &T) -> Result<()> {
     if a.is_convertible(b) {
         Ok(())
     } else {
-        return Err(format!(
+        Err(format!(
             "{}\n is not convertible to\n{}",
             a.to_pure(),
             b.to_pure()
-        ));
+        ))
     }
 }
 
@@ -130,8 +130,7 @@ pub(crate) mod tests {
         let xm = T::comp_c(0, vec![&xi, &m]);
         let mm_l = T::comp_c(1, vec![&mx, &m]);
         let mm_r = T::comp_c(1, vec![&xm, &m]);
-        let assoc = T::prim_c(Prim::new(3), &mm_l, &mm_r);
-        assoc
+        T::prim_c(Prim::new(3), &mm_l, &mm_r)
     }
 
     pub fn pentagon<T: Diagram>() -> T {

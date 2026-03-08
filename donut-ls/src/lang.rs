@@ -362,13 +362,11 @@ impl<'a> HoverBuilder<'a> {
                 }
             }
             Val::Arrow(_, l, r) => {
-                let (l, r) = (*l, *r);
-                self.walk_val(l, prefixes);
-                self.walk_val(r, prefixes);
+                self.walk_val(*l, prefixes);
+                self.walk_val(*r, prefixes);
             }
             Val::Comp(_, children) | Val::CompStar(children) => {
-                let children: Vec<_> = children.clone();
-                for c in children {
+                for &c in children {
                     self.walk_val(c, prefixes);
                 }
             }
@@ -421,14 +419,12 @@ impl<'a> HoverBuilder<'a> {
             }
 
             // Walk decorators
-            let decos: Vec<_> = item.decos.clone();
-            for deco_id in decos {
+            for &deco_id in &item.decos.clone() {
                 self.walk_val(deco_id, prefixes);
             }
 
             // Walk params' type expressions
-            let param_tys: Vec<_> = item.params.iter().map(|p| p.ty).collect();
-            for ty in param_tys {
+            for ty in item.params.iter().map(|p| p.ty).collect::<Vec<_>>() {
                 self.walk_val(ty, prefixes);
             }
 

@@ -61,7 +61,7 @@ impl FreeCell {
     pub fn from_pure(pure: &PureCell) -> Self {
         match pure {
             PureCell::Prim(prim, shape, dim) => {
-                let cell = match shape {
+                let mut cell = match shape {
                     Shape::Zero => FreeCell::zero(prim.clone()),
                     Shape::Succ { source, target } => {
                         let source = FreeCell::from_pure(source);
@@ -69,7 +69,6 @@ impl FreeCell {
                         FreeCell::prim(prim.clone(), source, target).unwrap()
                     }
                 };
-                let mut cell = cell;
                 for _ in dim.effective..dim.in_space {
                     cell = FreeCell::id(cell);
                 }
@@ -78,7 +77,7 @@ impl FreeCell {
             PureCell::Comp(axis, children, _) => {
                 let children = children
                     .iter()
-                    .map(|child| FreeCell::from_pure(child))
+                    .map(FreeCell::from_pure)
                     .collect::<Vec<_>>();
                 FreeCell::comp(*axis, children).unwrap()
             }

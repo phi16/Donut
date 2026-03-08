@@ -1,10 +1,7 @@
 use crate::geometry::*;
 use crate::prim_table::PrimTable;
 use donut_core::common::Prim;
-
-fn lerp(a: R, b: R, t: R) -> R {
-    a * (1.0 - t) + b * t
-}
+use donut_lang::check::Color;
 
 pub struct Renderer {
     context: web_sys::CanvasRenderingContext2d,
@@ -71,16 +68,16 @@ impl Renderer {
         self.context.fill();
     }
 
-    fn color(&self, color: (u8, u8, u8)) -> String {
-        format!("rgb({} {} {})", color.0, color.1, color.2)
+    fn color(&self, color: Color) -> String {
+        format!("rgb({} {} {})", color.r, color.g, color.b)
     }
 
-    fn brighten(color: (u8, u8, u8)) -> (u8, u8, u8) {
+    fn brighten(color: Color) -> Color {
         let f = |c: u8| (c as f64 + (255.0 - c as f64) * 0.2) as u8;
-        (f(color.0), f(color.1), f(color.2))
+        Color::new(f(color.r), f(color.g), f(color.b))
     }
 
-    pub fn cube(&self, cube: &Cuboid, color: (u8, u8, u8)) {
+    pub fn cube(&self, cube: &Cuboid, color: Color) {
         match cube {
             Cuboid::Point(p) => {
                 assert_eq!(p.len(), 2);
@@ -117,7 +114,7 @@ impl Renderer {
                         (ts.1, tt.1),
                         target.1,
                         &target.2,
-                        &self.color((color.0 / 2, color.1 / 2, color.2 / 2)),
+                        &self.color(Color::new(color.r / 2, color.g / 2, color.b / 2)),
                     );
                 }
                 _ => unreachable!(),
@@ -125,8 +122,8 @@ impl Renderer {
         }
     }
 
-    fn prim_color(&self, table: &PrimTable, prim: &Prim, highlight: Option<&Prim>) -> (u8, u8, u8) {
-        let base = table.get(prim).map(|e| e.color).unwrap_or((128, 128, 128));
+    fn prim_color(&self, table: &PrimTable, prim: &Prim, highlight: Option<&Prim>) -> Color {
+        let base = table.get(prim).map(|e| e.color).unwrap_or(Color::gray());
         if highlight == Some(prim) {
             Self::brighten(base)
         } else {

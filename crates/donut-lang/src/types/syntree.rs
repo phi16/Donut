@@ -45,10 +45,12 @@ pub enum ArrowTy {
     Eq,
     Functor,
 }
+pub type Axis = donut_core::common::Axis;
+
 #[derive(Debug)]
 pub enum Op {
-    CompRep(u32),
-    CompLit(u32),
+    CompRep(Axis),
+    CompLit(Axis),
     CompStar,
     Arrow(ArrowTy),
 }

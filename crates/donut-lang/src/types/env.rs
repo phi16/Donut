@@ -4,6 +4,25 @@ use donut_core::free_cell::FreeCell;
 use donut_core::pure_cell::PureCell;
 use std::collections::HashMap;
 
+// --- Color ---
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Color {
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
+}
+
+impl Color {
+    pub fn new(r: u8, g: u8, b: u8) -> Self {
+        Color { r, g, b }
+    }
+
+    pub fn gray() -> Self {
+        Color { r: 128, g: 128, b: 128 }
+    }
+}
+
 // --- Meta type ---
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17,7 +36,12 @@ pub enum ParamKind {
     Meta(MetaType),
 }
 
-pub type ParamInfo = (String, PrimId, ParamKind);
+#[derive(Debug, Clone)]
+pub struct ParamInfo {
+    pub name: String,
+    pub prim_id: PrimId,
+    pub kind: ParamKind,
+}
 
 // --- Entry ---
 
@@ -38,7 +62,7 @@ pub(crate) enum Ty {
 #[derive(Debug)]
 pub struct Entry {
     pub name: String,
-    pub color: (u8, u8, u8),
+    pub color: Color,
     pub(crate) body: EntryBody,
     pub param_counts: Vec<usize>,
 }
@@ -80,7 +104,7 @@ impl Entry {
 pub struct PrimDecl {
     pub name: String,
     pub level: Level,
-    pub color: (u8, u8, u8),
+    pub color: Color,
     pub param_counts: Vec<usize>,
 }
 
@@ -249,15 +273,15 @@ impl Env {
     fn format_params(&self, params: &[ParamInfo]) -> String {
         let parts: Vec<_> = params
             .iter()
-            .map(|(name, _, kind)| match kind {
-                ParamKind::Meta(mt) => format!("{}: {}", name, self.display_meta_type(mt)),
+            .map(|p| match &p.kind {
+                ParamKind::Meta(mt) => format!("{}: {}", p.name, self.display_meta_type(mt)),
                 ParamKind::Cell => {
-                    if let Some(&idx) = self.lookup.get(name) {
+                    if let Some(&idx) = self.lookup.get(&p.name) {
                         if let Some(ty) = self.entries[idx].display_type(self) {
-                            return format!("{}: {}", name, ty);
+                            return format!("{}: {}", p.name, ty);
                         }
                     }
-                    name.clone()
+                    p.name.clone()
                 }
             })
             .collect();

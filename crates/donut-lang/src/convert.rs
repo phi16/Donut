@@ -316,7 +316,7 @@ impl<'a> Converter<'a> {
         }
 
         // All ops are Comp(i). Find rightmost with highest weakness (left-associative).
-        let mut max_w = 0u32;
+        let mut max_w: syntree::Axis = 0;
         let mut max_i = 0;
         for (i, (op_a, _)) in ops.iter().enumerate() {
             if let A::Accepted(op, _) = op_a {

@@ -44,7 +44,7 @@ pub fn token_modifiers_list() -> Vec<SemanticTokenModifier> {
     ]
 }
 
-fn from_token_type(t: TokenType) -> Option<(u32, u32)> {
+fn from_token_type(t: TokenType) -> (u32, u32) {
     type Sig = TokenTypeSignature;
     let res = match t {
         TokenType::Unknown => (Sig::VARIABLE, 0),
@@ -57,7 +57,7 @@ fn from_token_type(t: TokenType) -> Option<(u32, u32)> {
         TokenType::Comment => (Sig::COMMENT, 0),
         TokenType::Namespace => (Sig::NAMESPACE, 0),
     };
-    Some((res.0 .0, res.1))
+    (res.0 .0, res.1)
 }
 
 fn run_analysis(
@@ -73,17 +73,16 @@ fn run_analysis(
         if prev_line != t.line {
             prev_column = 0;
         }
-        if let Some((token_type, token_modifiers_bitset)) = from_token_type(t.token_type.clone()) {
-            semantic.push(SemanticToken {
-                delta_line: t.line - prev_line,
-                delta_start: t.column - prev_column,
-                length: t.length,
-                token_type,
-                token_modifiers_bitset,
-            });
-            prev_line = t.line;
-            prev_column = t.column;
-        }
+        let (token_type, token_modifiers_bitset) = from_token_type(t.token_type.clone());
+        semantic.push(SemanticToken {
+            delta_line: t.line - prev_line,
+            delta_start: t.column - prev_column,
+            length: t.length,
+            token_type,
+            token_modifiers_bitset,
+        });
+        prev_line = t.line;
+        prev_column = t.column;
     }
     doc.tokens = result.tokens;
     Ok((semantic, result.diagnostics))
