@@ -461,6 +461,7 @@ fn test_glsl_unpack_repack() {
 shader = sys.f32x2.unpack sys.f32.lit[0]; sys.f32x3.pack
 ");
     let glsl = compile_shader(&env, "shader").unwrap();
+
     assert!(glsl.contains("precision mediump float;"));
     assert!(glsl.contains("gl_FragColor"));
     assert!(glsl.contains("void cell("));
@@ -485,6 +486,7 @@ fn test_glsl_arithmetic() {
 shader = sys.f32x2.unpack sys.f32.lit[0.5] sys.f32.lit[0.5]; sys.f32.mul sys.f32.mul sys.f32.lit[0]; sys.f32x3.pack
 ");
     let glsl = compile_shader(&env, "shader").unwrap();
+
     assert!(glsl.contains("*"));
     assert!(glsl.contains("0.5"));
 }
@@ -496,6 +498,7 @@ fn test_glsl_dup() {
 shader = sys.f32x2.unpack; sys.f32.dup sys.f32.drop sys.f32.lit[0]; sys.f32x3.pack
 ");
     let glsl = compile_shader(&env, "shader").unwrap();
+
     assert!(glsl.contains("gl_FragColor"));
 }
 

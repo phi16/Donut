@@ -78,7 +78,12 @@ impl App {
             .iter()
             .enumerate()
             .rev()
-            .find_map(|(i, e)| e.as_cell().map(|_| i))
+            .find_map(|(i, e)| {
+                if e.origin.is_some() {
+                    return None;
+                }
+                e.as_cell().map(|_| i)
+            })
     }
 
     fn load(code: &str) -> (Env, PrimTable, Runtime, Vec<String>) {
@@ -124,6 +129,9 @@ impl App {
 
         let document = web_sys::window().unwrap().document().unwrap();
         for (i, entry) in self.env.entries.iter().enumerate() {
+            if entry.origin.is_some() {
+                continue;
+            }
             let option = document
                 .create_element("option")
                 .unwrap()
@@ -363,7 +371,17 @@ impl App {
         } else {
             let _ = self.eval_result_el.class_list().remove_1("evaluable");
         }
-        let text = format!("{}: {}\n{}", entry.name, type_str, eval_str);
+        let mut text = format!("{}: {}\n{}", entry.name, type_str, eval_str);
+
+        // GLSL compilation
+        match donut_runtime::glsl::compile_to_glsl(cell, &prim_names) {
+            Ok(func) => {
+                text.push_str("\n\n--- GLSL ---\n");
+                text.push_str(&func.to_function(&entry.name));
+            }
+            Err(_) => {}
+        }
+
         self.eval_result_el.set_inner_text(&text);
     }
 

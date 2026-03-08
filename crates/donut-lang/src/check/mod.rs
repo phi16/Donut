@@ -147,11 +147,13 @@ impl<'a> Checker<'a> {
     ) -> usize {
         let idx = self.entries.len();
         self.lookup.insert(name.clone(), idx);
+        let origin = self.current_origin.as_ref().map(|(o, _)| o.clone());
         self.entries.push(Entry {
             name,
             color,
             body,
             param_counts,
+            origin,
         });
         idx
     }

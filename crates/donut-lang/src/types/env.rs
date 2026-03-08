@@ -65,6 +65,8 @@ pub struct Entry {
     pub color: Color,
     pub(crate) body: EntryBody,
     pub param_counts: Vec<usize>,
+    /// If this entry was imported from a module, the origin name (e.g. "sys").
+    pub origin: Option<String>,
 }
 
 impl Entry {

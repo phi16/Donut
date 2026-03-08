@@ -312,6 +312,37 @@ fn extract_rat(args: &[PrimArg], index: usize) -> Result<f64, String> {
     }
 }
 
+fn sanitize_glsl_name(name: &str) -> String {
+    let mut result = String::with_capacity(name.len());
+    for ch in name.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '_' {
+            result.push(ch);
+        } else {
+            result.push('_');
+        }
+    }
+    if result.is_empty() || result.as_bytes()[0].is_ascii_digit() {
+        result.insert(0, '_');
+    }
+    if is_glsl_reserved(&result) {
+        result.insert(0, '_');
+    }
+    result
+}
+
+fn is_glsl_reserved(name: &str) -> bool {
+    matches!(
+        name,
+        "float" | "int" | "bool" | "void" | "vec2" | "vec3" | "vec4"
+            | "mat2" | "mat3" | "mat4" | "sampler2D" | "samplerCube"
+            | "main" | "if" | "else" | "for" | "while" | "do"
+            | "return" | "break" | "continue" | "discard"
+            | "in" | "out" | "inout" | "uniform" | "varying"
+            | "precision" | "true" | "false"
+            | "texture" | "texture2D" | "gl_FragCoord" | "gl_FragColor"
+    )
+}
+
 fn format_float(v: f64) -> String {
     if v.fract() == 0.0 {
         format!("{:.1}", v)
@@ -374,6 +405,7 @@ impl GlslFunction {
     /// Format as a GLSL function definition.
     /// The function takes inputs as parameters and returns outputs via out parameters.
     pub fn to_function(&self, name: &str) -> String {
+        let safe_name = sanitize_glsl_name(name);
         let mut s = String::new();
 
         // Build parameter list
@@ -385,7 +417,7 @@ impl GlslFunction {
             params.push(format!("out {} o{}", ty.decl(), i));
         }
 
-        s.push_str(&format!("void {}({}) {{\n", name, params.join(", ")));
+        s.push_str(&format!("void {}({}) {{\n", safe_name, params.join(", ")));
         for line in self.body.lines() {
             s.push_str("    ");
             s.push_str(line);
