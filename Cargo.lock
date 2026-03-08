@@ -122,6 +122,7 @@ name = "donut-renderer"
 version = "0.1.0"
 dependencies = [
  "donut-core",
+ "donut-lang",
  "donut-layout",
  "num-rational",
  "web-sys",

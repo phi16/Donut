@@ -89,19 +89,12 @@ impl App {
             .map(|(pos, msg)| format!("{}:{}: {}", pos.line + 1, pos.col + 1, msg))
             .collect();
 
-        let mut table = PrimTable::new();
-        for (&id, decl) in &env.prim_decls {
-            table.insert(
-                id,
-                &decl.name,
-                decl.level,
-                decl.color,
-                decl.param_counts.clone(),
-            );
-        }
+        let table = PrimTable::new(env.prim_decls.clone());
 
         // Build runtime (use prim_decls for canonical names)
-        let prim_lookup: HashMap<String, PrimId> = env.prim_decls.iter()
+        let prim_lookup: HashMap<String, PrimId> = env
+            .prim_decls
+            .iter()
             .map(|(&id, decl)| (decl.name.clone(), id))
             .collect();
         let mut runtime = Runtime::new();
@@ -357,7 +350,12 @@ impl App {
         let type_str = self.table.format_cell_type(&cell.pure);
 
         let evaluable = self.runtime.is_evaluable(cell);
-        let prim_names: HashMap<_, _> = self.env.prim_decls.iter().map(|(&id, d)| (id, d.name.clone())).collect();
+        let prim_names: HashMap<_, _> = self
+            .env
+            .prim_decls
+            .iter()
+            .map(|(&id, d)| (id, d.name.clone()))
+            .collect();
         let eval_str = match self.runtime.eval_check(cell, &prim_names) {
             Some(reason) => reason,
             None => match self.runtime.eval(cell, &[]) {
@@ -385,9 +383,7 @@ impl App {
         let Some(selected) = self.selected else {
             return;
         };
-        let Some(params) = self.env.entry_params.get(&selected) else {
-            return;
-        };
+        let params = self.env.all_params(selected);
         if params.is_empty() {
             return;
         }

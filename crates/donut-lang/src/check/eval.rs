@@ -251,7 +251,7 @@ impl<'a> Checker<'a> {
         let app_val = &self.program.val(app_id).0;
         let arg_cell = self.eval_val(app_val)?;
 
-        let result_pure = apply_functor(&arg_cell.pure, map)?;
+        let result_pure = apply_functor(&arg_cell.pure, map, &self.prim_decls)?;
         Ok(FreeCell::from_pure(&result_pure))
     }
 
@@ -465,7 +465,7 @@ impl<'a> Checker<'a> {
 
 // --- Free functions ---
 
-pub(super) fn apply_functor(cell: &PureCell, map: &HashMap<PrimId, FunctorEntry>) -> Result<PureCell> {
+pub(super) fn apply_functor(cell: &PureCell, map: &HashMap<PrimId, FunctorEntry>, prim_decls: &HashMap<PrimId, PrimDecl>) -> Result<PureCell> {
     match cell {
         PureCell::Prim(prim, _, dim) => match map.get(&prim.id) {
             Some(entry) => {
@@ -482,12 +482,15 @@ pub(super) fn apply_functor(cell: &PureCell, map: &HashMap<PrimId, FunctorEntry>
                 }
                 Ok(result)
             }
-            None => Err(format!("functor: no mapping for P{}", prim.id)),
+            None => {
+                let display = crate::types::env::display_prim(prim, prim_decls);
+                Err(format!("functor: no mapping for {}", display))
+            }
         },
         PureCell::Comp(axis, children, _) => {
             let mapped: Vec<PureCell> = children
                 .iter()
-                .map(|c| apply_functor(c, map))
+                .map(|c| apply_functor(c, map, prim_decls))
                 .collect::<Result<_>>()?;
             PureCell::comp(*axis, mapped)
         }

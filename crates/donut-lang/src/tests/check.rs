@@ -1015,3 +1015,364 @@ fn excess_params_error() {
     );
     assert!(result.is_err());
 }
+
+#[test]
+fn parametric_module_entry_params_include_parent() {
+    let env = check_source(
+        r#"
+        import "base"
+        C: *
+        K: C → C
+        u[m: nat] = {
+            x[n: nat]: C → K
+        }
+        "#,
+    )
+    .unwrap();
+    let &idx = env.lookup.get("u.x").unwrap();
+    // entry_params has only own params
+    let own_params = env.entry_params.get(&idx).unwrap();
+    assert_eq!(own_params.len(), 1);
+    assert_eq!(own_params[0].0, "n");
+    // all_params includes parent module params
+    let all = env.all_params(idx);
+    assert_eq!(all.len(), 2);
+    assert_eq!(all[0].0, "m");
+    assert_eq!(all[1].0, "n");
+}
+
+#[test]
+fn parametric_module_entry_type_display() {
+    let env = check_source(
+        r#"
+        import "base"
+        C: *
+        K: C → C
+        u[m: nat] = {
+            x[n: nat]: C → K
+        }
+        "#,
+    )
+    .unwrap();
+    let &idx = env.lookup.get("u.x").unwrap();
+    let display = env.entries[idx].type_display(&env).unwrap();
+    assert_eq!(display, "C → K");
+}
+
+#[test]
+fn parametric_module_param_display() {
+    let env = check_source(
+        r#"
+        import "base"
+        C: *
+        K: C → C
+        u[m: nat] = {
+            x[n: nat]: C → K
+        }
+        "#,
+    )
+    .unwrap();
+    let &idx = env.lookup.get("u.x").unwrap();
+    // param_display shows only own params
+    assert_eq!(env.param_display(idx), "[n: nat]");
+    // all_params_display shows all params including parent
+    assert_eq!(env.all_params_display(idx), "[m: nat, n: nat]");
+}
+
+#[test]
+fn parametric_module_prim_decl_display() {
+    let env = check_source(
+        r#"
+        import "base"
+        C: *
+        K: C → C
+        u[m: nat] = {
+            x[n: nat]: C → K
+        }
+        "#,
+    )
+    .unwrap();
+    let &idx = env.lookup.get("u.x").unwrap();
+    let entry = &env.entries[idx];
+    let cell = entry.as_cell().unwrap();
+    let prim_id = cell.pure.extract_prim_id().unwrap();
+    let decl = env.prim_decls.get(&prim_id).unwrap();
+    assert_eq!(decl.name, "u.x");
+    assert_eq!(decl.param_counts, vec![1, 1]);
+
+    // Param prims should have local (unqualified) names
+    let m_prim_id = env.all_params(idx)[0].1;
+    let n_prim_id = env.all_params(idx)[1].1;
+    assert_eq!(env.prim_decls.get(&m_prim_id).unwrap().name, "m");
+    assert_eq!(env.prim_decls.get(&n_prim_id).unwrap().name, "n");
+
+    // display_prim with concrete args
+    use crate::check::display_prim;
+    use donut_core::common::{Prim, PrimArg};
+    let prim = Prim::with_args(prim_id, vec![PrimArg::Nat(20), PrimArg::Nat(32)]);
+    assert_eq!(display_prim(&prim, &env.prim_decls), "u[20].x[32]");
+}
+
+#[test]
+fn sys_lit_prim_display() {
+    use crate::check::{display_prim, display_pure_cell};
+    let env = check_source(
+        r#"
+        import "base"
+        sys = import "sys"
+        x = sys.u32.lit[42]
+        "#,
+    )
+    .unwrap();
+
+    // sys.u32.lit should have param_counts excluding origin
+    let &lit_idx = env.lookup.get("sys.u32.lit").unwrap();
+    let lit_cell = env.entries[lit_idx].as_cell().unwrap();
+    let prim_id = lit_cell.pure.extract_prim_id().unwrap();
+    let decl = env.prim_decls.get(&prim_id).unwrap();
+    assert_eq!(decl.name, "sys::u32.lit");
+    assert_eq!(decl.param_counts, vec![0, 1]);
+
+    // display_prim for sys.u32.lit entry — it's parametric so shows param arg
+    let prim = match &lit_cell.pure {
+        donut_core::pure_cell::PureCell::Prim(p, _, _) => p,
+        _ => panic!("expected prim"),
+    };
+    assert_eq!(display_prim(prim, &env.prim_decls), "sys::u32.lit[n]");
+
+    // x = sys.u32.lit[42] should be a 0-cell (point on sys.C)
+    let &x_idx = env.lookup.get("x").unwrap();
+    let x_cell = env.entries[x_idx].as_cell().unwrap();
+    let x_display = display_pure_cell(&x_cell.pure.s(), &env.prim_decls);
+    assert_eq!(x_display, "sys::C");
+}
+
+#[test]
+fn sys_prim_param_counts() {
+    // Verify param_counts for various sys entries exclude origin
+    let env = check_source(
+        r#"
+        import "base"
+        sys = import "sys"
+        "#,
+    )
+    .unwrap();
+
+    // sys.C should have no params
+    let &c_idx = env.lookup.get("sys.C").unwrap();
+    let c_cell = env.entries[c_idx].as_cell().unwrap();
+    let c_id = c_cell.pure.extract_prim_id().unwrap();
+    let c_decl = env.prim_decls.get(&c_id).unwrap();
+    assert_eq!(c_decl.name, "sys::C");
+    assert_eq!(c_decl.param_counts, vec![]);
+
+    // sys.f32.lit should have param_counts [0, 1]
+    let &f_idx = env.lookup.get("sys.f32.lit").unwrap();
+    let f_cell = env.entries[f_idx].as_cell().unwrap();
+    let f_id = f_cell.pure.extract_prim_id().unwrap();
+    let f_decl = env.prim_decls.get(&f_id).unwrap();
+    assert_eq!(f_decl.name, "sys::f32.lit");
+    assert_eq!(f_decl.param_counts, vec![0, 1]);
+}
+
+#[test]
+fn display_prim_with_args_sys() {
+    use crate::check::display_prim;
+    use donut_core::common::{Prim, PrimArg};
+    let env = check_source(
+        r#"
+        import "base"
+        sys = import "sys"
+        "#,
+    )
+    .unwrap();
+
+    // sys.u32.lit with arg 42 → "sys::u32.lit[42]"
+    let &lit_idx = env.lookup.get("sys.u32.lit").unwrap();
+    let lit_cell = env.entries[lit_idx].as_cell().unwrap();
+    let prim_id = lit_cell.pure.extract_prim_id().unwrap();
+    let prim = Prim::with_args(prim_id, vec![PrimArg::Nat(42)]);
+    assert_eq!(display_prim(&prim, &env.prim_decls), "sys::u32.lit[42]");
+
+    // sys.f32.lit with arg (rat 3.14) → "sys::f32.lit[3.14]"
+    let &f_idx = env.lookup.get("sys.f32.lit").unwrap();
+    let f_cell = env.entries[f_idx].as_cell().unwrap();
+    let f_id = f_cell.pure.extract_prim_id().unwrap();
+    let f_prim = Prim::with_args(f_id, vec![PrimArg::Rat(3.14)]);
+    assert_eq!(display_prim(&f_prim, &env.prim_decls), "sys::f32.lit[3.14]");
+}
+
+#[test]
+fn display_pure_cell_composition() {
+    use crate::check::display_pure_cell;
+    let env = check_source(
+        r#"
+        import "base"
+        sys = import "sys"
+        C: *
+        f: C → C
+        g: C → C
+        h = f g
+        "#,
+    )
+    .unwrap();
+
+    let &h_idx = env.lookup.get("h").unwrap();
+    let h_cell = env.entries[h_idx].as_cell().unwrap();
+    let s = display_pure_cell(&h_cell.pure.s(), &env.prim_decls);
+    let t = display_pure_cell(&h_cell.pure.t(), &env.prim_decls);
+    assert_eq!(s, "C");
+    assert_eq!(t, "C");
+}
+
+#[test]
+fn entry_type_display_various() {
+    let env = check_source(
+        r#"
+        import "base"
+        C: *
+        D: *
+        f: C → D
+        "#,
+    )
+    .unwrap();
+
+    let &c_idx = env.lookup.get("C").unwrap();
+    assert_eq!(env.entries[c_idx].type_display(&env), Some("*".to_string()));
+
+    let &f_idx = env.lookup.get("f").unwrap();
+    assert_eq!(env.entries[f_idx].type_display(&env), Some("C → D".to_string()));
+}
+
+#[test]
+fn all_params_nested_module() {
+    let env = check_source(
+        r#"
+        import "base"
+        sys = import "sys"
+        C: *
+        u[m: nat] = {
+            v[n: nat] = {
+                x[k: nat]: C → C
+            }
+        }
+        "#,
+    )
+    .unwrap();
+
+    let &x_idx = env.lookup.get("u.v.x").unwrap();
+    let params = env.all_params(x_idx);
+    assert_eq!(params.len(), 3);
+    assert_eq!(params[0].0, "m");
+    assert_eq!(params[1].0, "n");
+    assert_eq!(params[2].0, "k");
+}
+
+#[test]
+fn all_params_no_params_entry() {
+    let env = check_source(
+        r#"
+        import "base"
+        C: *
+        f: C → C
+        "#,
+    )
+    .unwrap();
+
+    let &f_idx = env.lookup.get("f").unwrap();
+    let params = env.all_params(f_idx);
+    assert!(params.is_empty());
+}
+
+#[test]
+fn format_name_with_args_no_origin() {
+    use crate::check::display_prim;
+    use donut_core::common::{Prim, PrimArg};
+    let env = check_source(
+        r#"
+        import "base"
+        sys = import "sys"
+        C: *
+        u[m: nat] = {
+            x[n: nat]: C → C
+        }
+        "#,
+    )
+    .unwrap();
+
+    let &idx = env.lookup.get("u.x").unwrap();
+    let cell = env.entries[idx].as_cell().unwrap();
+    let prim_id = cell.pure.extract_prim_id().unwrap();
+
+    // No args
+    let prim_no_args = Prim::new(prim_id);
+    assert_eq!(display_prim(&prim_no_args, &env.prim_decls), "u.x");
+
+    // One arg (only m)
+    let prim_one = Prim::with_args(prim_id, vec![PrimArg::Nat(5)]);
+    assert_eq!(display_prim(&prim_one, &env.prim_decls), "u[5].x");
+
+    // Two args (m and n)
+    let prim_two = Prim::with_args(prim_id, vec![PrimArg::Nat(5), PrimArg::Nat(10)]);
+    assert_eq!(display_prim(&prim_two, &env.prim_decls), "u[5].x[10]");
+}
+
+#[test]
+fn meta_param_display() {
+    let env = check_source(
+        r#"
+        import "base"
+        sys = import "sys"
+        C: *
+        f[c: color]: C → C
+        "#,
+    )
+    .unwrap();
+
+    let &f_idx = env.lookup.get("f").unwrap();
+    let params = env.all_params(f_idx);
+    assert_eq!(params.len(), 1);
+    assert_eq!(params[0].0, "c");
+    match &params[0].2 {
+        crate::check::ParamKind::Meta(mt) => {
+            assert_eq!(env.display_meta_type(mt), "color");
+        }
+        _ => panic!("expected Meta param kind"),
+    }
+}
+
+#[test]
+fn parametric_module_meta_arity_check() {
+    // Meta inside parametric module should still check arity correctly
+    let result = check_source(
+        r#"
+        import "base"
+        sys = import "sys"
+        C: *
+        u[m: nat] = {
+            x[n: nat]: C → C
+        }
+        y = u[1].x[2, 3]
+        "#,
+    );
+    assert!(result.is_err());
+}
+
+#[test]
+fn functor_no_mapping_error_message() {
+    let result = check_source(
+        r#"
+        import "base"
+        sys = import "sys"
+        C: *
+        K: C → C
+        x[n: nat]: C → K
+        F: C ~> sys.C
+        [n: nat] F(x[n]) = sys.u32.lit[n]
+        result = F(x[32])
+        "#,
+    );
+    // Should have error about K (no mapping), message should contain "K" not "P..."
+    let err = result.unwrap_err();
+    assert!(err.contains("K"), "error should mention K: {}", err);
+}

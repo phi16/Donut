@@ -13,7 +13,9 @@ use donut_core::pure_cell::PureCell;
 use eval::{apply_functor, make_cell, match_ty};
 use std::collections::HashMap;
 
-pub use crate::types::env::{Entry, Env, MetaType, ParamInfo, ParamKind, PrimDecl};
+pub use crate::types::env::{
+    display_prim, display_pure_cell, Entry, Env, MetaType, ParamInfo, ParamKind, PrimDecl,
+};
 
 type Result<T> = std::result::Result<T, String>;
 
@@ -154,7 +156,11 @@ impl<'a> Checker<'a> {
     }
 
     fn current_param_counts(&self, own_count: usize) -> Vec<usize> {
-        let mut counts = self.param_count_stack.clone();
+        // Skip origin prefix depth — origin segment is represented by "::" in
+        // canonical names and never carries parameters, so param_counts should
+        // only cover the local "." segments.
+        let skip = self.current_origin.as_ref().map_or(0, |(_, depth)| *depth);
+        let mut counts: Vec<usize> = self.param_count_stack[skip..].to_vec();
         if own_count > 0 {
             counts.push(own_count);
         }
@@ -634,8 +640,8 @@ impl<'a> Checker<'a> {
                 val_pure = PureCell::id(val_pure);
             }
 
-            let expected_s = apply_functor(&app_cell.pure.s(), &functor_map);
-            let expected_t = apply_functor(&app_cell.pure.t(), &functor_map);
+            let expected_s = apply_functor(&app_cell.pure.s(), &functor_map, &self.prim_decls);
+            let expected_t = apply_functor(&app_cell.pure.t(), &functor_map, &self.prim_decls);
 
             match (expected_s, expected_t) {
                 (Ok(es), Ok(et)) => {
@@ -742,7 +748,7 @@ impl<'a> Checker<'a> {
                     let param_name = self.qualified_name(&param.name);
                     self.add_entry(param_name.clone(), PARAM_COLOR, EntryBody::Cell(cell.clone()), vec![]);
                     self.accumulated_args.push(PrimArg::Cell(cell.pure.clone()));
-                    self.register_param_prim_decl(fresh_id, &param_name, level);
+                    self.register_param_prim_decl(fresh_id, &param.name, level);
                 }
                 ParamKind::Meta(_) => {
                     let prim = Prim::new(fresh_id);
@@ -750,7 +756,7 @@ impl<'a> Checker<'a> {
                     let idx = self.add_entry(param_name.clone(), PARAM_COLOR, EntryBody::Meta(prim), vec![]);
                     self.meta_values.insert(idx, PrimArg::App(fresh_id, vec![]));
                     self.accumulated_args.push(PrimArg::App(fresh_id, vec![]));
-                    self.register_param_prim_decl(fresh_id, &param_name, 0);
+                    self.register_param_prim_decl(fresh_id, &param.name, 0);
                 }
             }
             freshes.push((param.name.clone(), fresh_id, param_kind));
@@ -781,10 +787,10 @@ impl<'a> Checker<'a> {
     }
 
     /// Register a prim_decl entry for a parameter (gray, no param_counts).
-    fn register_param_prim_decl(&mut self, prim_id: PrimId, qname: &str, level: Level) {
-        let canonical = self.canonical_name(qname);
+    /// Uses the local (unqualified) name for display purposes.
+    fn register_param_prim_decl(&mut self, prim_id: PrimId, local_name: &str, level: Level) {
         self.prim_decls.insert(prim_id, PrimDecl {
-            name: canonical,
+            name: local_name.to_string(),
             level,
             color: (128, 128, 128),
             param_counts: vec![],

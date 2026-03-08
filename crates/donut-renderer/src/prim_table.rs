@@ -1,79 +1,24 @@
 use donut_core::cell::Globular;
-use donut_core::common::{Level, Prim, PrimArg, PrimId};
+use donut_core::common::{Prim, PrimId};
 use donut_core::pure_cell::PureCell;
+use donut_lang::check::{display_prim, display_pure_cell, PrimDecl};
 use std::collections::HashMap;
 
-pub struct PrimEntry {
-    pub name: String,
-    pub level: Level,
-    pub color: (u8, u8, u8),
-    pub param_counts: Vec<usize>,
-}
-
 pub struct PrimTable {
-    table: HashMap<PrimId, PrimEntry>,
+    prim_decls: HashMap<PrimId, PrimDecl>,
 }
 
 impl PrimTable {
-    pub fn new() -> Self {
-        PrimTable {
-            table: HashMap::new(),
-        }
+    pub fn new(prim_decls: HashMap<PrimId, PrimDecl>) -> Self {
+        PrimTable { prim_decls }
     }
 
-    pub fn insert(
-        &mut self,
-        id: PrimId,
-        name: &str,
-        level: Level,
-        color: (u8, u8, u8),
-        param_counts: Vec<usize>,
-    ) {
-        self.table.insert(id, PrimEntry {
-            name: name.to_string(),
-            level,
-            color,
-            param_counts,
-        });
-    }
-
-    pub fn get(&self, prim: &Prim) -> Option<&PrimEntry> {
-        self.table.get(&prim.id)
+    pub fn get(&self, prim: &Prim) -> Option<&PrimDecl> {
+        self.prim_decls.get(&prim.id)
     }
 
     pub fn format_prim(&self, prim: &Prim) -> String {
-        let entry = self.table.get(&prim.id);
-        let base = entry.map(|e| e.name.as_str()).unwrap_or("?");
-        if prim.args.is_empty() {
-            return base.to_string();
-        }
-        let param_counts = entry.map(|e| &e.param_counts[..]).unwrap_or(&[]);
-        let segments: Vec<&str> = base.split('.').collect();
-        let mut arg_idx = 0;
-        let mut parts = Vec::new();
-        for (i, seg) in segments.iter().enumerate() {
-            let n = param_counts.get(i).copied().unwrap_or(0);
-            if n > 0 && arg_idx + n <= prim.args.len() {
-                let args: Vec<String> = prim.args[arg_idx..arg_idx + n]
-                    .iter()
-                    .map(|a| self.format_arg(a))
-                    .collect();
-                parts.push(format!("{}[{}]", seg, args.join(", ")));
-                arg_idx += n;
-            } else {
-                parts.push(seg.to_string());
-            }
-        }
-        // Any remaining args attach to the last segment
-        if arg_idx < prim.args.len() {
-            let last = parts.pop().unwrap_or_default();
-            let args: Vec<String> = prim.args[arg_idx..]
-                .iter()
-                .map(|a| self.format_arg(a))
-                .collect();
-            parts.push(format!("{}[{}]", last, args.join(", ")));
-        }
-        parts.join(".")
+        display_prim(prim, &self.prim_decls)
     }
 
     pub fn format_cell_type(&self, pure: &PureCell) -> String {
@@ -81,8 +26,8 @@ impl PrimTable {
         match dim {
             0 => "*".to_string(),
             1 => {
-                let src = self.format_0cell(&pure.s());
-                let tgt = self.format_0cell(&pure.t());
+                let src = display_pure_cell(&pure.s(), &self.prim_decls);
+                let tgt = display_pure_cell(&pure.t(), &self.prim_decls);
                 format!("{} → {}", src, tgt)
             }
             _ => {
@@ -93,20 +38,10 @@ impl PrimTable {
         }
     }
 
-    fn format_0cell(&self, pure: &PureCell) -> String {
-        match pure {
-            PureCell::Prim(prim, _, _) => self.format_prim(prim),
-            PureCell::Comp(_, children, _) => {
-                let parts: Vec<String> = children.iter().map(|c| self.format_0cell(c)).collect();
-                if parts.is_empty() { "·".to_string() } else { parts.join(" ") }
-            }
-        }
-    }
-
     fn format_1cell(&self, pure: &PureCell) -> String {
         let parts = self.collect_1cell_parts(pure);
         if parts.is_empty() {
-            let base = self.format_0cell(&pure.s());
+            let base = display_pure_cell(&pure.s(), &self.prim_decls);
             format!("id[{}]", base)
         } else {
             parts.join(" ")
@@ -119,33 +54,11 @@ impl PrimTable {
                 if dim.effective < dim.in_space {
                     vec![]
                 } else {
-                    vec![self.format_prim(prim)]
+                    vec![display_prim(prim, &self.prim_decls)]
                 }
             }
             PureCell::Comp(_, children, _) => {
                 children.iter().flat_map(|c| self.collect_1cell_parts(c)).collect()
-            }
-        }
-    }
-
-    fn format_arg(&self, arg: &PrimArg) -> String {
-        match arg {
-            PrimArg::Cell(PureCell::Prim(prim, _, _)) => self.format_prim(prim),
-            PrimArg::Cell(_) => "..".to_string(),
-            PrimArg::Nat(n) => n.to_string(),
-            PrimArg::Rat(v) => format!("{}", v),
-            PrimArg::App(id, args) => {
-                let base = self
-                    .table
-                    .get(id)
-                    .map(|e| e.name.as_str())
-                    .unwrap_or("?");
-                if args.is_empty() {
-                    base.to_string()
-                } else {
-                    let args: Vec<String> = args.iter().map(|a| self.format_arg(a)).collect();
-                    format!("{}[{}]", base, args.join(", "))
-                }
             }
         }
     }
