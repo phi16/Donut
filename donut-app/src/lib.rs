@@ -1,6 +1,8 @@
 mod app;
+mod shader_view;
 
 use crate::app::App;
+use crate::shader_view::ShaderView;
 use std::cell::RefCell;
 use std::rc::Rc;
 use wasm_bindgen::prelude::*;
@@ -114,6 +116,16 @@ pub fn start() -> Option<()> {
         .dyn_into::<web_sys::HtmlElement>()
         .ok()?;
 
+    let shader_view = document
+        .get_element_by_id("shader-canvas")
+        .and_then(|el| el.dyn_into::<web_sys::HtmlCanvasElement>().ok())
+        .and_then(|c| {
+            // Set pixel dimensions to match CSS size
+            c.set_width(380);
+            c.set_height(380);
+            ShaderView::new(c)
+        });
+
     let textarea = document
         .get_element_by_id("code-input")?
         .dyn_into::<web_sys::HtmlTextAreaElement>()
@@ -130,6 +142,7 @@ pub fn start() -> Option<()> {
         entry_select.clone(),
         eval_result_el,
         diagnostics_el,
+        shader_view,
     )));
 
     // Set up entry selection handler

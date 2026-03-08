@@ -11,6 +11,7 @@ use donut_renderer::geometry::{Geometry, R};
 use donut_renderer::prim_table::PrimTable;
 use donut_renderer::render::Renderer;
 use donut_runtime::Runtime;
+use crate::shader_view::ShaderView;
 use wasm_bindgen::JsCast;
 
 const MARGIN: R = 100.0;
@@ -24,6 +25,7 @@ pub struct App {
     entry_select: web_sys::HtmlSelectElement,
     eval_result_el: web_sys::HtmlElement,
     diagnostics_el: web_sys::HtmlElement,
+    shader_view: Option<ShaderView>,
     env: Env,
     table: PrimTable,
     runtime: Runtime,
@@ -42,6 +44,7 @@ impl App {
         entry_select: web_sys::HtmlSelectElement,
         eval_result_el: web_sys::HtmlElement,
         diagnostics_el: web_sys::HtmlElement,
+        shader_view: Option<ShaderView>,
     ) -> Self {
         let input = include_str!("default.donut");
         let (env, table, runtime, diagnostics) = Self::load(input);
@@ -52,7 +55,7 @@ impl App {
             .map(|c| Self::init_slice_pos(&c.size))
             .unwrap_or_default();
 
-        let app = Self {
+        let mut app = Self {
             canvas,
             context,
             mouse,
@@ -60,6 +63,7 @@ impl App {
             entry_select,
             eval_result_el,
             diagnostics_el,
+            shader_view,
             env,
             table,
             runtime,
@@ -326,7 +330,7 @@ impl App {
         }
     }
 
-    fn update_eval_result(&self) {
+    fn update_eval_result(&mut self) {
         // Update diagnostics
         if self.diagnostics.is_empty() {
             let _ = self.diagnostics_el.class_list().remove_1("has-errors");
@@ -340,6 +344,7 @@ impl App {
         let Some(selected) = self.selected else {
             self.eval_result_el.set_inner_text("");
             let _ = self.eval_result_el.class_list().remove_1("evaluable");
+            self.hide_shader();
             return;
         };
         let entry = &self.env.entries[selected];
@@ -347,6 +352,7 @@ impl App {
             self.eval_result_el
                 .set_inner_text(&format!("{}: meta", entry.name));
             let _ = self.eval_result_el.class_list().remove_1("evaluable");
+            self.hide_shader();
             return;
         };
         let type_str = self.table.format_cell_type(&cell.pure);
@@ -373,16 +379,41 @@ impl App {
         }
         let mut text = format!("{}: {}\n{}", entry.name, type_str, eval_str);
 
-        // GLSL compilation
+        // GLSL compilation + shader preview
+        let mut shader_shown = false;
         match donut_runtime::glsl::compile_to_glsl(cell, &prim_names) {
             Ok(func) => {
                 text.push_str("\n\n--- GLSL ---\n");
                 text.push_str(&func.to_function(&entry.name));
+
+                if let Some(ref mut sv) = self.shader_view {
+                    if let Ok(frag) = func.to_fragment_shader() {
+                        match sv.set_shader(&frag) {
+                            Ok(()) => {
+                                sv.render();
+                                sv.show();
+                                shader_shown = true;
+                            }
+                            Err(e) => {
+                                text.push_str(&format!("\nshader error: {}", e));
+                            }
+                        }
+                    }
+                }
             }
             Err(_) => {}
         }
+        if !shader_shown {
+            self.hide_shader();
+        }
 
         self.eval_result_el.set_inner_text(&text);
+    }
+
+    fn hide_shader(&self) {
+        if let Some(ref sv) = self.shader_view {
+            sv.hide();
+        }
     }
 
     fn draw_tooltip(&self, text: &str, x: R, y: R) {

@@ -51,6 +51,16 @@
       #eval-result.evaluable {
         color: #e0e0e0;
       }
+      #shader-canvas {
+        display: none;
+        margin: 0 10px 5px 10px;
+        width: 380px;
+        height: 380px;
+        border: 1px solid #444;
+      }
+      #shader-canvas.visible {
+        display: block;
+      }
       #diagnostics {
         margin: 0 10px 10px 10px;
         padding: 8px;
@@ -76,6 +86,7 @@
       <textarea id="code-input" placeholder="Ctrl+Enter to update"></textarea>
       <select id="entry-select"></select>
       <div id="eval-result"></div>
+      <canvas id="shader-canvas"></canvas>
       <div id="diagnostics"></div>
     </div>
     <script src="index.js"></script>
