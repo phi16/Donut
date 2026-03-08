@@ -13,7 +13,7 @@ use donut_core::pure_cell::PureCell;
 use eval::{apply_functor, make_cell, match_ty};
 use std::collections::HashMap;
 
-pub use crate::types::env::{Entry, Env, MetaSig, MetaType, ParamInfo, ParamKind, PrimDecl};
+pub use crate::types::env::{Entry, Env, MetaType, ParamInfo, ParamKind, PrimDecl};
 
 type Result<T> = std::result::Result<T, String>;
 
@@ -52,7 +52,7 @@ pub(super) struct Checker<'a> {
     pub(super) param_count_stack: Vec<usize>,
 
     pub(super) meta_prim_ids: HashMap<String, PrimId>,
-    pub(super) meta_sigs: HashMap<PrimId, MetaSig>,
+    pub(super) meta_ret_types: HashMap<PrimId, MetaType>,
     pub(super) meta_values: HashMap<usize, PrimArg>,
 
     pub(super) item_cache: HashMap<ItemId, String>,
@@ -84,7 +84,7 @@ impl<'a> Checker<'a> {
             accumulated_args: Vec::new(),
             param_count_stack: Vec::new(),
             meta_prim_ids,
-            meta_sigs: HashMap::new(),
+            meta_ret_types: HashMap::new(),
             meta_values: HashMap::new(),
             item_cache: HashMap::new(),
             functor_maps: HashMap::new(),
@@ -108,7 +108,7 @@ impl<'a> Checker<'a> {
             prim_decls: self.prim_decls,
             entry_params: self.entry_params,
             module_params: self.module_params,
-            meta_sigs: self.meta_sigs,
+            meta_ret_types: self.meta_ret_types,
             meta_prim_names,
         };
         (env, self.errors)
@@ -744,7 +744,7 @@ impl<'a> Checker<'a> {
                     self.accumulated_args.push(PrimArg::Cell(cell.pure.clone()));
                     self.register_param_prim_decl(fresh_id, &param_name, level);
                 }
-                ParamKind::Nat | ParamKind::Rat | ParamKind::Meta(_) => {
+                ParamKind::Meta(_) => {
                     let prim = Prim::new(fresh_id);
                     let param_name = self.qualified_name(&param.name);
                     let idx = self.add_entry(param_name.clone(), PARAM_COLOR, EntryBody::Meta(prim), vec![]);
@@ -808,7 +808,7 @@ impl<'a> Checker<'a> {
         idx
     }
 
-    /// Register a meta entry: create MetaSig, add entry, store meta value.
+    /// Register a meta entry: add entry, store meta return type and value.
     fn register_meta_entry(
         &mut self,
         qname: String,
@@ -819,7 +819,7 @@ impl<'a> Checker<'a> {
         param_freshes: &[ParamInfo],
     ) -> usize {
         if let Some(ret) = ret {
-            self.meta_sigs.insert(prim.id, MetaSig { ret });
+            self.meta_ret_types.insert(prim.id, ret);
         }
         // Register short name for meta_id() lookups
         let short_name = qname.rsplit('.').next().unwrap_or(&qname).to_string();

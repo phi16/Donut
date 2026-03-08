@@ -9,18 +9,11 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MetaType(pub PrimId, pub Vec<MetaType>);
 
-#[derive(Debug, Clone)]
-pub struct MetaSig {
-    pub ret: MetaType,
-}
-
 // --- Param kind ---
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ParamKind {
     Cell,
-    Nat,
-    Rat,
     Meta(MetaType),
 }
 
@@ -82,8 +75,8 @@ impl Entry {
                 }
             }
             EntryBody::Meta(prim) => {
-                let sig = env.meta_sigs.get(&prim.id)?;
-                Some(env.display_meta_type(&sig.ret))
+                let ret = env.meta_ret_types.get(&prim.id)?;
+                Some(env.display_meta_type(ret))
             }
             EntryBody::Type(_, _) => None,
         }
@@ -138,7 +131,7 @@ pub struct Env {
     pub prim_decls: HashMap<PrimId, PrimDecl>,
     pub entry_params: HashMap<usize, Vec<ParamInfo>>,
     pub module_params: HashMap<String, Vec<ParamInfo>>,
-    pub meta_sigs: HashMap<PrimId, MetaSig>,
+    pub meta_ret_types: HashMap<PrimId, MetaType>,
     pub meta_prim_names: HashMap<PrimId, String>,
 }
 
@@ -161,8 +154,6 @@ impl Env {
         let parts: Vec<_> = params
             .iter()
             .map(|(name, _, kind)| match kind {
-                ParamKind::Nat => format!("{}: nat", name),
-                ParamKind::Rat => format!("{}: rat", name),
                 ParamKind::Meta(mt) => format!("{}: {}", name, self.display_meta_type(mt)),
                 ParamKind::Cell => {
                     if let Some(&idx) = self.lookup.get(name) {

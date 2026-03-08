@@ -70,38 +70,9 @@ impl<'a> Checker<'a> {
 
     pub(super) fn detect_param_kind(&self, val: &Val) -> ParamKind {
         match self.eval_ty(val) {
-            Ok((_, Ty::Meta(mt))) => {
-                if self.meta_id("nat") == Some(mt.0) {
-                    ParamKind::Nat
-                } else if self.meta_id("rat") == Some(mt.0) {
-                    ParamKind::Rat
-                } else {
-                    ParamKind::Meta(mt)
-                }
-            }
+            Ok((_, Ty::Meta(mt))) => ParamKind::Meta(mt),
             _ => ParamKind::Cell,
         }
-    }
-
-    pub(super) fn resolve_meta_type(&self, val: &Val) -> Option<MetaType> {
-        if let Val::Path(path) = val {
-            let name = path_name(path)?;
-            let index = self.resolve_name(&name)?;
-            if let EntryBody::Meta(prim) = &self.entries[index].body {
-                let seg = path.segments.last()?;
-                if seg.0.params.is_empty() {
-                    return Some(MetaType(prim.id, vec![]));
-                }
-                let arg_types: Vec<MetaType> = seg.0.params.iter()
-                    .filter_map(|pv| {
-                        let v = self.program.val(pv.val);
-                        self.resolve_meta_type(&v.0)
-                    })
-                    .collect();
-                return Some(MetaType(prim.id, arg_types));
-            }
-        }
-        None
     }
 
     pub(super) fn check_meta_type(&self, val: &Val) -> Option<MetaType> {
@@ -122,7 +93,7 @@ impl<'a> Checker<'a> {
                 let name = path_name(path)?;
                 let index = self.resolve_name(&name)?;
                 let EntryBody::Meta(prim) = &self.entries[index].body else { return None };
-                let sig = self.meta_sigs.get(&prim.id)?;
+                let ret = self.meta_ret_types.get(&prim.id)?;
 
                 let seg = path.segments.last()?;
                 let params = self.entry_params.get(&index)
@@ -141,26 +112,17 @@ impl<'a> Checker<'a> {
                 }
 
                 for (arg_ty, (_, _, kind)) in arg_types.iter().zip(params.iter()) {
-                    let expected = self.param_kind_to_meta_type(kind)?;
+                    let ParamKind::Meta(expected) = kind else { return None };
                     match arg_ty {
-                        Some(ty) if *ty == expected => {}
-                        Some(ty) if self.meta_type_coercible(ty, &expected) => {}
+                        Some(ty) if ty == expected => {}
+                        Some(ty) if self.meta_type_coercible(ty, expected) => {}
                         _ => return None,
                     }
                 }
 
-                Some(sig.ret.clone())
+                Some(ret.clone())
             }
             _ => None,
-        }
-    }
-
-    fn param_kind_to_meta_type(&self, kind: &ParamKind) -> Option<MetaType> {
-        match kind {
-            ParamKind::Nat => Some(MetaType(self.meta_id("nat")?, vec![])),
-            ParamKind::Rat => Some(MetaType(self.meta_id("rat")?, vec![])),
-            ParamKind::Meta(mt) => Some(mt.clone()),
-            ParamKind::Cell => None,
         }
     }
 
@@ -176,23 +138,33 @@ impl<'a> Checker<'a> {
                     }
                     return Ok((0, Ty::Zero));
                 }
-                if let Some(idx) = self.resolve_name(&name) {
-                    if let EntryBody::Type(dim, ref ty) = self.entries[idx].body {
-                        let mapping = self.build_path_mapping(path)?;
-                        let base = (dim, ty.clone());
-                        if mapping.is_empty() {
-                            return Ok(base);
-                        } else {
-                            return Ok(subst_ty(&base, &mapping));
-                        }
-                    }
-                }
                 if name == "meta" {
                     let id = self.meta_id("meta").unwrap();
                     return Ok((0, Ty::Meta(MetaType(id, vec![]))));
                 }
-                if let Some(mt) = self.resolve_meta_type(val) {
-                    return Ok((0, Ty::Meta(mt)));
+                if let Some(idx) = self.resolve_name(&name) {
+                    match &self.entries[idx].body {
+                        EntryBody::Type(dim, ty) => {
+                            let mapping = self.build_path_mapping(path)?;
+                            let base = (*dim, ty.clone());
+                            if mapping.is_empty() {
+                                return Ok(base);
+                            } else {
+                                return Ok(subst_ty(&base, &mapping));
+                            }
+                        }
+                        EntryBody::Meta(prim) => {
+                            let seg = path.segments.last().unwrap();
+                            let arg_types: Vec<MetaType> = seg.0.params.iter()
+                                .filter_map(|pv| {
+                                    let v = self.program.val(pv.val);
+                                    self.check_meta_type(&v.0)
+                                })
+                                .collect();
+                            return Ok((0, Ty::Meta(MetaType(prim.id, arg_types))));
+                        }
+                        EntryBody::Cell(_) => {}
+                    }
                 }
                 Err("expected `*` or arrow type".to_string())
             }
@@ -294,9 +266,9 @@ impl<'a> Checker<'a> {
                 let arg_cell = self.eval_val(&val_s.0)?;
                 Ok(PrimArg::Cell(arg_cell.pure.clone()))
             }
-            ParamKind::Nat | ParamKind::Rat | ParamKind::Meta(_) => {
+            ParamKind::Meta(mt) => {
                 let mut arg = self.eval_meta_val(&val_s.0)?;
-                if *kind == ParamKind::Rat {
+                if self.meta_id("rat") == Some(mt.0) {
                     if let PrimArg::Nat(n) = arg {
                         arg = PrimArg::rat(n as f64);
                     }

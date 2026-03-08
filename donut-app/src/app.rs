@@ -414,9 +414,7 @@ impl App {
                             .unwrap_or_else(|| "*".to_string());
                         format!("{}: {}", name, type_str)
                     }
-                    ParamKind::Nat => format!("{}: nat", name),
-                    ParamKind::Rat => format!("{}: rat", name),
-                    ParamKind::Meta(_) => format!("{}: meta", name),
+                    ParamKind::Meta(mt) => format!("{}: {}", name, self.env.display_meta_type(&mt)),
                 }
             })
             .collect();
