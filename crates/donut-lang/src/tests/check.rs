@@ -1304,17 +1304,9 @@ fn format_name_with_args_no_origin() {
     let cell = env.entries[idx].as_cell().unwrap();
     let prim_id = cell.pure.extract_prim_id().unwrap();
 
-    // No args
-    let prim_no_args = Prim::new(prim_id);
-    assert_eq!(display_prim(&prim_no_args, &env.prim_decls), "u.x");
-
-    // One arg (only m)
-    let prim_one = Prim::with_args(prim_id, vec![PrimArg::Nat(5)]);
-    assert_eq!(display_prim(&prim_one, &env.prim_decls), "u[5].x");
-
-    // Two args (m and n)
-    let prim_two = Prim::with_args(prim_id, vec![PrimArg::Nat(5), PrimArg::Nat(10)]);
-    assert_eq!(display_prim(&prim_two, &env.prim_decls), "u[5].x[10]");
+    // Two args (m and n) — must provide all params
+    let prim = Prim::with_args(prim_id, vec![PrimArg::Nat(5), PrimArg::Nat(10)]);
+    assert_eq!(display_prim(&prim, &env.prim_decls), "u[5].x[10]");
 }
 
 #[test]

@@ -383,39 +383,10 @@ impl App {
         let Some(selected) = self.selected else {
             return;
         };
-        let params = self.env.all_params(selected);
-        if params.is_empty() {
+        let text = self.env.all_params_display(selected);
+        if text.is_empty() {
             return;
         }
-
-        let parts: Vec<String> = params
-            .iter()
-            .map(|(name, id, kind)| {
-                use donut_lang::check::ParamKind;
-                match kind {
-                    ParamKind::Cell => {
-                        let type_str = self
-                            .env
-                            .entries
-                            .iter()
-                            .find_map(|e| {
-                                let cell = e.as_cell()?;
-                                if cell.pure.extract_prim_id()? == *id {
-                                    Some(cell)
-                                } else {
-                                    None
-                                }
-                            })
-                            .map(|cell| self.table.format_cell_type(&cell.pure))
-                            .unwrap_or_else(|| "*".to_string());
-                        format!("{}: {}", name, type_str)
-                    }
-                    ParamKind::Meta(mt) => format!("{}: {}", name, self.env.display_meta_type(&mt)),
-                }
-            })
-            .collect();
-
-        let text = parts.join(", ");
         self.context.set_fill_style_str("rgba(255, 255, 255, 0.6)");
         self.context.set_font("20px monospace");
         let _ = self.context.fill_text(&text, x, y);

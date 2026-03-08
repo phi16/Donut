@@ -14,7 +14,8 @@ use eval::{apply_functor, make_cell, match_ty};
 use std::collections::HashMap;
 
 pub use crate::types::env::{
-    display_prim, display_pure_cell, Entry, Env, MetaType, ParamInfo, ParamKind, PrimDecl,
+    display_cell_type, display_prim, display_pure_cell, Entry, Env, MetaType, ParamInfo, ParamKind,
+    PrimDecl,
 };
 
 type Result<T> = std::result::Result<T, String>;

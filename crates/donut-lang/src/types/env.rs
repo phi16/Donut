@@ -64,16 +64,7 @@ impl Entry {
 
     pub fn type_display(&self, env: &Env) -> Option<String> {
         match &self.body {
-            EntryBody::Cell(cell) => {
-                let dim = cell.pure.dim().in_space;
-                if dim == 0 {
-                    Some("*".to_string())
-                } else {
-                    let s = display_pure_cell(&cell.pure.s(), &env.prim_decls);
-                    let t = display_pure_cell(&cell.pure.t(), &env.prim_decls);
-                    Some(format!("{} → {}", s, t))
-                }
-            }
+            EntryBody::Cell(cell) => Some(display_cell_type(&cell.pure, &env.prim_decls)),
             EntryBody::Meta(prim) => {
                 let ret = env.meta_ret_types.get(&prim.id)?;
                 Some(env.display_meta_type(ret))
@@ -120,9 +111,21 @@ pub fn display_pure_cell(cell: &PureCell, prim_decls: &HashMap<PrimId, PrimDecl>
                     s
                 })
                 .collect();
-            let sep = if *axis == 0 { " " } else { "; " };
-            parts.join(sep)
+            let sep = format!("{} ", ";".repeat(*axis as usize));
+            parts.join(&sep)
         }
+    }
+}
+
+/// Display a cell type (e.g. "*", "C → D", "f g → h k").
+pub fn display_cell_type(pure: &PureCell, prim_decls: &HashMap<PrimId, PrimDecl>) -> String {
+    let dim = pure.dim().in_space;
+    if dim == 0 {
+        "*".to_string()
+    } else {
+        let src = display_pure_cell(&pure.s(), prim_decls);
+        let tgt = display_pure_cell(&pure.t(), prim_decls);
+        format!("{} → {}", src, tgt)
     }
 }
 
@@ -148,6 +151,12 @@ fn format_name_with_args(
     args: &[PrimArg],
     prim_decls: &HashMap<PrimId, PrimDecl>,
 ) -> String {
+    let expected: usize = param_counts.iter().sum();
+    debug_assert!(
+        args.len() == expected,
+        "display: args count mismatch for {}: expected {}, got {}",
+        name, expected, args.len(),
+    );
     if args.is_empty() {
         return name.to_string();
     }
