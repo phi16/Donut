@@ -74,11 +74,7 @@ pub fn compatible<T: Globular>(a: &T, b: &T) -> Result<()> {
     if a.is_convertible(b) {
         Ok(())
     } else {
-        Err(format!(
-            "{}\n is not convertible to\n{}",
-            a.to_pure(),
-            b.to_pure()
-        ))
+        Err(Error::NotConvertible(a.to_pure(), b.to_pure()))
     }
 }
 
@@ -88,7 +84,7 @@ pub fn check_prim<T: Globular>(s: &T, t: &T) -> Result<()> {
     if sd == 0 && td == 0 {
         Ok(())
     } else if sd == 0 || td == 0 {
-        Err("incompatible".to_string())
+        Err(Error::IncompatibleDimension)
     } else {
         compatible(&s.s(), &t.s())?;
         compatible(&s.t(), &t.t())?;

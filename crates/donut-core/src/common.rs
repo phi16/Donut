@@ -93,7 +93,28 @@ pub enum Side {
     Target,
 }
 
-pub type Result<T> = std::result::Result<T, String>;
+use crate::pure_cell::PureCell;
+
+#[derive(Debug, Clone)]
+pub enum Error {
+    NotConvertible(PureCell, PureCell),
+    IncompatibleDimension,
+    EmptyComposition,
+}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Error::NotConvertible(a, b) => {
+                write!(f, "{}\n is not convertible to\n{}", a, b)
+            }
+            Error::IncompatibleDimension => write!(f, "incompatible dimension"),
+            Error::EmptyComposition => write!(f, "empty composition"),
+        }
+    }
+}
+
+pub type Result<T> = std::result::Result<T, Error>;
 
 pub fn dedent(code: &str) -> String {
     let lines: Vec<&str> = code.lines().collect();

@@ -423,3 +423,107 @@ fn test_mixed_import() {
 
     assert_eq!(eval_entry(&rt, &env, "x"), vec![Value::U32(3)]);
 }
+
+// --- GLSL compilation ---
+
+fn prim_names(env: &donut_lang::check::Env) -> HashMap<PrimId, String> {
+    env.prim_decls
+        .iter()
+        .map(|(&id, decl)| (id, decl.name.clone()))
+        .collect()
+}
+
+fn compile_entry(env: &donut_lang::check::Env, name: &str) -> Result<crate::glsl::GlslFunction, String> {
+    let idx = env.lookup.get(name).unwrap_or_else(|| panic!("entry '{}' not found", name));
+    let cell = env.entries[*idx].as_cell().unwrap();
+    crate::glsl::compile_to_glsl(cell, &prim_names(env))
+}
+
+fn compile_shader(env: &donut_lang::check::Env, name: &str) -> Result<String, String> {
+    compile_entry(env, name)?.to_fragment_shader()
+}
+
+#[test]
+fn test_glsl_constant_color() {
+    // → f32x3 (no f32x2 input), compiles as function but not as fragment shader
+    let (_, env) = setup("my_color = sys.f32.lit[1] sys.f32.lit[0] sys.f32.lit[0]; sys.f32x3.pack");
+    let func = compile_entry(&env, "my_color").unwrap();
+    assert!(func.inputs.is_empty());
+    assert_eq!(func.outputs, vec![crate::glsl::GlslTy::Vec3]);
+    // Should fail to_fragment_shader (source is not f32x2)
+    assert!(func.to_fragment_shader().is_err());
+}
+
+#[test]
+fn test_glsl_unpack_repack() {
+    // f32x2 → unpack → f32 f32, parallel with lit[0] → f32, then pack → f32x3
+    let (_, env) = setup("\
+shader = sys.f32x2.unpack sys.f32.lit[0]; sys.f32x3.pack
+");
+    let glsl = compile_shader(&env, "shader").unwrap();
+    assert!(glsl.contains("precision mediump float;"));
+    assert!(glsl.contains("gl_FragColor"));
+    assert!(glsl.contains("void cell("));
+}
+
+#[test]
+fn test_glsl_identity_style() {
+    let (_, env) = setup("\
+shader = sys.f32x2.unpack sys.f32.lit[0]; sys.f32x3.pack
+");
+    let glsl = compile_shader(&env, "shader").unwrap();
+    assert!(glsl.contains(".x;"));
+    assert!(glsl.contains(".y;"));
+    assert!(glsl.contains("0.0"));
+    assert!(glsl.contains("gl_FragColor = vec4(color, 1.0);"));
+}
+
+#[test]
+fn test_glsl_arithmetic() {
+    // unpack → (x*0.5, y*0.5, 0.0)
+    let (_, env) = setup("\
+shader = sys.f32x2.unpack sys.f32.lit[0.5] sys.f32.lit[0.5]; sys.f32.mul sys.f32.mul sys.f32.lit[0]; sys.f32x3.pack
+");
+    let glsl = compile_shader(&env, "shader").unwrap();
+    assert!(glsl.contains("*"));
+    assert!(glsl.contains("0.5"));
+}
+
+#[test]
+fn test_glsl_dup() {
+    // unpack → dup x, drop y → (x, x, 0.0)
+    let (_, env) = setup("\
+shader = sys.f32x2.unpack; sys.f32.dup sys.f32.drop sys.f32.lit[0]; sys.f32x3.pack
+");
+    let glsl = compile_shader(&env, "shader").unwrap();
+    assert!(glsl.contains("gl_FragColor"));
+}
+
+#[test]
+fn test_glsl_function_output() {
+    // Test that compile_to_glsl produces a proper function
+    let (_, env) = setup("\
+shader = sys.f32x2.unpack sys.f32.lit[0]; sys.f32x3.pack
+");
+    let func = compile_entry(&env, "shader").unwrap();
+    let fn_str = func.to_function("my_shader");
+    assert!(fn_str.contains("void my_shader(in vec2 i0, out vec3 o0)"));
+}
+
+#[test]
+fn test_glsl_wrong_dimension() {
+    let (_, env) = setup("t: sys.C → sys.C");
+    let result = compile_entry(&env, "t");
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("1-cell"));
+}
+
+#[test]
+fn test_glsl_wrong_source_for_shader() {
+    // → f32x3 (no input), compiles as function but fails as fragment shader
+    let (_, env) = setup("\
+my_cell = sys.f32.lit[1] sys.f32.lit[0] sys.f32.lit[0]; sys.f32x3.pack
+");
+    let func = compile_entry(&env, "my_cell").unwrap();
+    assert!(func.to_fragment_shader().is_err());
+}

@@ -167,7 +167,7 @@ impl<'a> Checker<'a> {
                 let max = s.pure.dim().in_space.max(t.pure.dim().in_space);
                 s = lift_dim(s, max);
                 t = lift_dim(t, max);
-                check_prim(&s.pure, &t.pure)?;
+                check_prim(&s.pure, &t.pure).map_err(|e| e.to_string())?;
                 Ok((max + 1, Ty::Succ(s, t)))
             }
             Val::Arrow(ArrowKind::Functor, _, _) => Err("expected arrow type".to_string()),
@@ -195,7 +195,7 @@ impl<'a> Checker<'a> {
                     .max()
                     .unwrap();
                 cells = cells.into_iter().map(|c| lift_dim(c, max)).collect();
-                Ok(FreeCell::comp(*axis, cells)?)
+                Ok(FreeCell::comp(*axis, cells).map_err(|e| e.to_string())?)
             }
             _ => Err("not a cell value".to_string()),
         }
@@ -460,7 +460,7 @@ pub(super) fn apply_functor(cell: &PureCell, map: &HashMap<PrimId, FunctorEntry>
                 .iter()
                 .map(|c| apply_functor(c, map, prim_decls))
                 .collect::<Result<_>>()?;
-            PureCell::comp(*axis, mapped)
+            PureCell::comp(*axis, mapped).map_err(|e| e.to_string())
         }
     }
 }
@@ -480,7 +480,7 @@ fn subst_ty((dim, t): (u8, &Ty), mapping: &HashMap<PrimId, PrimArg>) -> (u8, Ty)
 pub(super) fn make_cell(prim: Prim, ty: &Ty) -> Result<FreeCell> {
     match ty {
         Ty::Zero => Ok(FreeCell::zero(prim)),
-        Ty::Succ(s, t) => FreeCell::prim(prim, s.clone(), t.clone()),
+        Ty::Succ(s, t) => FreeCell::prim(prim, s.clone(), t.clone()).map_err(|e| e.to_string()),
         Ty::Meta(_) => Err("meta type cannot be used as cell type".to_string()),
     }
 }

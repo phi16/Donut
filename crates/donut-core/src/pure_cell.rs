@@ -103,7 +103,7 @@ impl Diagram for PureCell {
     fn comp(axis: Axis, children: Vec2<Self>) -> Result<Self> {
         let n = children.len();
         if n == 0 {
-            return Err("No elements".to_string());
+            return Err(Error::EmptyComposition);
         }
 
         let children = children

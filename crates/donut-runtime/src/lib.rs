@@ -1,4 +1,5 @@
 pub mod env;
+pub mod glsl;
 
 use donut_core::cell::Globular;
 use donut_core::common::{PrimArg, PrimId};
@@ -177,7 +178,7 @@ impl Runtime {
 }
 
 /// Compute the number of input value slots for a 2-cell.
-fn source_width(cell: &Cell) -> usize {
+pub(crate) fn source_width(cell: &Cell) -> usize {
     match cell.0.as_ref() {
         CellF::Prim(_, src, _) => width_1cell(src),
         CellF::Id(x) => width_1cell(x),
