@@ -21,21 +21,21 @@ pub type ParamInfo = (String, PrimId, ParamKind);
 
 // --- Entry ---
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub(crate) enum EntryBody {
     Cell(FreeCell),
     Meta(Prim),
     Type(u8, Ty),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub(crate) enum Ty {
     Zero,
     Succ(FreeCell, FreeCell),
     Meta(MetaType),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Entry {
     pub name: String,
     pub color: (u8, u8, u8),
@@ -191,7 +191,7 @@ fn format_name_with_args(
 
 // --- Env ---
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Env {
     pub entries: Vec<Entry>,
     pub lookup: HashMap<String, usize>,

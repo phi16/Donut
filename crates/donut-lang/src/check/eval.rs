@@ -25,11 +25,7 @@ impl<'a> Checker<'a> {
                         let mapping = self.build_path_mapping(path)?;
 
                         if let Some(stored) = self.meta_values.get(&index) {
-                            if mapping.is_empty() {
-                                return Ok(stored.clone());
-                            } else {
-                                return Ok(stored.subst(&mapping));
-                            }
+                            return Ok(stored.subst(&mapping));
                         }
 
                         let new_args = base_prim
@@ -146,12 +142,7 @@ impl<'a> Checker<'a> {
                     match &self.entries[idx].body {
                         EntryBody::Type(dim, ty) => {
                             let mapping = self.build_path_mapping(path)?;
-                            let base = (*dim, ty.clone());
-                            if mapping.is_empty() {
-                                return Ok(base);
-                            } else {
-                                return Ok(subst_ty(&base, &mapping));
-                            }
+                            return Ok(subst_ty((*dim, ty), &mapping));
                         }
                         EntryBody::Meta(prim) => {
                             let seg = path.segments.last().unwrap();
@@ -206,10 +197,7 @@ impl<'a> Checker<'a> {
                 cells = cells.into_iter().map(|c| lift_dim(c, max)).collect();
                 Ok(FreeCell::comp(*axis as u8, cells)?)
             }
-            Val::Lit(_) => Err("literal in value position".to_string()),
-            Val::CompStar(_) => Err("unsupported operator in value".to_string()),
-            Val::Arrow(_, _, _) => Err("unsupported operator in value".to_string()),
-            Val::Hole(_) => Err("hole in value position".to_string()),
+            _ => Err("not a cell value".to_string()),
         }
     }
 
@@ -224,19 +212,14 @@ impl<'a> Checker<'a> {
             .resolve_name(&name)
             .ok_or_else(|| format!("unknown variable: {}", name))?;
 
-        let base_cell = match &self.entries[index].body {
-            EntryBody::Cell(cell) => cell.clone(),
+        let base_pure = match &self.entries[index].body {
+            EntryBody::Cell(cell) => &cell.pure,
             EntryBody::Meta(_) => return Err(format!("{} is a meta entry, not a cell", name)),
             EntryBody::Type(_, _) => return Err(format!("{} is a type alias, not a cell", name)),
         };
 
         let mapping = self.build_path_mapping(path)?;
-        if mapping.is_empty() {
-            Ok(base_cell)
-        } else {
-            let new_pure = base_cell.pure.subst(&mapping);
-            Ok(FreeCell::from_pure(&new_pure))
-        }
+        Ok(FreeCell::from_pure(&base_pure.subst(&mapping)))
     }
 
     fn resolve_functor_app(&self, path: &Path, app_id: ValId) -> Result<FreeCell> {
@@ -264,7 +247,7 @@ impl<'a> Checker<'a> {
         match kind {
             ParamKind::Cell => {
                 let arg_cell = self.eval_val(&val_s.0)?;
-                Ok(PrimArg::Cell(arg_cell.pure.clone()))
+                Ok(PrimArg::Cell(arg_cell.pure))
             }
             ParamKind::Meta(mt) => {
                 let mut arg = self.eval_meta_val(&val_s.0)?;
@@ -406,21 +389,11 @@ impl<'a> Checker<'a> {
                 let src_entry = &self.entries[src_idx];
                 let new_body = match &src_entry.body {
                     EntryBody::Cell(cell) => {
-                        let new_pure = if mapping.is_empty() {
-                            cell.pure.clone()
-                        } else {
-                            cell.pure.subst(mapping)
-                        };
-                        EntryBody::Cell(FreeCell::from_pure(&new_pure))
+                        EntryBody::Cell(FreeCell::from_pure(&cell.pure.subst(mapping)))
                     }
                     EntryBody::Meta(prim) => EntryBody::Meta(prim.clone()),
                     EntryBody::Type(dim, ty) => {
-                        let base = (*dim, ty.clone());
-                        let (d, t) = if mapping.is_empty() {
-                            base
-                        } else {
-                            subst_ty(&base, mapping)
-                        };
+                        let (d, t) = subst_ty((*dim, ty), mapping);
                         EntryBody::Type(d, t)
                     }
                 };
@@ -436,12 +409,7 @@ impl<'a> Checker<'a> {
                 }
 
                 if let Some(val) = self.meta_values.get(&src_idx).cloned() {
-                    let new_val = if mapping.is_empty() {
-                        val
-                    } else {
-                        val.subst(mapping)
-                    };
-                    self.meta_values.insert(idx, new_val);
+                    self.meta_values.insert(idx, val.subst(mapping));
                 }
 
                 Some(idx)
@@ -497,8 +465,7 @@ pub(super) fn apply_functor(cell: &PureCell, map: &HashMap<PrimId, FunctorEntry>
     }
 }
 
-fn subst_ty(ty: &(u8, Ty), mapping: &HashMap<PrimId, PrimArg>) -> (u8, Ty) {
-    let (dim, t) = ty;
+fn subst_ty((dim, t): (u8, &Ty), mapping: &HashMap<PrimId, PrimArg>) -> (u8, Ty) {
     let new_t = match t {
         Ty::Zero => Ty::Zero,
         Ty::Succ(s, t) => Ty::Succ(
@@ -507,7 +474,7 @@ fn subst_ty(ty: &(u8, Ty), mapping: &HashMap<PrimId, PrimArg>) -> (u8, Ty) {
         ),
         Ty::Meta(mt) => Ty::Meta(mt.clone()),
     };
-    (*dim, new_t)
+    (dim, new_t)
 }
 
 pub(super) fn make_cell(prim: Prim, ty: &Ty) -> Result<FreeCell> {
@@ -572,9 +539,9 @@ fn try_path_as_number(path: &Path) -> Option<ImplicitNum> {
 }
 
 fn path_name(path: &Path) -> Option<String> {
-    let parts: Vec<_> = path.segments.iter().map(|s| s.0.name.clone()).collect();
-    if parts.is_empty() {
+    if path.segments.is_empty() {
         return None;
     }
+    let parts: Vec<_> = path.segments.iter().map(|s| s.0.name.as_str()).collect();
     Some(parts.join("."))
 }

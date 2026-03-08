@@ -325,13 +325,7 @@ impl App {
             self.diagnostics_el.set_inner_text("");
         } else {
             let _ = self.diagnostics_el.class_list().add_1("has-errors");
-            let diag_text: String = self
-                .diagnostics
-                .iter()
-                .map(|d| d.as_str())
-                .collect::<Vec<_>>()
-                .join("\n");
-            self.diagnostics_el.set_inner_text(&diag_text);
+            self.diagnostics_el.set_inner_text(&self.diagnostics.join("\n"));
         }
 
         // Update eval result

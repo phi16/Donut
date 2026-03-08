@@ -163,6 +163,9 @@ impl Diagram for PureCell {
 
 impl PrimArg {
     pub fn subst(&self, mapping: &HashMap<PrimId, PrimArg>) -> PrimArg {
+        if mapping.is_empty() {
+            return self.clone();
+        }
         match self {
             PrimArg::Cell(pc) => PrimArg::Cell(pc.subst(mapping)),
             PrimArg::Nat(n) => PrimArg::Nat(*n),
@@ -208,6 +211,9 @@ impl PureCell {
     }
 
     pub fn subst(&self, mapping: &HashMap<PrimId, PrimArg>) -> PureCell {
+        if mapping.is_empty() {
+            return self.clone();
+        }
         match self {
             PureCell::Prim(prim, shape, dim) => {
                 // Cell-level fresh prim substitution

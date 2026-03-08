@@ -746,15 +746,15 @@ impl<'a> Checker<'a> {
                     let prim = Prim::new(fresh_id);
                     let cell = make_cell(prim, &ty)?;
                     let level = cell.pure.dim().in_space;
-                    let param_name = self.qualified_name(&param.name);
-                    self.add_entry(param_name.clone(), PARAM_COLOR, EntryBody::Cell(cell.clone()), vec![]);
                     self.accumulated_args.push(PrimArg::Cell(cell.pure.clone()));
+                    let param_name = self.qualified_name(&param.name);
+                    self.add_entry(param_name, PARAM_COLOR, EntryBody::Cell(cell), vec![]);
                     self.register_param_prim_decl(fresh_id, &param.name, level);
                 }
                 ParamKind::Meta(_) => {
                     let prim = Prim::new(fresh_id);
                     let param_name = self.qualified_name(&param.name);
-                    let idx = self.add_entry(param_name.clone(), PARAM_COLOR, EntryBody::Meta(prim), vec![]);
+                    let idx = self.add_entry(param_name, PARAM_COLOR, EntryBody::Meta(prim), vec![]);
                     self.meta_values.insert(idx, PrimArg::App(fresh_id, vec![]));
                     self.accumulated_args.push(PrimArg::App(fresh_id, vec![]));
                     self.register_param_prim_decl(fresh_id, &param.name, 0);
