@@ -290,9 +290,9 @@ impl<'a> HoverBuilder<'a> {
     fn make_hover(&self, qname: &str) -> Option<HoverInfo> {
         let &idx = self.env.lookup.get(qname)?;
         let entry = &self.env.entries[idx];
-        let detail = entry.kind_description();
-        let type_expr = entry.type_display(self.env);
-        let params = self.env.param_display(idx);
+        let detail = entry.display_kind();
+        let type_expr = entry.display_type(self.env);
+        let params = self.env.display_params(idx);
         Some(HoverInfo {
             name: qname.to_string(),
             detail,
@@ -396,7 +396,7 @@ impl<'a> HoverBuilder<'a> {
 
             // Definition site hover
             if is_module_def {
-                let params = self.env.module_param_display(&qname);
+                let params = self.env.display_module_params(&qname);
                 self.map.insert(
                     item.span.start,
                     HoverInfo {

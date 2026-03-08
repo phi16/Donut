@@ -1042,7 +1042,7 @@ fn parametric_module_entry_params_include_parent() {
 }
 
 #[test]
-fn parametric_module_entry_type_display() {
+fn parametric_module_entry_display_type() {
     let env = check_source(
         r#"
         import "base"
@@ -1055,12 +1055,12 @@ fn parametric_module_entry_type_display() {
     )
     .unwrap();
     let &idx = env.lookup.get("u.x").unwrap();
-    let display = env.entries[idx].type_display(&env).unwrap();
+    let display = env.entries[idx].display_type(&env).unwrap();
     assert_eq!(display, "C → K");
 }
 
 #[test]
-fn parametric_module_param_display() {
+fn parametric_module_display_params() {
     let env = check_source(
         r#"
         import "base"
@@ -1073,10 +1073,10 @@ fn parametric_module_param_display() {
     )
     .unwrap();
     let &idx = env.lookup.get("u.x").unwrap();
-    // param_display shows only own params
-    assert_eq!(env.param_display(idx), "[n: nat]");
-    // all_params_display shows all params including parent
-    assert_eq!(env.all_params_display(idx), "[m: nat, n: nat]");
+    // display_params shows only own params
+    assert_eq!(env.display_params(idx), "[n: nat]");
+    // display_all_params shows all params including parent
+    assert_eq!(env.display_all_params(idx), "[m: nat, n: nat]");
 }
 
 #[test]
@@ -1226,7 +1226,7 @@ fn display_pure_cell_composition() {
 }
 
 #[test]
-fn entry_type_display_various() {
+fn entry_display_type_various() {
     let env = check_source(
         r#"
         import "base"
@@ -1238,10 +1238,10 @@ fn entry_type_display_various() {
     .unwrap();
 
     let &c_idx = env.lookup.get("C").unwrap();
-    assert_eq!(env.entries[c_idx].type_display(&env), Some("*".to_string()));
+    assert_eq!(env.entries[c_idx].display_type(&env), Some("*".to_string()));
 
     let &f_idx = env.lookup.get("f").unwrap();
-    assert_eq!(env.entries[f_idx].type_display(&env), Some("C → D".to_string()));
+    assert_eq!(env.entries[f_idx].display_type(&env), Some("C → D".to_string()));
 }
 
 #[test]
@@ -1310,7 +1310,7 @@ fn format_name_with_args_no_origin() {
 }
 
 #[test]
-fn meta_param_display() {
+fn meta_display_params() {
     let env = check_source(
         r#"
         import "base"

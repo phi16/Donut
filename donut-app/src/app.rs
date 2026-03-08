@@ -383,7 +383,7 @@ impl App {
         let Some(selected) = self.selected else {
             return;
         };
-        let text = self.env.all_params_display(selected);
+        let text = self.env.display_all_params(selected);
         if text.is_empty() {
             return;
         }

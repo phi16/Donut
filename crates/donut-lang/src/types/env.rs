@@ -51,7 +51,7 @@ impl Entry {
         }
     }
 
-    pub fn kind_description(&self) -> String {
+    pub fn display_kind(&self) -> String {
         match &self.body {
             EntryBody::Cell(cell) => {
                 let dim = cell.pure.dim().in_space;
@@ -62,7 +62,7 @@ impl Entry {
         }
     }
 
-    pub fn type_display(&self, env: &Env) -> Option<String> {
+    pub fn display_type(&self, env: &Env) -> Option<String> {
         match &self.body {
             EntryBody::Cell(cell) => Some(display_cell_type(&cell.pure, &env.prim_decls)),
             EntryBody::Meta(prim) => {
@@ -205,14 +205,14 @@ pub struct Env {
 impl Env {
     // --- Param display ---
 
-    pub fn param_display(&self, entry_idx: usize) -> String {
+    pub fn display_params(&self, entry_idx: usize) -> String {
         match self.entry_params.get(&entry_idx) {
             Some(ps) if !ps.is_empty() => self.format_params(ps),
             _ => String::new(),
         }
     }
 
-    pub fn module_param_display(&self, qname: &str) -> String {
+    pub fn display_module_params(&self, qname: &str) -> String {
         match self.module_params.get(qname) {
             Some(ps) if !ps.is_empty() => self.format_params(ps),
             _ => String::new(),
@@ -237,7 +237,7 @@ impl Env {
         result
     }
 
-    pub fn all_params_display(&self, entry_idx: usize) -> String {
+    pub fn display_all_params(&self, entry_idx: usize) -> String {
         let ps = self.all_params(entry_idx);
         if ps.is_empty() {
             String::new()
@@ -253,7 +253,7 @@ impl Env {
                 ParamKind::Meta(mt) => format!("{}: {}", name, self.display_meta_type(mt)),
                 ParamKind::Cell => {
                     if let Some(&idx) = self.lookup.get(name) {
-                        if let Some(ty) = self.entries[idx].type_display(self) {
+                        if let Some(ty) = self.entries[idx].display_type(self) {
                             return format!("{}: {}", name, ty);
                         }
                     }
