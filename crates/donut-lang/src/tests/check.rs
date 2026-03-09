@@ -1585,3 +1585,255 @@ fn builtin_ui_passes() {
     );
     assert!(result.is_ok(), "ui builtin should pass: {:?}", result.err());
 }
+
+// --- Name system tests (lname / qname / cname) ---
+
+/// Helper: get entry qname and prim_decl cname for a given lookup key.
+fn get_names(env: &Env, key: &str) -> (String, Option<String>) {
+    let &idx = env.lookup.get(key).expect(&format!("lookup key '{}' not found", key));
+    let entry = &env.entries[idx];
+    let qname = entry.name.clone();
+    let cname = entry.as_cell()
+        .and_then(|c| c.pure.extract_prim_id())
+        .and_then(|pid| env.prim_decls.get(&pid))
+        .map(|d| d.name.clone());
+    (qname, cname)
+}
+
+#[test]
+fn names_toplevel() {
+    let env = check_source(
+        r#"
+        C: *
+        x: C → C
+        m: x x → x
+        "#,
+    )
+    .unwrap();
+    // Top-level: qname == lname, cname == lname
+    let (qname, cname) = get_names(&env, "C");
+    assert_eq!(qname, "C");
+    assert_eq!(cname.unwrap(), "C");
+
+    let (qname, cname) = get_names(&env, "x");
+    assert_eq!(qname, "x");
+    assert_eq!(cname.unwrap(), "x");
+
+    let (qname, cname) = get_names(&env, "m");
+    assert_eq!(qname, "m");
+    assert_eq!(cname.unwrap(), "m");
+}
+
+#[test]
+fn names_module() {
+    let env = check_source(
+        r#"
+        cat = {
+            u: *
+            x: u → u
+        }
+        "#,
+    )
+    .unwrap();
+    // Module: qname = "cat.u", cname = "cat.u"
+    let (qname, cname) = get_names(&env, "cat.u");
+    assert_eq!(qname, "cat.u");
+    assert_eq!(cname.unwrap(), "cat.u");
+
+    let (qname, cname) = get_names(&env, "cat.x");
+    assert_eq!(qname, "cat.x");
+    assert_eq!(cname.unwrap(), "cat.x");
+}
+
+#[test]
+fn names_nested_module() {
+    let env = check_source(
+        r#"
+        a = {
+            b = {
+                u: *
+            }
+        }
+        "#,
+    )
+    .unwrap();
+    let (qname, cname) = get_names(&env, "a.b.u");
+    assert_eq!(qname, "a.b.u");
+    assert_eq!(cname.unwrap(), "a.b.u");
+}
+
+#[test]
+fn names_import_bare() {
+    // `import "sys"` — entries promoted to current scope
+    let env = check_source(
+        r#"
+        import "base"
+        import "sys"
+        "#,
+    )
+    .unwrap();
+    // qname = "C" (promoted), cname = "sys::C"
+    let (qname, cname) = get_names(&env, "C");
+    assert_eq!(qname, "C");
+    assert_eq!(cname.unwrap(), "sys::C");
+
+    let (qname, cname) = get_names(&env, "f32");
+    assert_eq!(qname, "f32");
+    assert_eq!(cname.unwrap(), "sys::f32");
+
+    let (qname, cname) = get_names(&env, "f32.add");
+    assert_eq!(qname, "f32.add");
+    assert_eq!(cname.unwrap(), "sys::f32.add");
+}
+
+#[test]
+fn names_import_named() {
+    // `sys = import "sys"` — entries under "sys." prefix
+    let env = check_source(
+        r#"
+        import "base"
+        sys = import "sys"
+        "#,
+    )
+    .unwrap();
+    // qname = "sys.C", cname = "sys::C"
+    let (qname, cname) = get_names(&env, "sys.C");
+    assert_eq!(qname, "sys.C");
+    assert_eq!(cname.unwrap(), "sys::C");
+
+    let (qname, cname) = get_names(&env, "sys.f32");
+    assert_eq!(qname, "sys.f32");
+    assert_eq!(cname.unwrap(), "sys::f32");
+
+    let (qname, cname) = get_names(&env, "sys.f32.add");
+    assert_eq!(qname, "sys.f32.add");
+    assert_eq!(cname.unwrap(), "sys::f32.add");
+}
+
+#[test]
+fn names_parametric_module() {
+    let env = check_source(
+        r#"
+        import "base"
+        C: *
+        u[m: nat] = {
+            x[n: nat]: C → C
+        }
+        "#,
+    )
+    .unwrap();
+    let (qname, cname) = get_names(&env, "u.x");
+    assert_eq!(qname, "u.x");
+    assert_eq!(cname.unwrap(), "u.x");
+}
+
+#[test]
+fn names_import_both_styles_same_cname() {
+    // Both import styles should produce the same canonical name
+    let env1 = check_source(
+        r#"
+        import "base"
+        import "sys"
+        "#,
+    )
+    .unwrap();
+    let env2 = check_source(
+        r#"
+        import "base"
+        sys = import "sys"
+        "#,
+    )
+    .unwrap();
+
+    // f32.add vs sys.f32.add — different qname, same cname
+    let (_, cname1) = get_names(&env1, "f32.add");
+    let (_, cname2) = get_names(&env2, "sys.f32.add");
+    assert_eq!(cname1.unwrap(), cname2.unwrap());
+}
+
+#[test]
+fn names_entry_origin() {
+    let env = check_source(
+        r#"
+        import "base"
+        sys = import "sys"
+        C: *
+        x: C → C
+        "#,
+    )
+    .unwrap();
+
+    // Imported entries have origin
+    let &sys_c_idx = env.lookup.get("sys.C").unwrap();
+    assert_eq!(env.entries[sys_c_idx].origin.as_deref(), Some("sys"));
+
+    // User-defined entries have no origin
+    let &c_idx = env.lookup.get("C").unwrap();
+    assert_eq!(env.entries[c_idx].origin, None);
+
+    let &x_idx = env.lookup.get("x").unwrap();
+    assert_eq!(env.entries[x_idx].origin, None);
+}
+
+#[test]
+fn names_with_clause() {
+    let env = check_source(
+        r#"
+        C: *
+        x: C → C with {
+            m: x x → x
+        }
+        "#,
+    )
+    .unwrap();
+    let (qname, cname) = get_names(&env, "x");
+    assert_eq!(qname, "x");
+    assert_eq!(cname.unwrap(), "x");
+
+    let (qname, cname) = get_names(&env, "x.m");
+    assert_eq!(qname, "x.m");
+    assert_eq!(cname.unwrap(), "x.m");
+}
+
+#[test]
+fn names_module_body_with_ref() {
+    // x = { a: * }, y = x with { b: a → a } — with clause references body module member
+    let env = check_source(
+        r#"
+        x = {
+            a: *
+        }
+        y = x with {
+            b: a → a
+        }
+        "#,
+    )
+    .unwrap();
+    assert!(env.lookup.contains_key("y.a"));
+    assert!(env.lookup.contains_key("y.b"));
+
+    let (qname, cname) = get_names(&env, "y.b");
+    assert_eq!(qname, "y.b");
+    assert_eq!(cname.unwrap(), "y.b");
+}
+
+#[test]
+fn names_add_clause() {
+    let env = check_source(
+        r#"
+        C: *
+        x: C → C
+        x += {
+            m: x x → x
+        }
+        "#,
+    )
+    .unwrap();
+    let (qname, cname) = get_names(&env, "x");
+    assert_eq!(qname, "x");
+    assert_eq!(cname.unwrap(), "x");
+
+    let (qname, cname) = get_names(&env, "x.m");
+    assert_eq!(qname, "x.m");
+    assert_eq!(cname.unwrap(), "x.m");
+}

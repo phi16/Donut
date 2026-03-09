@@ -527,6 +527,12 @@ impl<'a> Checker<'a> {
         mut result: Module,
         with_clauses: Vec<S<semtree::Module>>,
     ) -> (Module, Vec<CheckNode>) {
+        if with_clauses.is_empty() {
+            return (result, Vec::new());
+        }
+        // Make body members visible in with clauses via merge_used
+        let scope = self.scopes.last_mut().unwrap();
+        let _ = scope.merge_used(result.clone());
         let mut all_check_nodes = Vec::new();
         for with_mod in with_clauses {
             let span = with_mod.1.clone();
@@ -537,6 +543,9 @@ impl<'a> Checker<'a> {
             }
             all_check_nodes.extend(check_nodes);
         }
+        // Clean up: finalize_used will move the merged entries to internal
+        let scope = self.scopes.last_mut().unwrap();
+        scope.finalize_used();
         (result, all_check_nodes)
     }
 
