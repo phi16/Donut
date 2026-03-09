@@ -100,16 +100,24 @@ pub enum Error {
     NotConvertible(PureCell, PureCell),
     IncompatibleDimension,
     EmptyComposition,
+    General(String),
+}
+
+impl Error {
+    pub fn general(msg: impl Into<String>) -> Self {
+        Error::General(msg.into())
+    }
 }
 
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Error::NotConvertible(a, b) => {
-                write!(f, "{}\n is not convertible to\n{}", a, b)
+                write!(f, "{}\nis not convertible to\n{}", a, b)
             }
             Error::IncompatibleDimension => write!(f, "incompatible dimension"),
             Error::EmptyComposition => write!(f, "empty composition"),
+            Error::General(msg) => write!(f, "{}", msg),
         }
     }
 }

@@ -123,31 +123,35 @@ impl Runtime {
         }
     }
 
-    pub fn eval(&self, cell: &FreeCell, input: &[Value]) -> Result<Vec<Value>, String> {
-        self.eval_cell(&cell.cell, input)
+    pub fn eval(&self, cell: &FreeCell, input: &[Value], prim_names: &HashMap<PrimId, String>) -> Result<Vec<Value>, String> {
+        self.eval_cell(&cell.cell, input, prim_names)
     }
 
-    fn eval_cell(&self, cell: &Cell, input: &[Value]) -> Result<Vec<Value>, String> {
+    fn eval_cell(&self, cell: &Cell, input: &[Value], prim_names: &HashMap<PrimId, String>) -> Result<Vec<Value>, String> {
         match cell.0.as_ref() {
             CellF::Prim(prim, src, _) => {
                 let expected = width_1cell(src);
+                let name = || prim_names.get(&prim.id)
+                    .cloned()
+                    .unwrap_or_else(|| format!("prim#{}", prim.id));
                 if input.len() != expected {
                     return Err(format!(
-                        "prim {}: expected {} inputs, got {}",
-                        prim.id, expected, input.len()
+                        "{}: expected {} inputs, got {}",
+                        name(), expected, input.len()
                     ));
                 }
                 let f = self
                     .ops
                     .get(&prim.id)
-                    .ok_or_else(|| format!("no eval function for prim {}", prim.id))?;
+                    .ok_or_else(|| format!("no eval function for {}", name()))?;
                 f(&prim.args, input)
+                    .map_err(|e| format!("{}: {}", name(), e))
             }
             CellF::Id(_) => Ok(input.to_vec()),
             CellF::Comp(1, children) => {
                 let mut current = input.to_vec();
                 for child in children {
-                    current = self.eval_cell(child, &current)?;
+                    current = self.eval_cell(child, &current, prim_names)?;
                 }
                 Ok(current)
             }
@@ -165,7 +169,7 @@ impl Runtime {
                         ));
                     }
                     let child_input = &input[offset..offset + w];
-                    let child_output = self.eval_cell(child, child_input)?;
+                    let child_output = self.eval_cell(child, child_input, prim_names)?;
                     result.extend(child_output);
                     offset += w;
                 }

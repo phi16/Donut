@@ -25,7 +25,10 @@ fn setup(user_code: &str) -> (Runtime, donut_lang::check::Env) {
 fn eval_entry(rt: &Runtime, env: &donut_lang::check::Env, name: &str) -> Vec<Value> {
     let idx = env.lookup.get(name).unwrap_or_else(|| panic!("entry '{}' not found", name));
     let cell = env.entries[*idx].as_cell().unwrap();
-    rt.eval(cell, &[]).unwrap()
+    let prim_names: HashMap<PrimId, String> = env.prim_decls.iter()
+        .map(|(&id, decl)| (id, decl.name.clone()))
+        .collect();
+    rt.eval(cell, &[], &prim_names).unwrap()
 }
 
 #[test]

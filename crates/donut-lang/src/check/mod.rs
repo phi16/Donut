@@ -123,6 +123,10 @@ impl<'a> Checker<'a> {
         }
     }
 
+    fn format_core_error(&self, e: &donut_core::common::Error) -> String {
+        eval::format_core_error(e, &self.prim_decls)
+    }
+
     // --- Prim generation ---
 
     fn fresh_prim_id(&mut self) -> PrimId {
@@ -395,7 +399,7 @@ impl<'a> Checker<'a> {
                         );
                         self.register_prim_decl(prim_id, qname, level, idx);
                     }
-                    Err(msg) => self.error_at(span, msg),
+                    Err(e) => self.error_at(span, self.format_core_error(&e)),
                 }
             }
             Err(msg) => self.error_at(span, msg),
@@ -746,7 +750,8 @@ impl<'a> Checker<'a> {
                 ParamKind::Cell => {
                     let (_, ty) = self.eval_ty(&ty_s.0)?;
                     let prim = Prim::new(fresh_id);
-                    let cell = make_cell(prim, &ty)?;
+                    let cell = make_cell(prim, &ty)
+                        .map_err(|e| self.format_core_error(&e))?;
                     let level = cell.pure.dim().in_space;
                     self.accumulated_args.push(PrimArg::Cell(cell.pure.clone()));
                     let param_name = self.qualified_name(&param.name);

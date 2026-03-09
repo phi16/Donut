@@ -1368,3 +1368,79 @@ fn functor_no_mapping_error_message() {
     let err = result.unwrap_err();
     assert!(err.contains("K"), "error should mention K: {}", err);
 }
+
+#[test]
+fn insufficient_module_params_error() {
+    // u takes 1 param, giving 0 should be an error
+    let result = check_source(
+        r#"
+        import "base"
+        C: *
+        K: C → C
+        u[m: nat] = {
+            x: C → K
+        }
+        y = u.x
+        "#,
+    );
+    let err = result.unwrap_err();
+    assert!(err.contains("u"), "error should mention u: {}", err);
+}
+
+#[test]
+fn insufficient_module_params_partial() {
+    // u takes 2 params, giving 1 should be an error
+    let result = check_source(
+        r#"
+        import "base"
+        C: *
+        K: C → C
+        u[m: nat, n: nat] = {
+            x: C → K
+        }
+        y = u[1].x
+        "#,
+    );
+    let err = result.unwrap_err();
+    assert!(err.contains("u"), "error should mention u: {}", err);
+    assert!(err.contains("2"), "error should mention expected count: {}", err);
+}
+
+#[test]
+fn insufficient_params_error() {
+    // f32x3.lit expects 3 params (x, y, z), giving only 1 should be an error
+    let result = check_source(
+        r#"
+        import "base"
+        import "sys"
+        x = f32x3.lit[1]
+        "#,
+    );
+    assert!(result.is_err(), "f32x3.lit[1] should be a parameter count error");
+}
+
+#[test]
+fn insufficient_params_error_two_of_three() {
+    // f32x3.lit expects 3 params, giving 2 should also be an error
+    let result = check_source(
+        r#"
+        import "base"
+        import "sys"
+        x = f32x3.lit[1, 2]
+        "#,
+    );
+    assert!(result.is_err(), "f32x3.lit[1, 2] should be a parameter count error");
+}
+
+#[test]
+fn exact_params_ok() {
+    // f32x3.lit with exactly 3 params should succeed
+    let result = check_source(
+        r#"
+        import "base"
+        import "sys"
+        x = f32x3.lit[1, 2, 3]
+        "#,
+    );
+    assert!(result.is_ok(), "f32x3.lit[1, 2, 3] should succeed");
+}

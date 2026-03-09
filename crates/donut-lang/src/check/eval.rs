@@ -1,5 +1,18 @@
 use super::*;
 
+pub(super) fn format_core_error(e: &donut_core::common::Error, prim_decls: &HashMap<PrimId, PrimDecl>) -> String {
+    match e {
+        donut_core::common::Error::NotConvertible(a, b) => {
+            format!(
+                "{}\nis not convertible to\n{}",
+                display_pure_cell(a, prim_decls),
+                display_pure_cell(b, prim_decls)
+            )
+        }
+        _ => e.to_string(),
+    }
+}
+
 // --- Checker methods: evaluation ---
 
 impl<'a> Checker<'a> {
@@ -167,7 +180,7 @@ impl<'a> Checker<'a> {
                 let max = s.pure.dim().in_space.max(t.pure.dim().in_space);
                 s = lift_dim(s, max);
                 t = lift_dim(t, max);
-                check_prim(&s.pure, &t.pure).map_err(|e| e.to_string())?;
+                check_prim(&s.pure, &t.pure).map_err(|e| format_core_error(&e, &self.prim_decls))?;
                 Ok((max + 1, Ty::Succ(s, t)))
             }
             Val::Arrow(ArrowKind::Functor, _, _) => Err("expected arrow type".to_string()),
@@ -195,7 +208,7 @@ impl<'a> Checker<'a> {
                     .max()
                     .unwrap();
                 cells = cells.into_iter().map(|c| lift_dim(c, max)).collect();
-                Ok(FreeCell::comp(*axis, cells).map_err(|e| e.to_string())?)
+                Ok(FreeCell::comp(*axis, cells).map_err(|e| format_core_error(&e, &self.prim_decls))?)
             }
             _ => Err("not a cell value".to_string()),
         }
@@ -273,10 +286,6 @@ impl<'a> Checker<'a> {
                 current = format!("{}.{}", current, seg.name);
             }
 
-            if seg.params.is_empty() {
-                continue;
-            }
-
             let params = self.resolve_name(&current)
                 .and_then(|idx| self.entry_params.get(&idx))
                 .or_else(|| {
@@ -285,17 +294,15 @@ impl<'a> Checker<'a> {
                 });
 
             if let Some(params) = params {
-                if seg.params.len() > params.len() {
+                if seg.params.len() != params.len() {
                     return Err(format!(
                         "{}: expected {} parameter(s), got {}",
                         current, params.len(), seg.params.len()
                     ));
                 }
                 for (i, p) in params.iter().enumerate() {
-                    if let Some(pv) = seg.params.get(i) {
-                        let arg = self.resolve_param_arg(pv, &p.kind)?;
-                        mapping.insert(p.prim_id, arg);
-                    }
+                    let arg = self.resolve_param_arg(&seg.params[i], &p.kind)?;
+                    mapping.insert(p.prim_id, arg);
                 }
             } else if !seg.params.is_empty() {
                 return Err(format!("{} does not take parameters", current));
@@ -342,7 +349,7 @@ impl<'a> Checker<'a> {
             };
 
             if let Some(params) = self.module_params.get(&resolved_name) {
-                if seg.params.len() > params.len() {
+                if seg.params.len() != params.len() {
                     return Ok(None);
                 }
                 for (i, p) in params.iter().enumerate() {
@@ -460,7 +467,7 @@ pub(super) fn apply_functor(cell: &PureCell, map: &HashMap<PrimId, FunctorEntry>
                 .iter()
                 .map(|c| apply_functor(c, map, prim_decls))
                 .collect::<Result<_>>()?;
-            PureCell::comp(*axis, mapped).map_err(|e| e.to_string())
+            PureCell::comp(*axis, mapped).map_err(|e| format_core_error(&e, prim_decls))
         }
     }
 }
@@ -477,11 +484,11 @@ fn subst_ty((dim, t): (u8, &Ty), mapping: &HashMap<PrimId, PrimArg>) -> (u8, Ty)
     (dim, new_t)
 }
 
-pub(super) fn make_cell(prim: Prim, ty: &Ty) -> Result<FreeCell> {
+pub(super) fn make_cell(prim: Prim, ty: &Ty) -> donut_core::common::Result<FreeCell> {
     match ty {
         Ty::Zero => Ok(FreeCell::zero(prim)),
-        Ty::Succ(s, t) => FreeCell::prim(prim, s.clone(), t.clone()).map_err(|e| e.to_string()),
-        Ty::Meta(_) => Err("meta type cannot be used as cell type".to_string()),
+        Ty::Succ(s, t) => FreeCell::prim(prim, s.clone(), t.clone()),
+        Ty::Meta(_) => Err(donut_core::common::Error::general("meta type cannot be used as cell type")),
     }
 }
 

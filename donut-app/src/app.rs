@@ -366,7 +366,7 @@ impl App {
             .collect();
         let eval_str = match self.runtime.eval_check(cell, &prim_names) {
             Some(reason) => reason,
-            None => match self.runtime.eval(cell, &[]) {
+            None => match self.runtime.eval(cell, &[], &prim_names) {
                 Ok(values) => format!("= {}", donut_runtime::format_values(&values)),
                 Err(e) => format!("BUG: {}", e),
             },
