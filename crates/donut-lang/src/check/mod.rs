@@ -18,7 +18,55 @@ pub use crate::types::env::{
     ParamKind, PrimDecl,
 };
 
-type Result<T> = std::result::Result<T, String>;
+// --- Check error ---
+
+pub(super) enum CheckError {
+    NotConvertible(PureCell, PureCell),
+    IncompatibleDimension,
+    EmptyComposition,
+    NoFunctorMapping(Prim),
+    ParamCount { name: String, expected: usize, got: usize },
+    General(String),
+}
+
+impl CheckError {
+    pub(super) fn general(msg: impl Into<String>) -> Self {
+        CheckError::General(msg.into())
+    }
+
+    pub(super) fn format(&self, prim_decls: &HashMap<PrimId, PrimDecl>) -> String {
+        match self {
+            CheckError::NotConvertible(a, b) => format!(
+                "{}\nis not convertible to\n{}",
+                display_pure_cell(a, prim_decls),
+                display_pure_cell(b, prim_decls),
+            ),
+            CheckError::IncompatibleDimension => "incompatible dimension".to_string(),
+            CheckError::EmptyComposition => "empty composition".to_string(),
+            CheckError::NoFunctorMapping(prim) => format!(
+                "functor: no mapping for {}",
+                display_prim(prim, prim_decls),
+            ),
+            CheckError::ParamCount { name, expected, got } => format!(
+                "{}: expected {} parameter(s), got {}",
+                name, expected, got,
+            ),
+            CheckError::General(msg) => msg.clone(),
+        }
+    }
+}
+
+impl From<donut_core::common::Error> for CheckError {
+    fn from(e: donut_core::common::Error) -> Self {
+        match e {
+            donut_core::common::Error::NotConvertible(a, b) => CheckError::NotConvertible(a, b),
+            donut_core::common::Error::IncompatibleDimension => CheckError::IncompatibleDimension,
+            donut_core::common::Error::EmptyComposition => CheckError::EmptyComposition,
+        }
+    }
+}
+
+type Result<T> = std::result::Result<T, CheckError>;
 
 // --- Module member reference ---
 
@@ -123,8 +171,8 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn format_core_error(&self, e: &donut_core::common::Error) -> String {
-        eval::format_core_error(e, &self.prim_decls)
+    fn check_error_at(&mut self, span: &TokenSpan, err: CheckError) {
+        self.error_at(span, err.format(&self.prim_decls));
     }
 
     // --- Prim generation ---
@@ -276,7 +324,7 @@ impl<'a> Checker<'a> {
         let param_freshes = match self.enter_params(&item.params) {
             Ok(f) => f,
             Err(msg) => {
-                self.error_at(span, msg);
+                self.check_error_at(span, msg);
                 return;
             }
         };
@@ -306,7 +354,7 @@ impl<'a> Checker<'a> {
                             }
                             Ok(None) => {}
                             Err(msg) => {
-                                self.error_at(span, msg);
+                                self.check_error_at(span, msg);
                                 self.exit_params(&param_freshes);
                                 return;
                             }
@@ -399,10 +447,10 @@ impl<'a> Checker<'a> {
                         );
                         self.register_prim_decl(prim_id, qname, level, idx);
                     }
-                    Err(e) => self.error_at(span, self.format_core_error(&e)),
+                    Err(e) => self.check_error_at(span, e),
                 }
             }
-            Err(msg) => self.error_at(span, msg),
+            Err(msg) => self.check_error_at(span, msg),
         }
     }
 
@@ -461,7 +509,7 @@ impl<'a> Checker<'a> {
                 qname, span, color, body_val, Some(declared_ret),
                 param_freshes,
             ) {
-                self.error_at(span, msg);
+                self.check_error_at(span, msg);
             }
             return;
         }
@@ -484,7 +532,7 @@ impl<'a> Checker<'a> {
                             )
                         };
                         if let Err(msg) = match_ty(declared_ty, &body_ty) {
-                            self.error_at(span, msg);
+                            self.check_error_at(span, msg);
                         }
                     }
                 }
@@ -498,7 +546,7 @@ impl<'a> Checker<'a> {
 
         // Fallbacks only when untyped
         if declared_ty.is_some() {
-            self.error_at(span, cell_err);
+            self.check_error_at(span, cell_err);
             return;
         }
 
@@ -520,7 +568,7 @@ impl<'a> Checker<'a> {
             return;
         }
 
-        self.error_at(span, cell_err);
+        self.check_error_at(span, cell_err);
     }
 
     fn check_functor(&mut self, item: &Item, qname: &str, mappings: &[FunctorMapping]) {
@@ -540,8 +588,8 @@ impl<'a> Checker<'a> {
                 let r = self.program.val(*r_id);
                 match (self.eval_val(&l.0), self.eval_val(&r.0)) {
                     (Ok(s), Ok(t)) => (s, t),
-                    (Err(msg), _) | (_, Err(msg)) => {
-                        self.error_at(span, msg);
+                    (Err(e), _) | (_, Err(e)) => {
+                        self.check_error_at(span, e);
                         return;
                     }
                 }
@@ -571,7 +619,7 @@ impl<'a> Checker<'a> {
             let mapping_freshes = match self.enter_params(&mapping.params) {
                 Ok(f) => f,
                 Err(msg) => {
-                    self.error_at(span, msg);
+                    self.check_error_at(span, msg);
                     continue;
                 }
             };
@@ -592,8 +640,8 @@ impl<'a> Checker<'a> {
             }
             let app_cell = match self.eval_val(app_val) {
                 Ok(c) => c,
-                Err(msg) => {
-                    self.error_at(&app_span, msg);
+                Err(e) => {
+                    self.check_error_at(&app_span, e);
                     self.exit_params(&mapping_freshes);
                     continue;
                 }
@@ -613,8 +661,8 @@ impl<'a> Checker<'a> {
             let val_val = &self.program.val(mapping.val).0;
             let val_cell = match self.eval_val(val_val) {
                 Ok(c) => c,
-                Err(msg) => {
-                    self.error_at(&val_span, msg);
+                Err(e) => {
+                    self.check_error_at(&val_span, e);
                     self.exit_params(&mapping_freshes);
                     continue;
                 }
@@ -647,8 +695,8 @@ impl<'a> Checker<'a> {
                 val_pure = PureCell::id(val_pure);
             }
 
-            let expected_s = apply_functor(&app_cell.pure.s(), &functor_map, &self.prim_decls);
-            let expected_t = apply_functor(&app_cell.pure.t(), &functor_map, &self.prim_decls);
+            let expected_s = apply_functor(&app_cell.pure.s(), &functor_map);
+            let expected_t = apply_functor(&app_cell.pure.t(), &functor_map);
 
             match (expected_s, expected_t) {
                 (Ok(es), Ok(et)) => {
@@ -659,7 +707,8 @@ impl<'a> Checker<'a> {
                             &val_span,
                             format!(
                                 "functor mapping source mismatch:\n  expected {}\n  got {}",
-                                es, actual_s
+                                display_pure_cell(&es, &self.prim_decls),
+                                display_pure_cell(&actual_s, &self.prim_decls),
                             ),
                         );
                         continue;
@@ -669,14 +718,15 @@ impl<'a> Checker<'a> {
                             &val_span,
                             format!(
                                 "functor mapping target mismatch:\n  expected {}\n  got {}",
-                                et, actual_t
+                                display_pure_cell(&et, &self.prim_decls),
+                                display_pure_cell(&actual_t, &self.prim_decls),
                             ),
                         );
                         continue;
                     }
                 }
-                (Err(msg), _) | (_, Err(msg)) => {
-                    self.error_at(&app_span, msg);
+                (Err(e), _) | (_, Err(e)) => {
+                    self.check_error_at(&app_span, e);
                     continue;
                 }
             }
@@ -750,8 +800,7 @@ impl<'a> Checker<'a> {
                 ParamKind::Cell => {
                     let (_, ty) = self.eval_ty(&ty_s.0)?;
                     let prim = Prim::new(fresh_id);
-                    let cell = make_cell(prim, &ty)
-                        .map_err(|e| self.format_core_error(&e))?;
+                    let cell = make_cell(prim, &ty)?;
                     let level = cell.pure.dim().in_space;
                     self.accumulated_args.push(PrimArg::Cell(cell.pure.clone()));
                     let param_name = self.qualified_name(&param.name);

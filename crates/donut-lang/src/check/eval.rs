@@ -1,18 +1,5 @@
 use super::*;
 
-pub(super) fn format_core_error(e: &donut_core::common::Error, prim_decls: &HashMap<PrimId, PrimDecl>) -> String {
-    match e {
-        donut_core::common::Error::NotConvertible(a, b) => {
-            format!(
-                "{}\nis not convertible to\n{}",
-                display_pure_cell(a, prim_decls),
-                display_pure_cell(b, prim_decls)
-            )
-        }
-        _ => e.to_string(),
-    }
-}
-
 // --- Checker methods: evaluation ---
 
 impl<'a> Checker<'a> {
@@ -28,10 +15,10 @@ impl<'a> Checker<'a> {
                     };
                 }
 
-                let name = path_name(path).ok_or_else(|| "invalid meta path".to_string())?;
+                let name = path_name(path).ok_or_else(|| CheckError::general("invalid meta path"))?;
                 let index = self
                     .resolve_name(&name)
-                    .ok_or_else(|| format!("unknown: {}", name))?;
+                    .ok_or_else(|| CheckError::general(format!("unknown: {}", name)))?;
 
                 match &self.entries[index].body {
                     EntryBody::Meta(base_prim) => {
@@ -49,23 +36,23 @@ impl<'a> Checker<'a> {
                         Ok(PrimArg::App(base_prim.id, new_args))
                     }
                     EntryBody::Cell(_) => {
-                        Err(format!("{} is not a meta entry", name))
+                        Err(CheckError::general(format!("{} is not a meta entry", name)))
                     }
                     EntryBody::Type(_, _) => {
-                        Err(format!("{} is a type alias, not a meta value", name))
+                        Err(CheckError::general(format!("{} is a type alias, not a meta value", name)))
                     }
                 }
             }
             Val::Lit(Lit::Number(s)) => {
                 if s.contains('.') {
-                    let r: f64 = s.parse().map_err(|e: std::num::ParseFloatError| e.to_string())?;
+                    let r: f64 = s.parse().map_err(|e: std::num::ParseFloatError| CheckError::general(e.to_string()))?;
                     Ok(PrimArg::rat(r))
                 } else {
-                    let n: u64 = s.parse().map_err(|_| format!("invalid nat: {}", s))?;
+                    let n: u64 = s.parse().map_err(|_| CheckError::general(format!("invalid nat: {}", s)))?;
                     Ok(PrimArg::Nat(n))
                 }
             }
-            _ => Err("unsupported in meta context".to_string()),
+            _ => Err(CheckError::general("unsupported in meta context")),
         }
     }
 
@@ -140,10 +127,10 @@ impl<'a> Checker<'a> {
     pub(super) fn eval_ty(&self, val: &Val) -> Result<(u8, Ty)> {
         match val {
             Val::Path(path) => {
-                let name = path_name(path).ok_or_else(|| "invalid type".to_string())?;
+                let name = path_name(path).ok_or_else(|| CheckError::general("invalid type"))?;
                 if name == "*" {
                     if path.segments.iter().any(|s| !s.0.params.is_empty()) {
-                        return Err("* does not take parameters".to_string());
+                        return Err(CheckError::general("* does not take parameters"));
                     }
                     return Ok((0, Ty::Zero));
                 }
@@ -170,7 +157,7 @@ impl<'a> Checker<'a> {
                         EntryBody::Cell(_) => {}
                     }
                 }
-                Err("expected `*` or arrow type".to_string())
+                Err(CheckError::general("expected `*` or arrow type"))
             }
             Val::Arrow(ArrowKind::To | ArrowKind::Eq, l_id, r_id) => {
                 let l = self.program.val(*l_id);
@@ -180,12 +167,12 @@ impl<'a> Checker<'a> {
                 let max = s.pure.dim().in_space.max(t.pure.dim().in_space);
                 s = lift_dim(s, max);
                 t = lift_dim(t, max);
-                check_prim(&s.pure, &t.pure).map_err(|e| format_core_error(&e, &self.prim_decls))?;
+                check_prim(&s.pure, &t.pure)?;
                 Ok((max + 1, Ty::Succ(s, t)))
             }
-            Val::Arrow(ArrowKind::Functor, _, _) => Err("expected arrow type".to_string()),
-            Val::Hole(_) => Err("hole in type position".to_string()),
-            _ => Err("expected `*` or arrow type".to_string()),
+            Val::Arrow(ArrowKind::Functor, _, _) => Err(CheckError::general("expected arrow type")),
+            Val::Hole(_) => Err(CheckError::general("hole in type position")),
+            _ => Err(CheckError::general("expected `*` or arrow type")),
         }
     }
 
@@ -208,9 +195,9 @@ impl<'a> Checker<'a> {
                     .max()
                     .unwrap();
                 cells = cells.into_iter().map(|c| lift_dim(c, max)).collect();
-                Ok(FreeCell::comp(*axis, cells).map_err(|e| format_core_error(&e, &self.prim_decls))?)
+                Ok(FreeCell::comp(*axis, cells)?)
             }
-            _ => Err("not a cell value".to_string()),
+            _ => Err(CheckError::general("not a cell value")),
         }
     }
 
@@ -220,15 +207,15 @@ impl<'a> Checker<'a> {
         if let Some(app_id) = path.applicand {
             return self.resolve_functor_app(path, app_id);
         }
-        let name = path_name(path).ok_or_else(|| "invalid path".to_string())?;
+        let name = path_name(path).ok_or_else(|| CheckError::general("invalid path"))?;
         let index = self
             .resolve_name(&name)
-            .ok_or_else(|| format!("unknown variable: {}", name))?;
+            .ok_or_else(|| CheckError::general(format!("unknown variable: {}", name)))?;
 
         let base_pure = match &self.entries[index].body {
             EntryBody::Cell(cell) => &cell.pure,
-            EntryBody::Meta(_) => return Err(format!("{} is a meta entry, not a cell", name)),
-            EntryBody::Type(_, _) => return Err(format!("{} is a type alias, not a cell", name)),
+            EntryBody::Meta(_) => return Err(CheckError::general(format!("{} is a meta entry, not a cell", name))),
+            EntryBody::Type(_, _) => return Err(CheckError::general(format!("{} is a type alias, not a cell", name))),
         };
 
         let mapping = self.build_path_mapping(path)?;
@@ -236,18 +223,18 @@ impl<'a> Checker<'a> {
     }
 
     fn resolve_functor_app(&self, path: &Path, app_id: ValId) -> Result<FreeCell> {
-        let name = path_name(path).ok_or_else(|| "invalid path".to_string())?;
+        let name = path_name(path).ok_or_else(|| CheckError::general("invalid path"))?;
 
         let functor_name = self.resolve_functor_name(&name)
-            .ok_or_else(|| format!("{} is not a functor", name))?;
+            .ok_or_else(|| CheckError::general(format!("{} is not a functor", name)))?;
 
         let map = self.functor_maps.get(&functor_name)
-            .ok_or_else(|| format!("{} is not a functor", name))?;
+            .ok_or_else(|| CheckError::general(format!("{} is not a functor", name)))?;
 
         let app_val = &self.program.val(app_id).0;
         let arg_cell = self.eval_val(app_val)?;
 
-        let result_pure = apply_functor(&arg_cell.pure, map, &self.prim_decls)?;
+        let result_pure = apply_functor(&arg_cell.pure, map)?;
         Ok(FreeCell::from_pure(&result_pure))
     }
 
@@ -295,17 +282,22 @@ impl<'a> Checker<'a> {
 
             if let Some(params) = params {
                 if seg.params.len() != params.len() {
-                    return Err(format!(
-                        "{}: expected {} parameter(s), got {}",
-                        current, params.len(), seg.params.len()
-                    ));
+                    return Err(CheckError::ParamCount {
+                        name: current,
+                        expected: params.len(),
+                        got: seg.params.len(),
+                    });
                 }
                 for (i, p) in params.iter().enumerate() {
                     let arg = self.resolve_param_arg(&seg.params[i], &p.kind)?;
                     mapping.insert(p.prim_id, arg);
                 }
             } else if !seg.params.is_empty() {
-                return Err(format!("{} does not take parameters", current));
+                return Err(CheckError::ParamCount {
+                    name: current,
+                    expected: 0,
+                    got: seg.params.len(),
+                });
             }
         }
 
@@ -353,10 +345,8 @@ impl<'a> Checker<'a> {
                     return Ok(None);
                 }
                 for (i, p) in params.iter().enumerate() {
-                    if let Some(pv) = seg.params.get(i) {
-                        let arg = self.resolve_param_arg(pv, &p.kind)?;
-                        mapping.insert(p.prim_id, arg);
-                    }
+                    let arg = self.resolve_param_arg(&seg.params[i], &p.kind)?;
+                    mapping.insert(p.prim_id, arg);
                 }
             }
 
@@ -440,7 +430,7 @@ impl<'a> Checker<'a> {
 
 // --- Free functions ---
 
-pub(super) fn apply_functor(cell: &PureCell, map: &HashMap<PrimId, FunctorEntry>, prim_decls: &HashMap<PrimId, PrimDecl>) -> Result<PureCell> {
+pub(super) fn apply_functor(cell: &PureCell, map: &HashMap<PrimId, FunctorEntry>) -> Result<PureCell> {
     match cell {
         PureCell::Prim(prim, _, dim) => match map.get(&prim.id) {
             Some(entry) => {
@@ -457,17 +447,14 @@ pub(super) fn apply_functor(cell: &PureCell, map: &HashMap<PrimId, FunctorEntry>
                 }
                 Ok(result)
             }
-            None => {
-                let display = crate::types::env::display_prim(prim, prim_decls);
-                Err(format!("functor: no mapping for {}", display))
-            }
+            None => Err(CheckError::NoFunctorMapping(prim.clone()))
         },
         PureCell::Comp(axis, children, _) => {
             let mapped: Vec<PureCell> = children
                 .iter()
-                .map(|c| apply_functor(c, map, prim_decls))
+                .map(|c| apply_functor(c, map))
                 .collect::<Result<_>>()?;
-            PureCell::comp(*axis, mapped).map_err(|e| format_core_error(&e, prim_decls))
+            Ok(PureCell::comp(*axis, mapped)?)
         }
     }
 }
@@ -484,11 +471,11 @@ fn subst_ty((dim, t): (u8, &Ty), mapping: &HashMap<PrimId, PrimArg>) -> (u8, Ty)
     (dim, new_t)
 }
 
-pub(super) fn make_cell(prim: Prim, ty: &Ty) -> donut_core::common::Result<FreeCell> {
+pub(super) fn make_cell(prim: Prim, ty: &Ty) -> Result<FreeCell> {
     match ty {
         Ty::Zero => Ok(FreeCell::zero(prim)),
-        Ty::Succ(s, t) => FreeCell::prim(prim, s.clone(), t.clone()),
-        Ty::Meta(_) => Err(donut_core::common::Error::general("meta type cannot be used as cell type")),
+        Ty::Succ(s, t) => Ok(FreeCell::prim(prim, s.clone(), t.clone())?),
+        Ty::Meta(_) => Err(CheckError::general("meta type cannot be used as cell type")),
     }
 }
 
@@ -497,15 +484,15 @@ pub(super) fn match_ty(x: &Ty, y: &Ty) -> Result<()> {
         (Ty::Zero, Ty::Zero) => Ok(()),
         (Ty::Succ(xs, xt), Ty::Succ(ys, yt)) => {
             if !xs.pure.is_convertible(&ys.pure) {
-                return Err("type mismatch in arrow source".to_string());
+                return Err(CheckError::NotConvertible(xs.pure.clone(), ys.pure.clone()));
             }
             if !xt.pure.is_convertible(&yt.pure) {
-                return Err("type mismatch in arrow target".to_string());
+                return Err(CheckError::NotConvertible(xt.pure.clone(), yt.pure.clone()));
             }
             Ok(())
         }
         (Ty::Meta(a), Ty::Meta(b)) if a == b => Ok(()),
-        _ => Err("type mismatch".to_string()),
+        _ => Err(CheckError::general("type mismatch")),
     }
 }
 

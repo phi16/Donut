@@ -53,7 +53,7 @@ impl<'a> Checker<'a> {
             if is_decorator {
                 match self.eval_meta_val(&deco.0) {
                     Ok(prim_arg) => result.push(self.reduce_meta(&prim_arg)),
-                    Err(msg) => self.error_at(&span, msg),
+                    Err(e) => self.check_error_at(&span, e),
                 }
             } else {
                 self.error_at(&span, "decorator must have type `base.decorator`");
