@@ -274,16 +274,7 @@ impl<'a> Checker<'a> {
     /// Generate CheckNodes for an already-resolved Module (used for imports and path inheritance).
     fn generate_check_nodes_for_module(&self, module: &Module) -> Vec<CheckNode> {
         let mut nodes = Vec::new();
-        for (name, item_id) in &module.internal {
-            nodes.push(CheckNode::Item { name: name.clone(), item_id: *item_id });
-            if let Some(members) = self.item(*item_id).members() {
-                if !members.entries.is_empty() || !members.internal.is_empty() {
-                    let children = self.generate_check_nodes_for_module(members);
-                    nodes.push(CheckNode::Scope { item_id: *item_id, children });
-                }
-            }
-        }
-        for (name, item_id) in &module.entries {
+        for (name, item_id) in module.internal.iter().chain(&module.entries) {
             nodes.push(CheckNode::Item { name: name.clone(), item_id: *item_id });
             if let Some(members) = self.item(*item_id).members() {
                 if !members.entries.is_empty() || !members.internal.is_empty() {

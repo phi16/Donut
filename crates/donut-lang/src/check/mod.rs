@@ -327,8 +327,7 @@ impl<'a> Checker<'a> {
         self.prefixes.push(canonical.clone());
         self.param_count_stack.push(param_freshes.len());
 
-        // Process children — first pass: check items and process scopes
-        let mut new_members = Vec::new();
+        // Check all items and sub-scopes
         for child in children {
             match child {
                 CheckNode::Item { name, item_id: child_id } => {
@@ -340,9 +339,12 @@ impl<'a> Checker<'a> {
                 }
             }
         }
-        // Second pass: collect members (after all scopes processed, so sub-modules are registered)
+
+        // Collect members after all children are processed
+        // (sub-module scopes must be registered before we check is_sub_module)
+        let mut new_members = Vec::new();
         for child in children {
-            if let CheckNode::Item { name, item_id: _ } = child {
+            if let CheckNode::Item { name, .. } = child {
                 let full_name = format!("{}.{}", canonical, name);
                 let entry_idx = self.lookup.get(&full_name).copied();
                 let is_sub_module = self.module_members.contains_key(&full_name);
