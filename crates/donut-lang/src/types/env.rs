@@ -43,6 +43,25 @@ pub struct ParamInfo {
     pub kind: ParamKind,
 }
 
+// --- Entry kind (public) ---
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EntryKind {
+    Cell(u8), // dimension
+    Meta,
+    Type,
+}
+
+impl EntryKind {
+    pub fn display(&self) -> String {
+        match self {
+            EntryKind::Cell(dim) => format!("{}-cell", dim),
+            EntryKind::Meta => "meta".to_string(),
+            EntryKind::Type => "type".to_string(),
+        }
+    }
+}
+
 // --- Entry ---
 
 #[derive(Debug)]
@@ -77,15 +96,16 @@ impl Entry {
         }
     }
 
-    pub fn display_kind(&self) -> String {
+    pub fn kind(&self) -> EntryKind {
         match &self.body {
-            EntryBody::Cell(cell) => {
-                let dim = cell.pure.dim().in_space;
-                format!("{}-cell", dim)
-            }
-            EntryBody::Meta(_) => "meta".to_string(),
-            EntryBody::Type(_, _) => "type".to_string(),
+            EntryBody::Cell(cell) => EntryKind::Cell(cell.pure.dim().in_space),
+            EntryBody::Meta(_) => EntryKind::Meta,
+            EntryBody::Type(_, _) => EntryKind::Type,
         }
+    }
+
+    pub fn display_kind(&self) -> String {
+        self.kind().display()
     }
 
     pub fn display_type(&self, env: &Env) -> Option<String> {

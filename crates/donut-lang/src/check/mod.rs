@@ -14,8 +14,8 @@ use eval::{apply_functor, make_cell, match_ty};
 use std::collections::HashMap;
 
 pub use crate::types::env::{
-    display_cell_type, display_prim, display_pure_cell, Color, Entry, Env, MetaType, ParamInfo,
-    ParamKind, PrimDecl,
+    display_cell_type, display_prim, display_pure_cell, Color, Entry, EntryKind, Env, MetaType,
+    ParamInfo, ParamKind, PrimDecl,
 };
 
 // --- Check error ---

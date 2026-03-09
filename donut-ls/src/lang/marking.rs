@@ -1,19 +1,24 @@
 use donut_lang::types::common;
 use donut_lang::types::syntree;
+use std::collections::HashMap;
 
 use super::TokenType;
 
 pub(super) struct Context {
     tokens: Vec<super::TokenData>,
+    dot_prefixes: HashMap<usize, String>,
 }
 
 impl Context {
     pub fn new(tokens: Vec<super::TokenData>) -> Self {
-        Self { tokens }
+        Self {
+            tokens,
+            dot_prefixes: HashMap::new(),
+        }
     }
 
-    pub fn into_inner(self) -> Vec<super::TokenData> {
-        self.tokens
+    pub fn into_parts(self) -> (Vec<super::TokenData>, HashMap<usize, String>) {
+        (self.tokens, self.dot_prefixes)
     }
 
     fn mark_as(&mut self, index: usize, t: TokenType) {
@@ -25,8 +30,25 @@ impl Context {
     }
     fn mark_elem_as<T>(&mut self, e: &common::A<T>, t: TokenType) {
         if let common::A::Accepted(_, span) = e {
-            // TODO: end?
             self.mark_as(span.start, t);
+        }
+    }
+
+    /// Record dot prefix entries for each segment boundary in a path.
+    /// For segments [A, B, C], records:
+    ///   span_A.end → "A"
+    ///   span_B.end → "A.B"
+    ///   span_C.end → "A.B.C"
+    fn record_dot_prefixes(&mut self, segments: &[common::A<syntree::Segment>]) {
+        let mut names = Vec::new();
+        for seg_a in segments {
+            if let common::A::Accepted(seg, span) = seg_a {
+                if let common::A::Accepted(name, _) = &seg.0 {
+                    names.push(name.0.as_str());
+                    let prefix = names.join(".");
+                    self.dot_prefixes.insert(span.end, prefix);
+                }
+            }
         }
     }
 }
@@ -101,6 +123,7 @@ impl Marking for syntree::Segment {
 }
 impl Marking for syntree::Path {
     fn mark(&self, x: &mut Context) {
+        x.record_dot_prefixes(&self.0);
         self.0.mark(x);
         self.1.mark(x);
     }
@@ -164,6 +187,12 @@ impl Marking for syntree::ValMod {
 }
 impl Marking for syntree::DeclUnit {
     fn mark(&self, x: &mut Context) {
+        // Declaration name paths also need dot prefix recording
+        for name_path_a in &self.names {
+            if let common::A::Accepted(path, _) = name_path_a {
+                x.record_dot_prefixes(&path.0);
+            }
+        }
         self.names.mark(x);
         self.ty.mark(x);
         self.assign.mark(x);

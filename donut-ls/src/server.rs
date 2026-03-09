@@ -1,5 +1,5 @@
 use crate::doc::Doc;
-use crate::lang::{analyze, TokenType};
+use crate::lang::{analyze, CompletionCandidate, TokenType};
 use colored::Colorize;
 use lsp_server::{Connection, Message, Notification, Request, Response};
 use lsp_types::*;
@@ -257,10 +257,11 @@ impl<'a> Server<'a> {
         let hover_info = token_idx.and_then(|idx| doc.hover_map.get(&idx));
         match hover_info {
             Some(info) => {
+                let detail = info.display_detail();
                 let content = if let Some(ty) = &info.type_expr {
-                    format!("```donut\n{}{}: {}\n```\n{}", info.name, info.params, ty, info.detail)
+                    format!("```donut\n{}{}: {}\n```\n{}", info.name, info.params, ty, detail)
                 } else {
-                    format!("```donut\n{}{}\n```\n{}", info.name, info.params, info.detail)
+                    format!("```donut\n{}{}\n```\n{}", info.name, info.params, detail)
                 };
                 Ok(Some(Hover {
                     contents: HoverContents::Markup(MarkupContent {
@@ -558,24 +559,23 @@ where
     N::METHOD
 }
 
-fn candidate_to_item(
-    c: &crate::lang::CompletionCandidate,
-    cursor_line: u32,
-) -> CompletionItem {
-    use crate::lang::CompletionKind;
+fn candidate_to_item(c: &CompletionCandidate, cursor_line: u32) -> CompletionItem {
+    use donut_lang::check::EntryKind;
 
-    let kind = match &c.kind {
-        CompletionKind::Cell(_) => Some(CompletionItemKind::VARIABLE),
-        CompletionKind::Meta => Some(CompletionItemKind::CONSTANT),
-        CompletionKind::Type => Some(CompletionItemKind::CLASS),
-        CompletionKind::Module => Some(CompletionItemKind::MODULE),
+    let lsp_kind = if c.is_module {
+        Some(CompletionItemKind::MODULE)
+    } else {
+        match c.kind {
+            EntryKind::Cell(_) => Some(CompletionItemKind::VARIABLE),
+            EntryKind::Meta => Some(CompletionItemKind::CONSTANT),
+            EntryKind::Type => Some(CompletionItemKind::CLASS),
+        }
     };
 
-    let kind_str = match &c.kind {
-        CompletionKind::Cell(dim) => format!("{}-cell", dim),
-        CompletionKind::Meta => "meta".to_string(),
-        CompletionKind::Type => "type".to_string(),
-        CompletionKind::Module => "module".to_string(),
+    let kind_str = if c.is_module {
+        "module".to_string()
+    } else {
+        c.kind.display()
     };
     let detail = match (&c.type_expr, c.params.is_empty()) {
         (Some(ty), true) => format!("{} ({})", ty, kind_str),
@@ -584,7 +584,6 @@ fn candidate_to_item(
         (None, false) => format!("{} ({})", c.params, kind_str),
     };
 
-    // Mark entries defined after cursor as deprecated (strikethrough)
     let defined_after = !c.is_imported && c.def_line > cursor_line;
     let tags = if defined_after {
         Some(vec![CompletionItemTag::DEPRECATED])
@@ -594,7 +593,7 @@ fn candidate_to_item(
 
     CompletionItem {
         label: c.label.clone(),
-        kind,
+        kind: lsp_kind,
         detail: Some(detail),
         tags,
         sort_text: Some(if defined_after {
