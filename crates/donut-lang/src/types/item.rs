@@ -120,12 +120,21 @@ pub struct Module {
     pub internal: Vec<(String, ItemId)>,
 }
 
+// --- CheckNode ---
+
+#[derive(Debug, Clone)]
+pub enum CheckNode {
+    Item { name: String, item_id: ItemId },
+    Scope { item_id: ItemId, children: Vec<CheckNode> },
+}
+
 // --- Program ---
 
 pub struct Program {
     pub root: Module,
     pub items: Vec<Item>,
     pub vals: Vec<S<Val>>,
+    pub check_order: Vec<CheckNode>,
 }
 
 impl Program {

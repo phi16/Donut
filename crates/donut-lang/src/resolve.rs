@@ -188,11 +188,13 @@ struct Checker<'a> {
     deco_param_stack: Vec<HashSet<ItemId>>,
     used_deco_params: HashSet<ItemId>,
     in_applicand: bool,
-    import_cache: HashMap<String, Module>,
+    import_cache: HashMap<String, (Module, Vec<CheckNode>)>,
     /// Origin name for items being resolved inside an import (e.g. "sys").
     current_origin: Option<String>,
     /// Extra import sources (name → source code) for testing/extensibility.
     extra_sources: HashMap<String, String>,
+    /// Stack of CheckNode lists being built (mirrors scope nesting).
+    check_order_stack: Vec<Vec<CheckNode>>,
 }
 
 impl<'a> Checker<'a> {
@@ -209,6 +211,7 @@ impl<'a> Checker<'a> {
             import_cache: HashMap::new(),
             current_origin: None,
             extra_sources: HashMap::new(),
+            check_order_stack: Vec::new(),
         }
     }
 
@@ -250,6 +253,46 @@ impl<'a> Checker<'a> {
     }
     fn pop_scope(&mut self) {
         self.scopes.pop();
+    }
+
+    // --- CheckNode helpers ---
+
+    fn push_check_order(&mut self) {
+        self.check_order_stack.push(Vec::new());
+    }
+
+    fn pop_check_order(&mut self) -> Vec<CheckNode> {
+        self.check_order_stack.pop().unwrap_or_default()
+    }
+
+    fn emit_check_node(&mut self, node: CheckNode) {
+        if let Some(top) = self.check_order_stack.last_mut() {
+            top.push(node);
+        }
+    }
+
+    /// Generate CheckNodes for an already-resolved Module (used for imports and path inheritance).
+    fn generate_check_nodes_for_module(&self, module: &Module) -> Vec<CheckNode> {
+        let mut nodes = Vec::new();
+        for (name, item_id) in &module.internal {
+            nodes.push(CheckNode::Item { name: name.clone(), item_id: *item_id });
+            if let Some(members) = self.item(*item_id).members() {
+                if !members.entries.is_empty() || !members.internal.is_empty() {
+                    let children = self.generate_check_nodes_for_module(members);
+                    nodes.push(CheckNode::Scope { item_id: *item_id, children });
+                }
+            }
+        }
+        for (name, item_id) in &module.entries {
+            nodes.push(CheckNode::Item { name: name.clone(), item_id: *item_id });
+            if let Some(members) = self.item(*item_id).members() {
+                if !members.entries.is_empty() || !members.internal.is_empty() {
+                    let children = self.generate_check_nodes_for_module(members);
+                    nodes.push(CheckNode::Scope { item_id: *item_id, children });
+                }
+            }
+        }
+        nodes
     }
 
     /// Insert a name into the current scope. Returns true if newly defined, false if duplicate.
@@ -334,24 +377,26 @@ impl<'a> Checker<'a> {
 
     // --- Module / Decl resolution (owned) ---
 
-    fn resolve_module(&mut self, mod_s: S<semtree::Module>) -> Module {
+    fn resolve_module(&mut self, mod_s: S<semtree::Module>) -> (Module, Vec<CheckNode>) {
         let S(module, span) = mod_s;
         match module {
             semtree::Module::Block(decls) => {
                 self.push_scope();
+                self.push_check_order();
                 for d in decls {
                     self.resolve_decl(d);
                 }
+                let check_nodes = self.pop_check_order();
                 let mut module = self.scopes.pop().unwrap();
                 module.finalize_used();
-                module
+                (module, check_nodes)
             }
             semtree::Module::Import(lit_s) | semtree::Module::Use(lit_s) => {
                 let name = match &lit_s.0 {
                     semtree::Lit::String(s) => s.trim_matches('"').to_string(),
                     _ => {
                         self.error_at(&span, "import requires a string literal");
-                        return Module::new();
+                        return (Module::new(), Vec::new());
                     }
                 };
                 if let Some(cached) = self.import_cache.get(&name) {
@@ -364,33 +409,35 @@ impl<'a> Checker<'a> {
                     Some(source) => {
                         let old_origin = self.current_origin.take();
                         self.current_origin = Some(name.clone());
-                        let mut module = self.resolve_import(&source);
+                        let (mut module, check_nodes) = self.resolve_import(&source);
                         self.current_origin = old_origin;
                         module.origin = Some(name.clone());
-                        self.import_cache.insert(name, module.clone());
-                        module
+                        self.import_cache.insert(name, (module.clone(), check_nodes.clone()));
+                        (module, check_nodes)
                     }
                     None => {
                         self.error_at(&span, format!("unknown import: \"{}\"", name));
-                        Module::new()
+                        (Module::new(), Vec::new())
                     }
                 }
             }
         }
     }
 
-    fn resolve_import(&mut self, source: &str) -> Module {
+    fn resolve_import(&mut self, source: &str) -> (Module, Vec<CheckNode>) {
         let (tokens, _, _) = crate::tokenize::tokenize(source);
         let (program, _) = crate::parse::parse(&tokens);
         let (sem_prog, _) = crate::convert::convert(program, &tokens);
 
         self.push_scope();
+        self.push_check_order();
         for d in sem_prog.0 {
             self.resolve_decl(d);
         }
+        let check_nodes = self.pop_check_order();
         let mut module = self.scopes.pop().unwrap();
         module.finalize_used();
-        module
+        (module, check_nodes)
     }
 
     fn resolve_decl(&mut self, decl: semtree::Decl) {
@@ -410,11 +457,14 @@ impl<'a> Checker<'a> {
             semtree::DeclMain::Mod(mod_s) => {
                 if matches!(&mod_s.0, semtree::Module::Use(_)) {
                     let span = mod_s.1.clone();
-                    let result = self.resolve_module(mod_s);
+                    let (result, check_nodes) = self.resolve_module(mod_s);
                     let scope = self.scopes.last_mut().unwrap();
                     let conflicts = scope.merge_used(result);
                     for key in conflicts {
                         self.error_at(&span, format!("duplicate member `{}`", key));
+                    }
+                    for node in check_nodes {
+                        self.emit_check_node(node);
                     }
                 } else {
                     self.process_mod_decl(mod_s, deco_param_defs, with_clauses, where_clauses);
@@ -492,16 +542,18 @@ impl<'a> Checker<'a> {
         &mut self,
         mut result: Module,
         with_clauses: Vec<S<semtree::Module>>,
-    ) -> Module {
+    ) -> (Module, Vec<CheckNode>) {
+        let mut all_check_nodes = Vec::new();
         for with_mod in with_clauses {
             let span = with_mod.1.clone();
-            let with_members = self.resolve_module(with_mod);
+            let (with_members, check_nodes) = self.resolve_module(with_mod);
             let conflicts = result.merge(with_members);
             for key in conflicts {
                 self.error_at(&span, format!("duplicate member `{}`", key));
             }
+            all_check_nodes.extend(check_nodes);
         }
-        result
+        (result, all_check_nodes)
     }
 
     // --- Registration ---
@@ -736,12 +788,14 @@ impl<'a> Checker<'a> {
 
         // --- Resolve body (owned) ---
         let body_val_resolved = body_val.map(|v| v.resolve(self));
-        let mut body_members = match body_mod {
+        let (mut body_members, body_check_nodes) = match body_mod {
             Some(m) => self.resolve_module(m),
-            None => Module::new(),
+            None => (Module::new(), Vec::new()),
         };
 
         // If body is a path to a module, inherit its members
+        // Note: body_check_nodes is NOT generated here because check's try_module_alias
+        // handles instantiation (including substitution for parametric modules).
         if body_members.entries.is_empty() {
             if let Some(val_id) = body_val_resolved {
                 let val_s = self.val(val_id);
@@ -760,7 +814,7 @@ impl<'a> Checker<'a> {
         }
 
         // With clauses + pop scope
-        let result = self.merge_with_clauses(body_members, with_clauses);
+        let (result, with_check_nodes) = self.merge_with_clauses(body_members, with_clauses);
 
         // Resolve functor applicands before popping scope (deco params must be visible)
         let resolved_apps = if has_functor_app {
@@ -808,7 +862,7 @@ impl<'a> Checker<'a> {
         } else if is_add {
             let all_seg_names: Vec<&[(String, TokenSpan)]> =
                 name_infos.iter().map(|ni| ni.seg_names.as_slice()).collect();
-            let members_to_merge = match body_val_resolved {
+            let (members_to_merge, merge_check_nodes) = match body_val_resolved {
                 Some(val_id) => {
                     let val_s = self.val(val_id);
                     let span = val_s.1.clone();
@@ -819,23 +873,41 @@ impl<'a> Checker<'a> {
                                 .iter()
                                 .map(|s| s.0.name.clone())
                                 .collect();
-                            self.lookup_path(&path_names)
+                            let module = self.lookup_path(&path_names)
                                 .and_then(|id| self.item(id).members())
                                 .cloned()
-                                .unwrap_or_else(Module::new)
+                                .unwrap_or_else(Module::new);
+                            let cn = self.generate_check_nodes_for_module(&module);
+                            (module, cn)
                         }
                         _ => {
                             self.error_at(&span, "`+=` requires a path or module body");
-                            Module::new()
+                            (Module::new(), Vec::new())
                         }
                     }
                 }
-                None => result,
+                None => {
+                    let mut cn = body_check_nodes;
+                    cn.extend(with_check_nodes);
+                    (result, cn)
+                }
             };
+            // Emit Scope CheckNodes for += targets
+            for seg_names in &all_seg_names {
+                if let Some((name, _)) = seg_names.first() {
+                    if let Some(target_id) = self.lookup(name) {
+                        self.emit_check_node(CheckNode::Scope {
+                            item_id: target_id,
+                            children: merge_check_nodes.clone(),
+                        });
+                    }
+                }
+            }
             self.register_add(&all_seg_names, members_to_merge);
         } else {
             let is_functor = ty_resolved
                 .map_or(false, |id| is_functor_type(&self.val(id).0));
+            let has_members = !result.entries.is_empty() || !result.internal.is_empty();
             let body = if is_functor {
                 ItemBody::Functor {
                     mappings: Vec::new(),
@@ -863,6 +935,18 @@ impl<'a> Checker<'a> {
             let item_id = self.alloc_item(item);
             for ni in &name_infos {
                 self.register_path(&ni.seg_names, item_id);
+            }
+            // Emit CheckNodes
+            let first_name = name_infos
+                .first()
+                .and_then(|ni| ni.seg_names.last())
+                .map(|(n, _)| n.clone())
+                .unwrap_or_default();
+            self.emit_check_node(CheckNode::Item { name: first_name, item_id });
+            if has_members && !is_functor {
+                let mut children = body_check_nodes;
+                children.extend(with_check_nodes);
+                self.emit_check_node(CheckNode::Scope { item_id, children });
             }
         }
     }
@@ -924,8 +1008,8 @@ impl<'a> Checker<'a> {
         self.enter_inner_scope(&deco_param_defs);
         self.resolve_where_clauses(where_clauses);
 
-        let result = self.resolve_module(mod_s);
-        let result = self.merge_with_clauses(result, with_clauses);
+        let (result, check_nodes) = self.resolve_module(mod_s);
+        let (result, with_check_nodes) = self.merge_with_clauses(result, with_clauses);
 
         self.exit_inner_scope();
 
@@ -934,6 +1018,10 @@ impl<'a> Checker<'a> {
         let conflicts = scope.merge(result);
         for key in conflicts {
             self.error_at(&span, format!("duplicate member `{}`", key));
+        }
+        // Emit check nodes for promoted entries
+        for node in check_nodes.into_iter().chain(with_check_nodes) {
+            self.emit_check_node(node);
         }
     }
 }
@@ -960,15 +1048,18 @@ pub fn resolve_with_sources(
     checker.extra_sources = extra_sources;
     // User scope
     checker.push_scope();
+    checker.push_check_order();
     for d in program.0 {
         checker.resolve_decl(d);
     }
+    let check_order = checker.pop_check_order();
     let mut module = checker.scopes.pop().unwrap();
     module.finalize_used();
     let prog = Program {
         root: module,
         items: checker.items,
         vals: checker.vals,
+        check_order,
     };
     (prog, checker.errors)
 }

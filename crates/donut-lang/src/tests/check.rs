@@ -160,6 +160,63 @@ fn instantiation_simple() {
     assert_ne!(ay.as_cell().unwrap().pure, az.as_cell().unwrap().pure);
 }
 
+// --- += forward reference ---
+
+#[test]
+fn add_forward_reference() {
+    // u += { to_f: u → f } appears after f's declaration.
+    // The += members should be checked at their lexical position, not at u's position.
+    let env = check_source(
+        r#"
+        u: *
+        f: *
+        u += {
+            to_f: u → f
+        }
+        "#,
+    )
+    .unwrap();
+
+    let u = &env.entries[env.lookup["u"]];
+    let f = &env.entries[env.lookup["f"]];
+    let to_f = &env.entries[env.lookup["u.to_f"]];
+
+    // to_f should be u → f (source = u, target = f)
+    assert_eq!(to_f.as_cell().unwrap().pure.s(), u.as_cell().unwrap().pure);
+    assert_eq!(to_f.as_cell().unwrap().pure.t(), f.as_cell().unwrap().pure);
+}
+
+#[test]
+fn add_chained_forward_references() {
+    let env = check_source(
+        r#"
+        C: *
+        x: C → C with { a = x }
+        y: C → x
+        x += { b = y }
+        z = x.b
+        x += { c = z }
+        "#,
+    )
+    .unwrap();
+
+    // a = x, x: C → C → x.a is 1-cell
+    let x_a = &env.entries[env.lookup["x.a"]];
+    assert_eq!(x_a.as_cell().unwrap().pure.dim().in_space, 1);
+    // y: C → x, x is 1-cell → y is 2-cell
+    let y = &env.entries[env.lookup["y"]];
+    assert_eq!(y.as_cell().unwrap().pure.dim().in_space, 2);
+    // b = y → x.b is 2-cell
+    let x_b = &env.entries[env.lookup["x.b"]];
+    assert_eq!(x_b.as_cell().unwrap().pure.dim().in_space, 2);
+    // z = x.b → z is 2-cell
+    let z = &env.entries[env.lookup["z"]];
+    assert_eq!(z.as_cell().unwrap().pure.dim().in_space, 2);
+    // c = z → x.c is 2-cell
+    let x_c = &env.entries[env.lookup["x.c"]];
+    assert_eq!(x_c.as_cell().unwrap().pure.dim().in_space, 2);
+}
+
 // --- Parametric module ---
 
 #[test]

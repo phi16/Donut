@@ -113,6 +113,9 @@ pub(super) struct Checker<'a> {
     pub(super) prim_decls: HashMap<PrimId, PrimDecl>,
 
     pub(super) current_origin: Option<(String, usize)>,
+
+    /// Saved param info for re-entering scopes (item_id → (freshes, args)).
+    pub(super) scope_params: HashMap<ItemId, (Vec<ParamInfo>, Vec<PrimArg>)>,
 }
 
 impl<'a> Checker<'a> {
@@ -141,6 +144,7 @@ impl<'a> Checker<'a> {
             functor_maps: HashMap::new(),
             prim_decls: HashMap::new(),
             current_origin: None,
+            scope_params: HashMap::new(),
         }
     }
 
@@ -275,18 +279,104 @@ impl<'a> Checker<'a> {
         self.lookup.get(&qname).copied()
     }
 
-    // --- Module processing ---
+    // --- CheckNode processing ---
 
-    fn check_module(&mut self, module: &Module) {
-        // Process internal items first (meta type registration etc.)
-        for (name, item_id) in &module.internal {
-            let item = self.program.item(*item_id);
-            self.check_item(name, item, *item_id);
+    fn process_check_order(&mut self, nodes: &[CheckNode]) {
+        for node in nodes {
+            match node {
+                CheckNode::Item { name, item_id } => {
+                    let item = self.program.item(*item_id);
+                    self.check_item(name, item, *item_id);
+                }
+                CheckNode::Scope { item_id, children } => {
+                    self.process_scope(*item_id, children);
+                }
+            }
         }
-        for (name, item_id) in &module.entries {
-            let item = self.program.item(*item_id);
-            self.check_item(name, item, *item_id);
+    }
+
+    fn process_scope(&mut self, item_id: ItemId, children: &[CheckNode]) {
+        let qname = match self.item_cache.get(&item_id).cloned() {
+            Some(q) => q,
+            None => return,
+        };
+
+        let item = self.program.item(item_id);
+
+        let canonical = item.members()
+            .and_then(|m| m.origin.as_deref())
+            .unwrap_or(&qname)
+            .to_string();
+        let need_alias = canonical != qname;
+
+        // Save/restore origin context
+        let prev_origin = self.current_origin.clone();
+        if let Some(ref origin) = item.origin {
+            if self.current_origin.as_ref().map_or(true, |co| co.0 != *origin) {
+                self.current_origin = Some((origin.clone(), self.prefixes.len()));
+            }
         }
+
+        // Re-enter params
+        let (param_freshes, param_args) = self.scope_params
+            .get(&item_id)
+            .cloned()
+            .unwrap_or_default();
+        self.accumulated_args.extend_from_slice(&param_args);
+
+        self.prefixes.push(canonical.clone());
+        self.param_count_stack.push(param_freshes.len());
+
+        // Process children — first pass: check items and process scopes
+        let mut new_members = Vec::new();
+        for child in children {
+            match child {
+                CheckNode::Item { name, item_id: child_id } => {
+                    let child_item = self.program.item(*child_id);
+                    self.check_item(name, child_item, *child_id);
+                }
+                CheckNode::Scope { item_id: scope_id, children: grandchildren } => {
+                    self.process_scope(*scope_id, grandchildren);
+                }
+            }
+        }
+        // Second pass: collect members (after all scopes processed, so sub-modules are registered)
+        for child in children {
+            if let CheckNode::Item { name, item_id: _ } = child {
+                let full_name = format!("{}.{}", canonical, name);
+                let entry_idx = self.lookup.get(&full_name).copied();
+                let is_sub_module = self.module_members.contains_key(&full_name);
+                if entry_idx.is_some() || is_sub_module {
+                    new_members.push(MemberRef { name: name.clone(), entry: entry_idx });
+                }
+            }
+        }
+
+        self.param_count_stack.pop();
+        self.prefixes.pop();
+
+        // Exit params
+        for _ in &param_args {
+            self.accumulated_args.pop();
+        }
+
+        // Record module_params
+        if !param_freshes.is_empty() {
+            self.module_params.entry(qname.clone()).or_insert(param_freshes);
+        }
+
+        // Merge new members with existing
+        if !new_members.is_empty() || !param_args.is_empty() {
+            let mut all_members = self.module_members.get(&canonical).cloned().unwrap_or_default();
+            all_members.extend(new_members);
+            self.module_members.insert(canonical.clone(), all_members);
+        }
+
+        if need_alias {
+            self.alias_members(&canonical, &qname);
+        }
+
+        self.current_origin = prev_origin;
     }
 
     fn check_item(&mut self, name: &str, item: &Item, item_id: ItemId) {
@@ -337,7 +427,7 @@ impl<'a> Checker<'a> {
         let has_params = !param_freshes.is_empty();
 
         match &item.body {
-            ItemBody::Value { val, members } => {
+            ItemBody::Value { val, members: _ } => {
                 let body_val = if matches!(item.kind, Some(ItemKind::Def)) {
                     &None
                 } else {
@@ -388,22 +478,20 @@ impl<'a> Checker<'a> {
                     (None, None) => {}
                 }
 
-                if !members.entries.is_empty() {
-                    self.check_members(&qname, members, param_freshes.len());
-                }
             }
             ItemBody::Functor { mappings } => {
                 self.check_functor(item, &qname, mappings);
             }
         }
 
-        self.exit_params(&param_freshes);
-
-        // Record module params for parametric modules
-        if has_params && item.members().map_or(false, |m| !m.entries.is_empty()) {
-            self.module_params
-                .insert(qname.clone(), param_freshes);
+        // Save param info for scope re-entry
+        if has_params {
+            let start = self.accumulated_args.len() - param_freshes.len();
+            let args = self.accumulated_args[start..].to_vec();
+            self.scope_params.insert(item_id, (param_freshes.clone(), args));
         }
+
+        self.exit_params(&param_freshes);
 
         self.item_cache.insert(item_id, qname);
     }
@@ -753,47 +841,6 @@ impl<'a> Checker<'a> {
         self.functor_maps.insert(qname.to_string(), functor_map);
     }
 
-    fn check_members(&mut self, prefix: &str, module: &Module, parent_param_count: usize) {
-        let canonical = module.origin.as_deref().unwrap_or(prefix);
-        let need_alias = canonical != prefix;
-
-        // If canonical entries already registered, just alias
-        if need_alias && self.module_members.contains_key(canonical) {
-            self.alias_members(canonical, prefix);
-            return;
-        }
-
-        self.prefixes.push(canonical.to_string());
-        self.param_count_stack.push(parent_param_count);
-        // Process internal items first (for meta type registration etc.)
-        for (member_name, item_id) in &module.internal {
-            let item = self.program.item(*item_id);
-            self.check_item(member_name, item, *item_id);
-        }
-        // Process exported entries
-        let mut members = Vec::new();
-        for (member_name, item_id) in &module.entries {
-            let full_name = format!("{}.{}", canonical, member_name);
-            let item = self.program.item(*item_id);
-            self.check_item(member_name, item, *item_id);
-            let entry_idx = self.lookup.get(&full_name).copied();
-            let is_sub_module = self.module_members.contains_key(&full_name);
-            if entry_idx.is_some() || is_sub_module {
-                members.push(MemberRef { name: member_name.clone(), entry: entry_idx });
-            }
-        }
-        self.param_count_stack.pop();
-        self.prefixes.pop();
-
-        if parent_param_count > 0 || !members.is_empty() {
-            self.module_members.insert(canonical.to_string(), members);
-        }
-
-        if need_alias {
-            self.alias_members(canonical, prefix);
-        }
-    }
-
     // --- Params ---
 
     fn enter_params(&mut self, params: &[Param]) -> Result<Vec<ParamInfo>> {
@@ -910,6 +957,6 @@ impl<'a> Checker<'a> {
 
 pub fn check(program: &Program, tokens: &[Token]) -> (Env, Vec<Error>) {
     let mut checker = Checker::new(program, tokens);
-    checker.check_module(&program.root);
+    checker.process_check_order(&program.check_order);
     checker.into_result()
 }
