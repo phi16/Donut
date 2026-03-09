@@ -368,20 +368,22 @@ impl<'a> Checker<'a> {
 
     // --- Module / Decl resolution (owned) ---
 
+    fn resolve_decls(&mut self, decls: Vec<semtree::Decl>) -> (Module, Vec<CheckNode>) {
+        self.push_scope();
+        self.push_check_order();
+        for d in decls {
+            self.resolve_decl(d);
+        }
+        let check_nodes = self.pop_check_order();
+        let mut module = self.scopes.pop().unwrap();
+        module.finalize_used();
+        (module, check_nodes)
+    }
+
     fn resolve_module(&mut self, mod_s: S<semtree::Module>) -> (Module, Vec<CheckNode>) {
         let S(module, span) = mod_s;
         match module {
-            semtree::Module::Block(decls) => {
-                self.push_scope();
-                self.push_check_order();
-                for d in decls {
-                    self.resolve_decl(d);
-                }
-                let check_nodes = self.pop_check_order();
-                let mut module = self.scopes.pop().unwrap();
-                module.finalize_used();
-                (module, check_nodes)
-            }
+            semtree::Module::Block(decls) => self.resolve_decls(decls),
             semtree::Module::Import(lit_s) | semtree::Module::Use(lit_s) => {
                 let name = match &lit_s.0 {
                     semtree::Lit::String(s) => s.trim_matches('"').to_string(),
@@ -419,16 +421,7 @@ impl<'a> Checker<'a> {
         let (tokens, _, _) = crate::tokenize::tokenize(source);
         let (program, _) = crate::parse::parse(&tokens);
         let (sem_prog, _) = crate::convert::convert(program, &tokens);
-
-        self.push_scope();
-        self.push_check_order();
-        for d in sem_prog.0 {
-            self.resolve_decl(d);
-        }
-        let check_nodes = self.pop_check_order();
-        let mut module = self.scopes.pop().unwrap();
-        module.finalize_used();
-        (module, check_nodes)
+        self.resolve_decls(sem_prog.0)
     }
 
     fn resolve_decl(&mut self, decl: semtree::Decl) {
@@ -550,8 +543,8 @@ impl<'a> Checker<'a> {
     // --- Registration ---
 
     fn register_path(&mut self, segs: &[(String, TokenSpan)], item_id: ItemId) {
+        assert!(!segs.is_empty(), "register_path: segs must not be empty");
         match segs.len() {
-            0 => {}
             1 => {
                 // Forward ref already defined in outer scope; replace with real item
                 let scope = self.scopes.last_mut().unwrap();
@@ -588,12 +581,6 @@ impl<'a> Checker<'a> {
 
         if conflict {
             self.error_at(last_span, format!("duplicate member `{}`", last_name));
-        }
-    }
-
-    fn register_add(&mut self, all_seg_names: &[&[(String, TokenSpan)]], members_to_merge: Module) {
-        for seg_names in all_seg_names {
-            self.merge_into_path(seg_names, members_to_merge.clone());
         }
     }
 
@@ -656,24 +643,22 @@ impl<'a> Checker<'a> {
             None => (None, None),
         };
 
-        // --- Outer scope: extract seg_names and applicand info (borrowing names) ---
-        let name_infos_partial: Vec<(Vec<(String, TokenSpan)>, bool)> = names
+        // --- Outer scope: extract seg_names (borrowing names) ---
+        let seg_names_list: Vec<Vec<(String, TokenSpan)>> = names
             .iter()
             .map(|name_s| {
                 let S(pd, _) = name_s;
-                let seg_names = pd.0.iter()
+                pd.0.iter()
                     .map(|seg_s| {
                         let S(seg, span) = seg_s;
                         (seg.0 .0.clone(), span.clone())
                     })
-                    .collect();
-                let has_applicand = pd.1.is_some();
-                (seg_names, has_applicand)
+                    .collect()
             })
             .collect();
 
         // --- Resolve prefixes (borrowing seg_names) ---
-        for (seg_names, _) in &name_infos_partial {
+        for seg_names in &seg_names_list {
             if seg_names.len() > 1 {
                 let prefix: Vec<_> = seg_names[..seg_names.len() - 1]
                     .iter()
@@ -686,7 +671,7 @@ impl<'a> Checker<'a> {
         // --- += pre-check (before inner scope) ---
         let is_add = matches!(&op.0, semtree::AssignOp::Add);
         if is_add {
-            for (seg_names, _) in &name_infos_partial {
+            for seg_names in &seg_names_list {
                 if seg_names.len() == 1 {
                     let (name, span) = &seg_names[0];
                     if self.lookup(name).is_none() {
@@ -702,7 +687,8 @@ impl<'a> Checker<'a> {
         // --- Forward refs (outer scope, before inner scope) ---
         // Functor app lines (has_applicand) don't define new names.
         if !is_add {
-            for (seg_names, has_applicand) in &name_infos_partial {
+            for (name_s, seg_names) in names.iter().zip(&seg_names_list) {
+                let has_applicand = name_s.0 .1.is_some();
                 if !has_applicand && seg_names.len() == 1 {
                     let (name, span) = &seg_names[0];
                     let item = Item::new(name.clone(), kind, span.clone());
@@ -721,7 +707,7 @@ impl<'a> Checker<'a> {
         // Params are defined immediately so subsequent params can reference earlier ones.
         let mut params = Vec::new();
         let mut name_infos: Vec<NameInfo> = Vec::new();
-        for (i, (name_s, (seg_names, _))) in names.into_iter().zip(name_infos_partial).enumerate() {
+        for (i, (name_s, seg_names)) in names.into_iter().zip(seg_names_list).enumerate() {
             let S(pd, _) = name_s;
             let semtree::Path(segs, applicand) = pd;
             for seg_s in segs {
@@ -894,7 +880,9 @@ impl<'a> Checker<'a> {
                     }
                 }
             }
-            self.register_add(&all_seg_names, members_to_merge);
+            for seg_names in &all_seg_names {
+                self.merge_into_path(seg_names, members_to_merge.clone());
+            }
         } else {
             let is_functor = ty_resolved
                 .map_or(false, |id| is_functor_type(&self.val(id).0));
@@ -909,16 +897,11 @@ impl<'a> Checker<'a> {
                     members: result,
                 }
             };
-            let span = name_infos
+            let (first_name, span) = name_infos
                 .first()
                 .and_then(|ni| ni.seg_names.last())
-                .map(|(_, s)| s.clone())
-                .unwrap_or(TokenSpan { start: 0, end: 0 });
-            let first_name = name_infos
-                .first()
-                .and_then(|ni| ni.seg_names.last())
-                .map(|(n, _)| n.clone())
-                .unwrap_or_default();
+                .map(|(n, s)| (n.clone(), s.clone()))
+                .unwrap();
             let item = Item {
                 name: first_name,
                 span,
@@ -1038,15 +1021,7 @@ pub fn resolve_with_sources(
 ) -> (Program, Vec<Error>) {
     let mut checker = Checker::new(tokens);
     checker.extra_sources = extra_sources;
-    // User scope
-    checker.push_scope();
-    checker.push_check_order();
-    for d in program.0 {
-        checker.resolve_decl(d);
-    }
-    let check_order = checker.pop_check_order();
-    let mut module = checker.scopes.pop().unwrap();
-    module.finalize_used();
+    let (module, check_order) = checker.resolve_decls(program.0);
     let prog = Program {
         root: module,
         items: checker.items,

@@ -68,6 +68,15 @@ impl From<donut_core::common::Error> for CheckError {
 
 type Result<T> = std::result::Result<T, CheckError>;
 
+// --- Check context for a single item ---
+
+struct ItemCtx<'a> {
+    qname: &'a str,
+    span: &'a TokenSpan,
+    color: Option<ColorSpec>,
+    param_freshes: &'a [ParamInfo],
+}
+
 // --- Module member reference ---
 
 #[derive(Clone)]
@@ -106,7 +115,7 @@ pub(super) struct Checker<'a> {
     pub(super) meta_ret_types: HashMap<PrimId, MetaType>,
     pub(super) meta_values: HashMap<usize, PrimArg>,
 
-    pub(super) item_cache: HashMap<ItemId, String>,
+    pub(super) qname_cache: HashMap<ItemId, String>,
 
     pub(super) functor_maps: HashMap<String, HashMap<PrimId, FunctorEntry>>,
 
@@ -140,7 +149,7 @@ impl<'a> Checker<'a> {
             meta_prim_ids,
             meta_ret_types: HashMap::new(),
             meta_values: HashMap::new(),
-            item_cache: HashMap::new(),
+            qname_cache: HashMap::new(),
             functor_maps: HashMap::new(),
             prim_decls: HashMap::new(),
             current_origin: None,
@@ -295,7 +304,7 @@ impl<'a> Checker<'a> {
     }
 
     fn process_scope(&mut self, item_id: ItemId, children: &[CheckNode]) {
-        let qname = match self.item_cache.get(&item_id).cloned() {
+        let qname = match self.qname_cache.get(&item_id).cloned() {
             Some(q) => q,
             None => return,
         };
@@ -308,13 +317,7 @@ impl<'a> Checker<'a> {
             .to_string();
         let need_alias = canonical != qname;
 
-        // Save/restore origin context
-        let prev_origin = self.current_origin.clone();
-        if let Some(ref origin) = item.origin {
-            if self.current_origin.as_ref().map_or(true, |co| co.0 != *origin) {
-                self.current_origin = Some((origin.clone(), self.prefixes.len()));
-            }
-        }
+        let prev_origin = self.enter_origin(item);
 
         // Re-enter params
         let (param_freshes, param_args) = self.scope_params
@@ -327,16 +330,7 @@ impl<'a> Checker<'a> {
         self.param_count_stack.push(param_freshes.len());
 
         // Check all items and sub-scopes
-        for child in children {
-            match child {
-                CheckNode::Item(child_id) => {
-                    self.check_item(*child_id);
-                }
-                CheckNode::Scope { item_id: scope_id, children: grandchildren } => {
-                    self.process_scope(*scope_id, grandchildren);
-                }
-            }
-        }
+        self.process_check_order(children);
 
         // Collect members after all children are processed
         // (sub-module scopes must be registered before we check is_sub_module)
@@ -377,7 +371,21 @@ impl<'a> Checker<'a> {
             self.alias_members(&canonical, &qname);
         }
 
-        self.current_origin = prev_origin;
+        self.exit_origin(prev_origin);
+    }
+
+    fn enter_origin(&mut self, item: &Item) -> Option<(String, usize)> {
+        let prev = self.current_origin.clone();
+        if let Some(ref origin) = item.origin {
+            if self.current_origin.as_ref().map_or(true, |co| co.0 != *origin) {
+                self.current_origin = Some((origin.clone(), self.prefixes.len()));
+            }
+        }
+        prev
+    }
+
+    fn exit_origin(&mut self, prev: Option<(String, usize)>) {
+        self.current_origin = prev;
     }
 
     fn check_item(&mut self, item_id: ItemId) {
@@ -386,17 +394,9 @@ impl<'a> Checker<'a> {
             return;
         }
 
-        // Track origin context from item for canonical naming
-        let prev_origin = self.current_origin.clone();
-        if let Some(ref origin) = item.origin {
-            if self.current_origin.as_ref().map_or(true, |co| co.0 != *origin) {
-                self.current_origin = Some((origin.clone(), self.prefixes.len()));
-            }
-        }
-
+        let prev_origin = self.enter_origin(item);
         self.check_item_inner(item_id);
-
-        self.current_origin = prev_origin;
+        self.exit_origin(prev_origin);
     }
 
     fn check_item_inner(&mut self, item_id: ItemId) {
@@ -404,7 +404,7 @@ impl<'a> Checker<'a> {
         let qname = self.qualified_name(&item.name);
 
         // Reuse cached entry for same ItemId (from import cache)
-        if let Some(old_qname) = self.item_cache.get(&item_id).cloned() {
+        if let Some(old_qname) = self.qname_cache.get(&item_id).cloned() {
             if let Some(&idx) = self.lookup.get(&old_qname) {
                 self.lookup.insert(qname.clone(), idx);
             }
@@ -417,17 +417,19 @@ impl<'a> Checker<'a> {
 
         let decos = self.eval_decorators(&item.decos);
         let color = self.extract_color(&decos);
-        let span = &item.span;
+        let span = item.span.clone();
 
         // Handle params: create fresh prims
         let param_freshes = match self.enter_params(&item.params) {
             Ok(f) => f,
             Err(msg) => {
-                self.check_error_at(span, msg);
+                self.check_error_at(&span, msg);
                 return;
             }
         };
         let has_params = !param_freshes.is_empty();
+
+        let ctx = ItemCtx { qname: &qname, span: &span, color, param_freshes: &param_freshes };
 
         match &item.body {
             ItemBody::Value { val, members: _ } => {
@@ -441,19 +443,18 @@ impl<'a> Checker<'a> {
                 if let Some(body_id) = body_val {
                     let body_s = self.program.val(*body_id);
                     if let Val::Path(path) = &body_s.0 {
-                        match self.try_module_alias(&qname, path) {
+                        match self.try_module_alias(ctx.qname, path) {
                             Ok(Some(())) => {
                                 self.exit_params(&param_freshes);
                                 if has_params {
-                                    self.module_params
-                                        .insert(qname.clone(), param_freshes);
+                                    self.module_params.insert(qname.clone(), param_freshes);
                                 }
-                                self.item_cache.insert(item_id, qname);
+                                self.qname_cache.insert(item_id, qname);
                                 return;
                             }
                             Ok(None) => {}
                             Err(msg) => {
-                                self.check_error_at(span, msg);
+                                self.check_error_at(ctx.span, msg);
                                 self.exit_params(&param_freshes);
                                 return;
                             }
@@ -463,27 +464,21 @@ impl<'a> Checker<'a> {
 
                 match (&item.ty, body_val) {
                     (Some(ty_id), None) => {
-                        self.check_decl(
-                            &qname, span, color, *ty_id,
-                            &param_freshes,
-                        );
+                        self.check_decl(&ctx, *ty_id);
                     }
                     (dim_ty, Some(body_id)) => {
                         let declared_ty = dim_ty.and_then(|ty_id| {
                             let ty_s = self.program.val(ty_id);
                             self.eval_ty(&ty_s.0).ok()
                         });
-                        self.check_body(
-                            &qname, span, color, *body_id, declared_ty,
-                            &param_freshes,
-                        );
+                        self.check_body(&ctx, *body_id, declared_ty);
                     }
                     (None, None) => {}
                 }
 
             }
             ItemBody::Functor { mappings } => {
-                self.check_functor(item, &qname, mappings);
+                self.check_functor(&ctx, item_id, mappings);
             }
         }
 
@@ -496,7 +491,7 @@ impl<'a> Checker<'a> {
 
         self.exit_params(&param_freshes);
 
-        self.item_cache.insert(item_id, qname);
+        self.qname_cache.insert(item_id, qname);
     }
 
     /// Create lookup aliases for all members of an already-checked module.
@@ -514,24 +509,17 @@ impl<'a> Checker<'a> {
     }
 
     /// Register a declaration (type annotation only, no body).
-    fn check_decl(
-        &mut self,
-        qname: &str,
-        span: &TokenSpan,
-        color: Option<ColorSpec>,
-        ty_id: ValId,
-        param_freshes: &[ParamInfo],
-    ) {
+    fn check_decl(&mut self, ctx: &ItemCtx, ty_id: ValId) {
         let ty_s = self.program.val(ty_id);
         match self.eval_ty(&ty_s.0) {
             Ok((_, Ty::Meta(mt))) => {
                 let prim = self.make_prim();
                 let prim_id = prim.id;
                 let idx = self.register_meta_entry(
-                    qname.to_string(), color, prim, Some(mt),
-                    None, param_freshes,
+                    ctx.qname.to_string(), ctx.color, prim, Some(mt),
+                    None, ctx.param_freshes,
                 );
-                self.register_prim_decl(prim_id, qname, 0, idx);
+                self.register_prim_decl(prim_id, &ctx.qname, 0, idx);
             }
             Ok((_, ty)) => {
                 let prim = self.make_prim();
@@ -540,26 +528,23 @@ impl<'a> Checker<'a> {
                     Ok(cell) => {
                         let level = cell.pure.dim().in_space;
                         let idx = self.register_entry(
-                            qname.to_string(), color, EntryBody::Cell(cell), param_freshes,
+                            ctx.qname.to_string(), ctx.color, EntryBody::Cell(cell), ctx.param_freshes,
                         );
-                        self.register_prim_decl(prim_id, qname, level, idx);
+                        self.register_prim_decl(prim_id, &ctx.qname, level, idx);
                     }
-                    Err(e) => self.check_error_at(span, e),
+                    Err(e) => self.check_error_at(ctx.span, e),
                 }
             }
-            Err(msg) => self.check_error_at(span, msg),
+            Err(msg) => self.check_error_at(ctx.span, msg),
         }
     }
 
     /// Try to register the body as a meta entry. Returns Ok(()) on success.
     fn try_register_meta(
         &mut self,
-        qname: &str,
-        span: &TokenSpan,
-        color: Option<ColorSpec>,
+        ctx: &ItemCtx,
         body_val: &Val,
         declared_ret: Option<MetaType>,
-        param_freshes: &[ParamInfo],
     ) -> Result<()> {
         let meta_val = self.eval_meta_val(body_val)?;
         let prim = self.make_prim();
@@ -569,7 +554,7 @@ impl<'a> Checker<'a> {
         let ret = match (&declared_ret, &body_ret) {
             (Some(decl), Some(body_ty)) => {
                 if decl != body_ty {
-                    self.error_at(span, "meta body type does not match declared type");
+                    self.error_at(ctx.span, "meta body type does not match declared type");
                 }
                 Some(decl.clone())
             }
@@ -578,21 +563,18 @@ impl<'a> Checker<'a> {
         };
 
         let idx = self.register_meta_entry(
-            qname.to_string(), color, prim, ret,
-            Some(meta_val), param_freshes,
+            ctx.qname.to_string(), ctx.color, prim, ret,
+            Some(meta_val), ctx.param_freshes,
         );
-        self.register_prim_decl(prim_id, qname, 0, idx);
+        self.register_prim_decl(prim_id, &ctx.qname, 0, idx);
         Ok(())
     }
 
     fn check_body(
         &mut self,
-        qname: &str,
-        span: &TokenSpan,
-        color: Option<ColorSpec>,
+        ctx: &ItemCtx,
         body_id: ValId,
         declared_ty: Option<(u8, Ty)>,
-        param_freshes: &[ParamInfo],
     ) {
         let declared_meta = match &declared_ty {
             Some((_, Ty::Meta(mt))) => Some(mt.clone()),
@@ -602,11 +584,8 @@ impl<'a> Checker<'a> {
         if let Some(declared_ret) = declared_meta {
             // Declared as meta type → must be meta
             let body_val = &self.program.val(body_id).0;
-            if let Err(msg) = self.try_register_meta(
-                qname, span, color, body_val, Some(declared_ret),
-                param_freshes,
-            ) {
-                self.check_error_at(span, msg);
+            if let Err(msg) = self.try_register_meta(ctx, body_val, Some(declared_ret)) {
+                self.check_error_at(ctx.span, msg);
             }
             return;
         }
@@ -622,7 +601,7 @@ impl<'a> Checker<'a> {
                     }
                     let dim = cell.pure.dim().in_space;
                     if declared_dim != dim {
-                        self.error_at(span, "declared type dimension does not match body");
+                        self.error_at(ctx.span, "declared type dimension does not match body");
                     } else {
                         let body_ty = if dim == 0 {
                             Ty::Zero
@@ -633,12 +612,12 @@ impl<'a> Checker<'a> {
                             )
                         };
                         if let Err(msg) = match_ty(declared_ty, &body_ty) {
-                            self.check_error_at(span, msg);
+                            self.check_error_at(ctx.span, msg);
                         }
                     }
                 }
                 self.register_entry(
-                    qname.to_string(), color, EntryBody::Cell(cell), param_freshes,
+                    ctx.qname.to_string(), ctx.color, EntryBody::Cell(cell), ctx.param_freshes,
                 );
                 return;
             }
@@ -647,38 +626,35 @@ impl<'a> Checker<'a> {
 
         // Fallbacks only when untyped
         if declared_ty.is_some() {
-            self.check_error_at(span, cell_err);
+            self.check_error_at(ctx.span, cell_err);
             return;
         }
 
         let body_val = &self.program.val(body_id).0;
 
         // Try meta fallback
-        if self.try_register_meta(
-            qname, span, color, body_val, None,
-            param_freshes,
-        ).is_ok() {
+        if self.try_register_meta(ctx, body_val, None).is_ok() {
             return;
         }
 
         // Try type alias fallback
         if let Ok((dim, ty)) = self.eval_ty(body_val) {
             self.register_entry(
-                qname.to_string(), color, EntryBody::Type(dim, ty), param_freshes,
+                ctx.qname.to_string(), ctx.color, EntryBody::Type(dim, ty), ctx.param_freshes,
             );
             return;
         }
 
-        self.check_error_at(span, cell_err);
+        self.check_error_at(ctx.span, cell_err);
     }
 
-    fn check_functor(&mut self, item: &Item, qname: &str, mappings: &[FunctorMapping]) {
-        let span = &item.span;
+    fn check_functor(&mut self, ctx: &ItemCtx, item_id: ItemId, mappings: &[FunctorMapping]) {
+        let item = self.program.item(item_id);
 
         let ty_id = match item.ty {
             Some(id) => id,
             None => {
-                self.error_at(span, "functor must have a type");
+                self.error_at(ctx.span, "functor must have a type");
                 return;
             }
         };
@@ -690,13 +666,13 @@ impl<'a> Checker<'a> {
                 match (self.eval_val(&l.0), self.eval_val(&r.0)) {
                     (Ok(s), Ok(t)) => (s, t),
                     (Err(e), _) | (_, Err(e)) => {
-                        self.check_error_at(span, e);
+                        self.check_error_at(ctx.span, e);
                         return;
                     }
                 }
             }
             _ => {
-                self.error_at(span, "functor type must be `A ~> B`");
+                self.error_at(ctx.span, "functor type must be `A ~> B`");
                 return;
             }
         };
@@ -704,7 +680,7 @@ impl<'a> Checker<'a> {
         let src_prim_id = match src_cell.pure.extract_prim_id() {
             Some(id) => id,
             None => {
-                self.error_at(span, "functor source must be a primitive cell");
+                self.error_at(ctx.span, "functor source must be a primitive cell");
                 return;
             }
         };
@@ -720,7 +696,7 @@ impl<'a> Checker<'a> {
             let mapping_freshes = match self.enter_params(&mapping.params) {
                 Ok(f) => f,
                 Err(msg) => {
-                    self.check_error_at(span, msg);
+                    self.check_error_at(ctx.span, msg);
                     continue;
                 }
             };
@@ -841,7 +817,7 @@ impl<'a> Checker<'a> {
             });
         }
 
-        self.functor_maps.insert(qname.to_string(), functor_map);
+        self.functor_maps.insert(ctx.qname.to_string(), functor_map);
     }
 
     // --- Params ---
