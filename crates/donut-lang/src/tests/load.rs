@@ -1,6 +1,6 @@
 use crate::old_check::{Color, Env};
 use donut_core::cell::Globular;
-use donut_core::common::PrimArg;
+use donut_core::common::PureVal;
 use donut_core::pure_cell::PureCell;
 
 fn load(code: &str) -> Env {
@@ -222,7 +222,7 @@ fn test_load_parametric_example() {
             // The arg should be a Cell containing u's PureCell
             let u_entry = &env.entries[env.lookup["u"]];
             match &prim.args[0] {
-                PrimArg::Cell(cell) => {
+                PureVal::Cell(cell) => {
                     assert_eq!(
                         cell,
                         &u_entry.as_cell().unwrap().pure,

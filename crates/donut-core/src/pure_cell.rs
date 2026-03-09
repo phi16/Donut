@@ -160,30 +160,30 @@ impl Diagram for PureCell {
 
 // --- Substitution ---
 
-impl PrimArg {
-    pub fn subst(&self, mapping: &HashMap<PrimId, PrimArg>) -> PrimArg {
+impl PureVal {
+    pub fn subst(&self, mapping: &HashMap<ExtId, PureVal>) -> PureVal {
         if mapping.is_empty() {
             return self.clone();
         }
         match self {
-            PrimArg::Cell(pc) => PrimArg::Cell(pc.subst(mapping)),
-            PrimArg::Nat(n) => PrimArg::Nat(*n),
-            PrimArg::Rat(bits) => PrimArg::Rat(*bits),
-            PrimArg::App(id, args) => {
-                let new_args: Vec<PrimArg> = args.iter().map(|a| a.subst(mapping)).collect();
+            PureVal::Cell(pc) => PureVal::Cell(pc.subst(mapping)),
+            PureVal::Nat(n) => PureVal::Nat(*n),
+            PureVal::Rat(bits) => PureVal::Rat(*bits),
+            PureVal::App(id, args) => {
+                let new_args: Vec<PureVal> = args.iter().map(|a| a.subst(mapping)).collect();
                 if new_args.is_empty() {
                     if let Some(replacement) = mapping.get(id) {
                         return replacement.clone();
                     }
                 }
-                PrimArg::App(*id, new_args)
+                PureVal::App(*id, new_args)
             }
         }
     }
 }
 
 impl Shape {
-    pub fn subst(&self, mapping: &HashMap<PrimId, PrimArg>) -> Shape {
+    pub fn subst(&self, mapping: &HashMap<ExtId, PureVal>) -> Shape {
         match self {
             Shape::Zero => Shape::Zero,
             Shape::Succ { source, target } => Shape::Succ {
@@ -209,25 +209,14 @@ impl PureCell {
         }
     }
 
-    pub fn subst(&self, mapping: &HashMap<PrimId, PrimArg>) -> PureCell {
+    pub fn subst(&self, mapping: &HashMap<ExtId, PureVal>) -> PureCell {
         if mapping.is_empty() {
             return self.clone();
         }
         match self {
             PureCell::Prim(prim, shape, dim) => {
-                // Cell-level fresh prim substitution
-                if prim.args.is_empty() {
-                    if let Some(PrimArg::Cell(replacement)) = mapping.get(&prim.id) {
-                        let mut result = replacement.clone();
-                        while result.dim().in_space < dim.in_space {
-                            result = PureCell::id(result);
-                        }
-                        return result;
-                    }
-                }
-                // Substitute in args and shape
                 let new_args = prim.args.iter().map(|a| a.subst(mapping)).collect();
-                let new_prim = Prim::with_args(prim.id, new_args);
+                let new_prim = Prim::with_id_args(prim.id, new_args);
                 let new_shape = shape.subst(mapping);
                 PureCell::Prim(new_prim, new_shape, *dim)
             }
@@ -241,13 +230,13 @@ impl PureCell {
 
 // --- Display ---
 
-impl fmt::Display for PrimArg {
+impl fmt::Display for PureVal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            PrimArg::Cell(pc) => write!(f, "{}", pc),
-            PrimArg::Nat(n) => write!(f, "{}", n),
-            PrimArg::Rat(v) => write!(f, "{}", v),
-            PrimArg::App(id, args) => {
+            PureVal::Cell(pc) => write!(f, "{}", pc),
+            PureVal::Nat(n) => write!(f, "{}", n),
+            PureVal::Rat(v) => write!(f, "{}", v),
+            PureVal::App(id, args) => {
                 write!(f, "P{}", id)?;
                 if !args.is_empty() {
                     write!(f, "[")?;

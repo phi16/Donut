@@ -1284,8 +1284,8 @@ fn parametric_module_prim_decl_display() {
 
     // display_prim with concrete args
     use crate::old_check::display_prim;
-    use donut_core::common::{Prim, PrimArg};
-    let prim = Prim::with_args(prim_id, vec![PrimArg::Nat(20), PrimArg::Nat(32)]);
+    use donut_core::common::{Prim, PureVal};
+    let prim = Prim::with_id_args(prim_id, vec![PureVal::Nat(20), PureVal::Nat(32)]);
     assert_eq!(display_prim(&prim, &env.prim_decls), "u[20].x[32]");
 }
 
@@ -1354,7 +1354,7 @@ fn sys_prim_param_counts() {
 #[test]
 fn display_prim_with_args_sys() {
     use crate::old_check::display_prim;
-    use donut_core::common::{Prim, PrimArg};
+    use donut_core::common::{Prim, PureVal};
     let env = check_source(
         r#"
         import "base"
@@ -1367,14 +1367,14 @@ fn display_prim_with_args_sys() {
     let &lit_idx = env.lookup.get("sys.u32.lit").unwrap();
     let lit_cell = env.entries[lit_idx].as_cell().unwrap();
     let prim_id = lit_cell.pure.extract_prim_id().unwrap();
-    let prim = Prim::with_args(prim_id, vec![PrimArg::Nat(42)]);
+    let prim = Prim::with_id_args(prim_id, vec![PureVal::Nat(42)]);
     assert_eq!(display_prim(&prim, &env.prim_decls), "sys::u32.lit[42]");
 
     // sys.f32.lit with arg (rat 3.14) → "sys::f32.lit[3.14]"
     let &f_idx = env.lookup.get("sys.f32.lit").unwrap();
     let f_cell = env.entries[f_idx].as_cell().unwrap();
     let f_id = f_cell.pure.extract_prim_id().unwrap();
-    let f_prim = Prim::with_args(f_id, vec![PrimArg::Rat(3.14)]);
+    let f_prim = Prim::with_id_args(f_id, vec![PureVal::Rat(3.14)]);
     assert_eq!(display_prim(&f_prim, &env.prim_decls), "sys::f32.lit[3.14]");
 }
 
@@ -1466,7 +1466,7 @@ fn all_params_no_params_entry() {
 #[test]
 fn format_name_with_args_no_origin() {
     use crate::old_check::display_prim;
-    use donut_core::common::{Prim, PrimArg};
+    use donut_core::common::{Prim, PureVal};
     let env = check_source(
         r#"
         import "base"
@@ -1484,7 +1484,7 @@ fn format_name_with_args_no_origin() {
     let prim_id = cell.pure.extract_prim_id().unwrap();
 
     // Two args (m and n) — must provide all params
-    let prim = Prim::with_args(prim_id, vec![PrimArg::Nat(5), PrimArg::Nat(10)]);
+    let prim = Prim::with_id_args(prim_id, vec![PureVal::Nat(5), PureVal::Nat(10)]);
     assert_eq!(display_prim(&prim, &env.prim_decls), "u[5].x[10]");
 }
 

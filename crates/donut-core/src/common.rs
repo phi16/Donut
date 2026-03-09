@@ -9,23 +9,43 @@ pub type CoordQ = Vec<Q>;
 pub type Vec1<T> = Vec<T>;
 pub type Vec2<T> = Vec<T>;
 
-pub type PrimId = u64;
+/// External identifier — opaque ID used in substitution, PureVal::App, Prim, etc.
+/// In donut-lang, this corresponds to GenId.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ExtId(pub u64);
+
+impl std::fmt::Display for ExtId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// Primitive cell identifier — separate indexing from ExtId.
+/// Used in donut-lang for prim_decls output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct PrimId(pub u64);
+
+impl std::fmt::Display for PrimId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum PrimArg {
+pub enum PureVal {
     Cell(crate::pure_cell::PureCell),
     Nat(u64),
     Rat(f64),
-    App(PrimId, Vec<PrimArg>),
+    App(ExtId, Vec<PureVal>),
 }
 
-impl PrimArg {
+impl PureVal {
     pub fn rat(v: f64) -> Self {
-        PrimArg::Rat(v)
+        PureVal::Rat(v)
     }
     pub fn as_rat(&self) -> Option<f64> {
         match self {
-            PrimArg::Rat(v) => Some(*v),
+            PureVal::Rat(v) => Some(*v),
             _ => None,
         }
     }
@@ -34,18 +54,25 @@ impl PrimArg {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Prim {
     pub id: PrimId,
-    pub args: Vec<PrimArg>,
+    pub args: Vec<PureVal>,
 }
 
 impl Prim {
-    pub fn new(id: PrimId) -> Self {
+    pub fn new(id: u64) -> Self {
+        Prim {
+            id: PrimId(id),
+            args: Vec::new(),
+        }
+    }
+
+    pub fn with_id(id: PrimId) -> Self {
         Prim {
             id,
             args: Vec::new(),
         }
     }
 
-    pub fn with_args(id: PrimId, args: Vec<PrimArg>) -> Self {
+    pub fn with_id_args(id: PrimId, args: Vec<PureVal>) -> Self {
         Prim { id, args }
     }
 }

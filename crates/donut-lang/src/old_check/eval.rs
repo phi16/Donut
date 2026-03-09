@@ -5,13 +5,13 @@ use super::*;
 impl<'a> Checker<'a> {
     // --- Meta evaluation ---
 
-    pub(super) fn eval_meta_val(&self, val: &Val) -> Result<PrimArg> {
+    pub(super) fn eval_meta_val(&self, val: &Val) -> Result<PureVal> {
         match val {
             Val::Path(path) => {
                 if let Some(num) = try_path_as_number(path) {
                     return match num {
-                        ImplicitNum::Nat(n) => Ok(PrimArg::Nat(n)),
-                        ImplicitNum::Rat(r) => Ok(PrimArg::rat(r)),
+                        ImplicitNum::Nat(n) => Ok(PureVal::Nat(n)),
+                        ImplicitNum::Rat(r) => Ok(PureVal::rat(r)),
                     };
                 }
 
@@ -33,7 +33,7 @@ impl<'a> Checker<'a> {
                             .iter()
                             .map(|a| a.subst(&mapping))
                             .collect();
-                        Ok(PrimArg::App(base_prim.id, new_args))
+                        Ok(PureVal::App(base_prim.id, new_args))
                     }
                     EntryBody::Cell(_) => {
                         Err(CheckError::general(format!("{} is not a meta entry", name)))
@@ -46,10 +46,10 @@ impl<'a> Checker<'a> {
             Val::Lit(Lit::Number(s)) => {
                 if s.contains('.') {
                     let r: f64 = s.parse().map_err(|e: std::num::ParseFloatError| CheckError::general(e.to_string()))?;
-                    Ok(PrimArg::rat(r))
+                    Ok(PureVal::rat(r))
                 } else {
                     let n: u64 = s.parse().map_err(|_| CheckError::general(format!("invalid nat: {}", s)))?;
-                    Ok(PrimArg::Nat(n))
+                    Ok(PureVal::Nat(n))
                 }
             }
             _ => Err(CheckError::general("unsupported in meta context")),
@@ -242,18 +242,18 @@ impl<'a> Checker<'a> {
         self.resolve_qualified(name, |n| self.functor_maps.contains_key(n))
     }
 
-    pub(super) fn resolve_param_arg(&self, pv: &ParamVal, kind: &ParamKind) -> Result<PrimArg> {
+    pub(super) fn resolve_param_arg(&self, pv: &ParamVal, kind: &ParamKind) -> Result<PureVal> {
         let val_s = self.program.val(pv.val);
         match kind {
             ParamKind::Cell => {
                 let arg_cell = self.eval_val(&val_s.0)?;
-                Ok(PrimArg::Cell(arg_cell.pure))
+                Ok(PureVal::Cell(arg_cell.pure))
             }
             ParamKind::Meta(mt) => {
                 let mut arg = self.eval_meta_val(&val_s.0)?;
                 if self.meta_id("rat") == Some(mt.0) {
-                    if let PrimArg::Nat(n) = arg {
-                        arg = PrimArg::rat(n as f64);
+                    if let PureVal::Nat(n) = arg {
+                        arg = PureVal::rat(n as f64);
                     }
                 }
                 Ok(arg)
@@ -261,7 +261,7 @@ impl<'a> Checker<'a> {
         }
     }
 
-    pub(super) fn build_path_mapping(&self, path: &Path) -> Result<HashMap<PrimId, PrimArg>> {
+    pub(super) fn build_path_mapping(&self, path: &Path) -> Result<HashMap<PrimId, PureVal>> {
         let mut mapping = HashMap::new();
 
         let mut current = String::new();
@@ -322,7 +322,7 @@ impl<'a> Checker<'a> {
     fn resolve_path_to_module(
         &self,
         path: &Path,
-    ) -> Result<Option<(String, HashMap<PrimId, PrimArg>)>> {
+    ) -> Result<Option<(String, HashMap<PrimId, PureVal>)>> {
         let mut current = String::new();
         let mut mapping = HashMap::new();
 
@@ -370,7 +370,7 @@ impl<'a> Checker<'a> {
         &mut self,
         source: &str,
         dest: &str,
-        mapping: &HashMap<PrimId, PrimArg>,
+        mapping: &HashMap<PrimId, PureVal>,
     ) -> Result<()> {
         let members = self
             .module_members
@@ -437,7 +437,7 @@ pub(super) fn apply_functor(cell: &PureCell, map: &HashMap<PrimId, FunctorEntry>
             Some(entry) => {
                 let mut result = entry.cell.clone();
                 if !entry.param_prims.is_empty() && !prim.args.is_empty() {
-                    let subst_map: HashMap<PrimId, PrimArg> = entry.param_prims.iter()
+                    let subst_map: HashMap<PrimId, PureVal> = entry.param_prims.iter()
                         .zip(prim.args.iter())
                         .map(|(&param_id, arg)| (param_id, arg.clone()))
                         .collect();
@@ -460,7 +460,7 @@ pub(super) fn apply_functor(cell: &PureCell, map: &HashMap<PrimId, FunctorEntry>
     }
 }
 
-fn subst_ty((dim, t): (u8, &Ty), mapping: &HashMap<PrimId, PrimArg>) -> (u8, Ty) {
+fn subst_ty((dim, t): (u8, &Ty), mapping: &HashMap<PrimId, PureVal>) -> (u8, Ty) {
     let new_t = match t {
         Ty::Zero => Ty::Zero,
         Ty::Succ(s, t) => Ty::Succ(

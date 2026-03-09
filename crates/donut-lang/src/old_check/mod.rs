@@ -7,7 +7,7 @@ use crate::types::old_item::*;
 use crate::types::token::Token;
 use color::ColorSpec;
 use donut_core::cell::{Diagram, Globular, check_prim};
-use donut_core::common::{Level, Prim, PrimArg, PrimId};
+use donut_core::common::{Level, Prim, PureVal, PrimId};
 use donut_core::free_cell::FreeCell;
 use donut_core::pure_cell::PureCell;
 use eval::{apply_functor, make_cell, match_ty};
@@ -115,11 +115,11 @@ pub(super) struct Checker<'a> {
     pub(super) module_params: HashMap<String, Vec<ParamInfo>>,
     pub(super) module_members: HashMap<String, Vec<MemberRef>>,
     pub(super) entry_params: HashMap<usize, Vec<ParamInfo>>,
-    pub(super) accumulated_args: Vec<PrimArg>,
+    pub(super) accumulated_args: Vec<PureVal>,
 
     pub(super) meta_prim_ids: HashMap<String, PrimId>,
     pub(super) meta_ret_types: HashMap<PrimId, MetaType>,
-    pub(super) meta_values: HashMap<usize, PrimArg>,
+    pub(super) meta_values: HashMap<usize, PureVal>,
 
     pub(super) qname_cache: HashMap<ItemId, String>,
 
@@ -128,7 +128,7 @@ pub(super) struct Checker<'a> {
     pub(super) prim_decls: HashMap<PrimId, PrimDecl>,
 
     /// Saved param info for re-entering scopes (item_id → (freshes, args)).
-    pub(super) scope_params: HashMap<ItemId, (Vec<ParamInfo>, Vec<PrimArg>)>,
+    pub(super) scope_params: HashMap<ItemId, (Vec<ParamInfo>, Vec<PureVal>)>,
 }
 
 impl<'a> Checker<'a> {
@@ -206,7 +206,7 @@ impl<'a> Checker<'a> {
 
     fn make_prim(&mut self) -> Prim {
         let id = self.fresh_prim_id();
-        Prim::with_args(id, self.accumulated_args.clone())
+        Prim::with_id_args(id, self.accumulated_args.clone())
     }
 
     // --- Entry management ---
@@ -797,7 +797,7 @@ impl<'a> Checker<'a> {
                     let prim = Prim::new(fresh_id);
                     let cell = make_cell(prim, &ty)?;
                     let level = cell.pure.dim().in_space;
-                    self.accumulated_args.push(PrimArg::Cell(cell.pure.clone()));
+                    self.accumulated_args.push(PureVal::Cell(cell.pure.clone()));
                     let param_name = self.qualified_name(&param.name);
                     self.add_entry(param_name, param_color, EntryBody::Cell(cell), vec![], None);
                     self.register_param_prim_decl(fresh_id, &param.name, level);
@@ -812,8 +812,8 @@ impl<'a> Checker<'a> {
                         vec![],
                         None,
                     );
-                    self.meta_values.insert(idx, PrimArg::App(fresh_id, vec![]));
-                    self.accumulated_args.push(PrimArg::App(fresh_id, vec![]));
+                    self.meta_values.insert(idx, PureVal::App(fresh_id, vec![]));
+                    self.accumulated_args.push(PureVal::App(fresh_id, vec![]));
                     self.register_param_prim_decl(fresh_id, &param.name, 0);
                 }
             }
@@ -886,7 +886,7 @@ impl<'a> Checker<'a> {
         ctx: &ItemCtx,
         prim: Prim,
         ret: Option<MetaType>,
-        meta_val: Option<PrimArg>,
+        meta_val: Option<PureVal>,
     ) -> usize {
         if let Some(ret) = ret {
             self.meta_ret_types.insert(prim.id, ret);

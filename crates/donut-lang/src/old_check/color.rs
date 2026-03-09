@@ -14,20 +14,20 @@ pub(super) enum ColorSpec {
 impl<'a> Checker<'a> {
     // --- Meta reduction ---
 
-    pub(super) fn reduce_meta(&self, arg: &PrimArg) -> PrimArg {
+    pub(super) fn reduce_meta(&self, arg: &PureVal) -> PureVal {
         match arg {
-            PrimArg::Nat(_) | PrimArg::Rat(_) | PrimArg::Cell(_) => arg.clone(),
-            PrimArg::App(id, args) => {
-                let reduced: Vec<PrimArg> = args.iter().map(|a| self.reduce_meta(a)).collect();
+            PureVal::Nat(_) | PureVal::Rat(_) | PureVal::Cell(_) => arg.clone(),
+            PureVal::App(id, args) => {
+                let reduced: Vec<PureVal> = args.iter().map(|a| self.reduce_meta(a)).collect();
                 if let Some(result) = self.builtin_reduce(*id, &reduced) {
                     return result;
                 }
-                PrimArg::App(*id, reduced)
+                PureVal::App(*id, reduced)
             }
         }
     }
 
-    fn builtin_reduce(&self, id: PrimId, args: &[PrimArg]) -> Option<PrimArg> {
+    fn builtin_reduce(&self, id: PrimId, args: &[PureVal]) -> Option<PureVal> {
         let rgb_id = self.meta_id("rgb")?;
         if self.meta_id("hsv") == Some(id) {
             return reduce_hsv(rgb_id, args);
@@ -40,7 +40,7 @@ impl<'a> Checker<'a> {
 
     // --- Decorator evaluation ---
 
-    pub(super) fn eval_decorators(&mut self, decos: &[ValId]) -> Vec<PrimArg> {
+    pub(super) fn eval_decorators(&mut self, decos: &[ValId]) -> Vec<PureVal> {
         let decorator_type = self.meta_id("decorator")
             .map(|id| MetaType(id, vec![]));
         let mut result = Vec::new();
@@ -72,19 +72,19 @@ impl<'a> Checker<'a> {
         })
     }
 
-    pub(super) fn extract_color(&self, decos: &[PrimArg]) -> Option<ColorSpec> {
+    pub(super) fn extract_color(&self, decos: &[PureVal]) -> Option<ColorSpec> {
         let rgb_id = self.meta_id("rgb")?;
         let color_id = self.style_meta_id("color");
         let lighten_id = self.style_meta_id("lighten");
         let darken_id = self.style_meta_id("darken");
         for deco in decos {
-            let PrimArg::App(id, args) = deco else { continue };
+            let PureVal::App(id, args) = deco else { continue };
             if color_id == Some(*id) {
-                let Some(PrimArg::App(cid, color_args)) = args.first() else { continue };
+                let Some(PureVal::App(cid, color_args)) = args.first() else { continue };
                 if *cid != rgb_id { continue; }
-                let r = match color_args.get(0)? { PrimArg::Nat(n) => *n as u8, _ => continue };
-                let g = match color_args.get(1)? { PrimArg::Nat(n) => *n as u8, _ => continue };
-                let b = match color_args.get(2)? { PrimArg::Nat(n) => *n as u8, _ => continue };
+                let r = match color_args.get(0)? { PureVal::Nat(n) => *n as u8, _ => continue };
+                let g = match color_args.get(1)? { PureVal::Nat(n) => *n as u8, _ => continue };
+                let b = match color_args.get(2)? { PureVal::Nat(n) => *n as u8, _ => continue };
                 return Some(ColorSpec::Absolute(Color::new(r, g, b)));
             }
             if lighten_id == Some(*id) {
@@ -180,32 +180,32 @@ impl<'a> Checker<'a> {
 
 // --- Free functions ---
 
-fn reduce_hsv(rgb_id: PrimId, args: &[PrimArg]) -> Option<PrimArg> {
+fn reduce_hsv(rgb_id: PrimId, args: &[PureVal]) -> Option<PureVal> {
     let h = args.get(0)?.as_rat()?;
     let s = args.get(1).and_then(|a| a.as_rat()).unwrap_or(1.0);
     let v = args.get(2).and_then(|a| a.as_rat()).unwrap_or(1.0);
     let c = hsv_to_rgb(h, s, v);
-    Some(PrimArg::App(rgb_id, vec![
-        PrimArg::Nat(c.r as u64), PrimArg::Nat(c.g as u64), PrimArg::Nat(c.b as u64),
+    Some(PureVal::App(rgb_id, vec![
+        PureVal::Nat(c.r as u64), PureVal::Nat(c.g as u64), PureVal::Nat(c.b as u64),
     ]))
 }
 
-fn reduce_lerp(rgb_id: PrimId, args: &[PrimArg]) -> Option<PrimArg> {
+fn reduce_lerp(rgb_id: PrimId, args: &[PureVal]) -> Option<PureVal> {
     let a = args.get(0)?;
     let b = args.get(1)?;
     let x = args.get(2)?.as_rat()?;
-    let (PrimArg::App(a_id, a_args), PrimArg::App(b_id, b_args)) = (a, b) else {
+    let (PureVal::App(a_id, a_args), PureVal::App(b_id, b_args)) = (a, b) else {
         return None;
     };
     if *a_id != rgb_id || *b_id != rgb_id {
         return None;
     }
-    let interp = |i: usize| -> Option<PrimArg> {
-        let av = match a_args.get(i)? { PrimArg::Nat(n) => *n as f64, _ => return None };
-        let bv = match b_args.get(i)? { PrimArg::Nat(n) => *n as f64, _ => return None };
-        Some(PrimArg::Nat((av + (bv - av) * x).round() as u64))
+    let interp = |i: usize| -> Option<PureVal> {
+        let av = match a_args.get(i)? { PureVal::Nat(n) => *n as f64, _ => return None };
+        let bv = match b_args.get(i)? { PureVal::Nat(n) => *n as f64, _ => return None };
+        Some(PureVal::Nat((av + (bv - av) * x).round() as u64))
     };
-    Some(PrimArg::App(rgb_id, vec![interp(0)?, interp(1)?, interp(2)?]))
+    Some(PureVal::App(rgb_id, vec![interp(0)?, interp(1)?, interp(2)?]))
 }
 
 fn golden_angle_hue(index: usize) -> f64 {

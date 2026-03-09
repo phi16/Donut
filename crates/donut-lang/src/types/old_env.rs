@@ -1,5 +1,5 @@
 use donut_core::cell::Globular;
-use donut_core::common::{Level, Prim, PrimArg, PrimId};
+use donut_core::common::{Level, Prim, PureVal, PrimId};
 use donut_core::free_cell::FreeCell;
 use donut_core::pure_cell::PureCell;
 use std::collections::HashMap;
@@ -175,12 +175,12 @@ pub fn display_cell_type(pure: &PureCell, prim_decls: &HashMap<PrimId, PrimDecl>
     }
 }
 
-fn display_prim_arg(arg: &PrimArg, prim_decls: &HashMap<PrimId, PrimDecl>) -> String {
+fn display_prim_arg(arg: &PureVal, prim_decls: &HashMap<PrimId, PrimDecl>) -> String {
     match arg {
-        PrimArg::Cell(pc) => display_pure_cell(pc, prim_decls),
-        PrimArg::Nat(n) => n.to_string(),
-        PrimArg::Rat(v) => format!("{}", v),
-        PrimArg::App(id, args) => match prim_decls.get(id) {
+        PureVal::Cell(pc) => display_pure_cell(pc, prim_decls),
+        PureVal::Nat(n) => n.to_string(),
+        PureVal::Rat(v) => format!("{}", v),
+        PureVal::App(id, args) => match prim_decls.get(id) {
             Some(decl) => format_name_with_args(&decl.name, &decl.param_counts, args, prim_decls),
             None => format!("?{}", id),
         },
@@ -194,7 +194,7 @@ fn display_prim_arg(arg: &PrimArg, prim_decls: &HashMap<PrimId, PrimDecl>) -> St
 fn format_name_with_args(
     name: &str,
     param_counts: &[usize],
-    args: &[PrimArg],
+    args: &[PureVal],
     prim_decls: &HashMap<PrimId, PrimDecl>,
 ) -> String {
     let expected: usize = param_counts.iter().sum();

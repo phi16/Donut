@@ -2,7 +2,7 @@ pub mod env;
 pub mod glsl;
 
 use donut_core::cell::Globular;
-use donut_core::common::{PrimArg, PrimId};
+use donut_core::common::{PureVal, PrimId};
 use donut_core::free_cell::{Cell, CellF, FreeCell};
 use donut_core::pure_cell::PureCell;
 use std::collections::HashMap;
@@ -39,7 +39,7 @@ pub fn format_values(values: &[Value]) -> String {
         .join(", ")
 }
 
-type EvalFn = Box<dyn Fn(&[PrimArg], &[Value]) -> Result<Vec<Value>, String>>;
+type EvalFn = Box<dyn Fn(&[PureVal], &[Value]) -> Result<Vec<Value>, String>>;
 
 pub struct Runtime {
     ops: HashMap<PrimId, EvalFn>,
@@ -58,7 +58,7 @@ impl Runtime {
         self.base = Some(id);
     }
 
-    pub fn register(&mut self, id: PrimId, f: impl Fn(&[PrimArg], &[Value]) -> Result<Vec<Value>, String> + 'static) {
+    pub fn register(&mut self, id: PrimId, f: impl Fn(&[PureVal], &[Value]) -> Result<Vec<Value>, String> + 'static) {
         self.ops.insert(id, Box::new(f));
     }
 
@@ -204,9 +204,9 @@ pub(crate) fn width_pure_1cell(cell: &PureCell) -> usize {
     }
 }
 
-pub(crate) fn extract_cell_width(args: &[PrimArg], index: usize) -> Result<usize, String> {
+pub(crate) fn extract_cell_width(args: &[PureVal], index: usize) -> Result<usize, String> {
     match args.get(index) {
-        Some(PrimArg::Cell(cell)) => Ok(width_pure_1cell(cell)),
+        Some(PureVal::Cell(cell)) => Ok(width_pure_1cell(cell)),
         _ => Err(format!("missing cell parameter at index {}", index)),
     }
 }
