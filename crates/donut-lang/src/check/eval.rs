@@ -395,10 +395,11 @@ impl<'a> Checker<'a> {
                     }
                 };
                 let src_pc = src_entry.param_counts.clone();
+                let src_origin = src_entry.origin.clone();
                 let idx = self.add_entry(
                     dest_member.clone(),
                     src_entry.color,
-                    new_body, src_pc,
+                    new_body, src_pc, src_origin,
                 );
 
                 if let Some(params) = self.entry_params.get(&src_idx).cloned() {

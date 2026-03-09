@@ -197,6 +197,8 @@ struct Checker<'a> {
     check_order_stack: Vec<Vec<CheckNode>>,
     /// Stack of qualified name prefixes for building qnames/cnames.
     prefix_stack: Vec<String>,
+    /// Stack of param counts at each module nesting level.
+    param_count_stack: Vec<usize>,
 }
 
 impl<'a> Checker<'a> {
@@ -215,6 +217,7 @@ impl<'a> Checker<'a> {
             extra_sources: HashMap::new(),
             check_order_stack: Vec::new(),
             prefix_stack: Vec::new(),
+            param_count_stack: Vec::new(),
         }
     }
 
@@ -243,6 +246,14 @@ impl<'a> Checker<'a> {
 
     fn val(&self, id: ValId) -> &S<Val> {
         &self.vals[id.0]
+    }
+
+    fn current_param_counts(&self, own_count: usize) -> Vec<usize> {
+        let mut counts = self.param_count_stack.clone();
+        if own_count > 0 {
+            counts.push(own_count);
+        }
+        counts
     }
 
     fn make_item_name(&self, lname: String) -> ItemName {
@@ -418,10 +429,12 @@ impl<'a> Checker<'a> {
                     Some(source) => {
                         let old_origin = self.current_origin.take();
                         let old_prefix = std::mem::take(&mut self.prefix_stack);
+                        let old_param_counts = std::mem::take(&mut self.param_count_stack);
                         self.current_origin = Some(name.clone());
                         let (mut module, check_nodes) = self.resolve_import(&source);
                         self.current_origin = old_origin;
                         self.prefix_stack = old_prefix;
+                        self.param_count_stack = old_param_counts;
                         module.origin = Some(name.clone());
                         self.import_cache.insert(name, (module.clone(), check_nodes.clone()));
                         (module, check_nodes)
@@ -807,6 +820,7 @@ impl<'a> Checker<'a> {
         if has_body_or_with {
             let parent_qname = self.make_item_name(first_lname.clone()).qname;
             self.prefix_stack.push(parent_qname);
+            self.param_count_stack.push(params.len());
         }
 
         let (mut body_members, body_check_nodes) = match body_mod {
@@ -839,6 +853,7 @@ impl<'a> Checker<'a> {
 
         if has_body_or_with {
             self.prefix_stack.pop();
+            self.param_count_stack.pop();
         }
 
         // Resolve functor applicands before popping scope (deco params must be visible)
@@ -951,6 +966,7 @@ impl<'a> Checker<'a> {
                 .map(|(_, s)| s.clone())
                 .unwrap();
             let names = self.make_item_name(first_lname.clone());
+            let param_counts = self.current_param_counts(params.len());
             let item = Item {
                 names,
                 span,
@@ -960,6 +976,7 @@ impl<'a> Checker<'a> {
                 body,
                 decos: deco_vals,
                 origin: None,
+                param_counts,
             };
             let item_id = self.alloc_item(item);
             for ni in &name_infos {

@@ -114,6 +114,8 @@ pub struct Item {
     pub decos: Vec<ValId>,
     /// Origin module name (e.g. "sys") for items defined in imported modules.
     pub origin: Option<String>,
+    /// Parameter counts at each module nesting level (computed at resolve time).
+    pub param_counts: Vec<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -263,6 +265,7 @@ impl Item {
             },
             decos: Vec::new(),
             origin: None,
+            param_counts: Vec::new(),
         }
     }
 
@@ -279,6 +282,7 @@ impl Item {
             },
             decos: Vec::new(),
             origin: None,
+            param_counts: Vec::new(),
         }
     }
 

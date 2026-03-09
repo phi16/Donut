@@ -76,6 +76,8 @@ struct ItemCtx<'a> {
     span: &'a TokenSpan,
     color: Option<ColorSpec>,
     param_freshes: &'a [ParamInfo],
+    param_counts: &'a [usize],
+    origin: Option<&'a str>,
 }
 
 // --- Module member reference ---
@@ -110,7 +112,6 @@ pub(super) struct Checker<'a> {
     pub(super) module_members: HashMap<String, Vec<MemberRef>>,
     pub(super) entry_params: HashMap<usize, Vec<ParamInfo>>,
     pub(super) accumulated_args: Vec<PrimArg>,
-    pub(super) param_count_stack: Vec<usize>,
 
     pub(super) meta_prim_ids: HashMap<String, PrimId>,
     pub(super) meta_ret_types: HashMap<PrimId, MetaType>,
@@ -121,8 +122,6 @@ pub(super) struct Checker<'a> {
     pub(super) functor_maps: HashMap<String, HashMap<PrimId, FunctorEntry>>,
 
     pub(super) prim_decls: HashMap<PrimId, PrimDecl>,
-
-    pub(super) current_origin: Option<(String, usize)>,
 
     /// Saved param info for re-entering scopes (item_id → (freshes, args)).
     pub(super) scope_params: HashMap<ItemId, (Vec<ParamInfo>, Vec<PrimArg>)>,
@@ -146,14 +145,12 @@ impl<'a> Checker<'a> {
             module_members: HashMap::new(),
             entry_params: HashMap::new(),
             accumulated_args: Vec::new(),
-            param_count_stack: Vec::new(),
             meta_prim_ids,
             meta_ret_types: HashMap::new(),
             meta_values: HashMap::new(),
             qname_cache: HashMap::new(),
             functor_maps: HashMap::new(),
             prim_decls: HashMap::new(),
-            current_origin: None,
             scope_params: HashMap::new(),
         }
     }
@@ -216,10 +213,10 @@ impl<'a> Checker<'a> {
         color: Color,
         body: EntryBody,
         param_counts: Vec<usize>,
+        origin: Option<String>,
     ) -> usize {
         let idx = self.entries.len();
         self.lookup.insert(name.clone(), idx);
-        let origin = self.current_origin.as_ref().map(|(o, _)| o.clone());
         self.entries.push(Entry {
             name,
             color,
@@ -228,18 +225,6 @@ impl<'a> Checker<'a> {
             origin,
         });
         idx
-    }
-
-    fn current_param_counts(&self, own_count: usize) -> Vec<usize> {
-        // Skip origin prefix depth — origin segment is represented by "::" in
-        // canonical names and never carries parameters, so param_counts should
-        // only cover the local "." segments.
-        let skip = self.current_origin.as_ref().map_or(0, |(_, depth)| *depth);
-        let mut counts: Vec<usize> = self.param_count_stack[skip..].to_vec();
-        if own_count > 0 {
-            counts.push(own_count);
-        }
-        counts
     }
 
     fn qualified_name(&self, name: &str) -> String {
@@ -299,8 +284,6 @@ impl<'a> Checker<'a> {
             .to_string();
         let need_alias = canonical != qname;
 
-        let prev_origin = self.enter_origin(item);
-
         // Re-enter params
         let (param_freshes, param_args) = self.scope_params
             .get(&item_id)
@@ -309,7 +292,6 @@ impl<'a> Checker<'a> {
         self.accumulated_args.extend_from_slice(&param_args);
 
         self.prefixes.push(canonical.clone());
-        self.param_count_stack.push(param_freshes.len());
 
         // Check all items and sub-scopes
         self.process_check_order(children);
@@ -329,7 +311,6 @@ impl<'a> Checker<'a> {
             }
         }
 
-        self.param_count_stack.pop();
         self.prefixes.pop();
 
         // Exit params
@@ -352,22 +333,6 @@ impl<'a> Checker<'a> {
         if need_alias {
             self.alias_members(&canonical, &qname);
         }
-
-        self.exit_origin(prev_origin);
-    }
-
-    fn enter_origin(&mut self, item: &Item) -> Option<(String, usize)> {
-        let prev = self.current_origin.clone();
-        if let Some(ref origin) = item.origin {
-            if self.current_origin.as_ref().map_or(true, |co| co.0 != *origin) {
-                self.current_origin = Some((origin.clone(), self.prefixes.len()));
-            }
-        }
-        prev
-    }
-
-    fn exit_origin(&mut self, prev: Option<(String, usize)>) {
-        self.current_origin = prev;
     }
 
     fn check_item(&mut self, item_id: ItemId) {
@@ -375,10 +340,7 @@ impl<'a> Checker<'a> {
         if matches!(item.kind, Some(ItemKind::Param)) {
             return;
         }
-
-        let prev_origin = self.enter_origin(item);
         self.check_item_inner(item_id);
-        self.exit_origin(prev_origin);
     }
 
     fn check_item_inner(&mut self, item_id: ItemId) {
@@ -412,7 +374,9 @@ impl<'a> Checker<'a> {
         };
         let has_params = !param_freshes.is_empty();
 
-        let ctx = ItemCtx { qname: &qname, cname: &cname, span: &span, color, param_freshes: &param_freshes };
+        let origin = item.origin.as_deref();
+        let param_counts = &item.param_counts;
+        let ctx = ItemCtx { qname: &qname, cname: &cname, span: &span, color, param_freshes: &param_freshes, param_counts, origin };
 
         match &item.body {
             ItemBody::Value { val, members: _ } => {
@@ -498,10 +462,7 @@ impl<'a> Checker<'a> {
             Ok((_, Ty::Meta(mt))) => {
                 let prim = self.make_prim();
                 let prim_id = prim.id;
-                let idx = self.register_meta_entry(
-                    ctx.qname.to_string(), ctx.color, prim, Some(mt),
-                    None, ctx.param_freshes,
-                );
+                let idx = self.register_meta_entry(&ctx, prim, Some(mt), None);
                 self.register_prim_decl(prim_id, ctx.cname, 0, idx);
             }
             Ok((_, ty)) => {
@@ -510,9 +471,7 @@ impl<'a> Checker<'a> {
                 match make_cell(prim, &ty) {
                     Ok(cell) => {
                         let level = cell.pure.dim().in_space;
-                        let idx = self.register_entry(
-                            ctx.qname.to_string(), ctx.color, EntryBody::Cell(cell), ctx.param_freshes,
-                        );
+                        let idx = self.register_entry(&ctx, EntryBody::Cell(cell));
                         self.register_prim_decl(prim_id, ctx.cname, level, idx);
                     }
                     Err(e) => self.check_error_at(ctx.span, e),
@@ -545,10 +504,7 @@ impl<'a> Checker<'a> {
             (None, body_ty) => body_ty.clone(),
         };
 
-        let idx = self.register_meta_entry(
-            ctx.qname.to_string(), ctx.color, prim, ret,
-            Some(meta_val), ctx.param_freshes,
-        );
+        let idx = self.register_meta_entry(&ctx, prim, ret, Some(meta_val));
         self.register_prim_decl(prim_id, ctx.cname, 0, idx);
         Ok(())
     }
@@ -599,9 +555,7 @@ impl<'a> Checker<'a> {
                         }
                     }
                 }
-                self.register_entry(
-                    ctx.qname.to_string(), ctx.color, EntryBody::Cell(cell), ctx.param_freshes,
-                );
+                self.register_entry(ctx, EntryBody::Cell(cell));
                 return;
             }
             Err(msg) => msg,
@@ -622,9 +576,7 @@ impl<'a> Checker<'a> {
 
         // Try type alias fallback
         if let Ok((dim, ty)) = self.eval_ty(body_val) {
-            self.register_entry(
-                ctx.qname.to_string(), ctx.color, EntryBody::Type(dim, ty), ctx.param_freshes,
-            );
+            self.register_entry(ctx, EntryBody::Type(dim, ty));
             return;
         }
 
@@ -823,13 +775,13 @@ impl<'a> Checker<'a> {
                     let level = cell.pure.dim().in_space;
                     self.accumulated_args.push(PrimArg::Cell(cell.pure.clone()));
                     let param_name = self.qualified_name(&param.name);
-                    self.add_entry(param_name, param_color, EntryBody::Cell(cell), vec![]);
+                    self.add_entry(param_name, param_color, EntryBody::Cell(cell), vec![], None);
                     self.register_param_prim_decl(fresh_id, &param.name, level);
                 }
                 ParamKind::Meta(_) => {
                     let prim = Prim::new(fresh_id);
                     let param_name = self.qualified_name(&param.name);
-                    let idx = self.add_entry(param_name, param_color, EntryBody::Meta(prim), vec![]);
+                    let idx = self.add_entry(param_name, param_color, EntryBody::Meta(prim), vec![], None);
                     self.meta_values.insert(idx, PrimArg::App(fresh_id, vec![]));
                     self.accumulated_args.push(PrimArg::App(fresh_id, vec![]));
                     self.register_param_prim_decl(fresh_id, &param.name, 0);
@@ -873,18 +825,17 @@ impl<'a> Checker<'a> {
     }
 
     /// Register an entry with the common pattern: add_entry + entry_params.
-    fn register_entry(
-        &mut self,
-        qname: String,
-        color: Option<ColorSpec>,
-        body: EntryBody,
-        param_freshes: &[ParamInfo],
-    ) -> usize {
-        let color = self.resolve_color(color, &body);
-        let pc = self.current_param_counts(param_freshes.len());
-        let idx = self.add_entry(qname, color, body, pc);
-        if !param_freshes.is_empty() {
-            self.entry_params.insert(idx, param_freshes.to_vec());
+    fn register_entry(&mut self, ctx: &ItemCtx, body: EntryBody) -> usize {
+        let color = self.resolve_color(ctx.color, &body);
+        let idx = self.add_entry(
+            ctx.qname.to_string(),
+            color,
+            body,
+            ctx.param_counts.to_vec(),
+            ctx.origin.map(|s| s.to_string()),
+        );
+        if !ctx.param_freshes.is_empty() {
+            self.entry_params.insert(idx, ctx.param_freshes.to_vec());
         }
         idx
     }
@@ -892,20 +843,18 @@ impl<'a> Checker<'a> {
     /// Register a meta entry: add entry, store meta return type and value.
     fn register_meta_entry(
         &mut self,
-        qname: String,
-        color: Option<ColorSpec>,
+        ctx: &ItemCtx,
         prim: Prim,
         ret: Option<MetaType>,
         meta_val: Option<PrimArg>,
-        param_freshes: &[ParamInfo],
     ) -> usize {
         if let Some(ret) = ret {
             self.meta_ret_types.insert(prim.id, ret);
         }
         // Register short name for meta_id() lookups
-        let short_name = qname.rsplit('.').next().unwrap_or(&qname).to_string();
+        let short_name = ctx.qname.rsplit('.').next().unwrap_or(ctx.qname).to_string();
         self.meta_prim_ids.insert(short_name, prim.id);
-        let idx = self.register_entry(qname, color, EntryBody::Meta(prim), param_freshes);
+        let idx = self.register_entry(ctx, EntryBody::Meta(prim));
         if let Some(val) = meta_val {
             self.meta_values.insert(idx, val);
         }
