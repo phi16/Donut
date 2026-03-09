@@ -1456,3 +1456,75 @@ fn exact_params_ok() {
     );
     assert!(result.is_ok(), "f32x3.lit[1, 2, 3] should succeed");
 }
+
+#[test]
+fn sys_import_named_to_f32() {
+    // named import
+    let result = check_source(
+        r#"
+        import "base"
+        sys = import "sys"
+        x = sys.u32.lit[1]; sys.u32.to_f32
+        "#,
+    );
+    assert!(result.is_ok(), "sys.u32.to_f32 (named) should resolve: {:?}", result.err());
+}
+
+#[test]
+fn sys_import_bare_to_f32() {
+    // bare import
+    let result = check_source(
+        r#"
+        import "base"
+        import "sys"
+        x = u32.lit[1]; u32.to_f32
+        "#,
+    );
+    assert!(result.is_ok(), "u32.to_f32 (bare) should resolve: {:?}", result.err());
+}
+
+#[test]
+fn add_assign_cross_ref() {
+    // minimal: += member referencing another type
+    let result = check_source(
+        r#"
+        C: *
+        x: C → C
+        y: C → C
+        x += {
+            z: C → y
+        }
+        "#,
+    );
+    assert!(result.is_ok(), "+= cross ref should resolve: {:?}", result.err());
+}
+
+#[test]
+fn builtin_sys_passes() {
+    let result = check_source(
+        r#"
+        use "sys"
+        "#,
+    );
+    assert!(result.is_ok(), "sys builtin should pass: {:?}", result.err());
+}
+
+#[test]
+fn builtin_base_passes() {
+    let result = check_source(
+        r#"
+        use "base"
+        "#,
+    );
+    assert!(result.is_ok(), "base builtin should pass: {:?}", result.err());
+}
+
+#[test]
+fn builtin_ui_passes() {
+    let result = check_source(
+        r#"
+        use "ui"
+        "#,
+    );
+    assert!(result.is_ok(), "ui builtin should pass: {:?}", result.err());
+}

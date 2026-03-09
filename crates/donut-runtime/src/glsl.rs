@@ -109,6 +109,8 @@ impl GlslCompiler {
             "sys::f32.mul" => Ok(self.binary(GlslTy::Float, "*", &inputs[0], &inputs[1])),
             "sys::f32.div" => Ok(self.binary(GlslTy::Float, "/", &inputs[0], &inputs[1])),
             "sys::f32.neg" => Ok(self.unary(GlslTy::Float, "-", &inputs[0])),
+            "sys::f32.floor" => Ok(self.func_call(GlslTy::Float, "floor", &inputs[0])),
+            "sys::f32.ceil" => Ok(self.func_call(GlslTy::Float, "ceil", &inputs[0])),
             "sys::f32.eq" => Ok(self.compare(GlslTy::Float, "==", &inputs[0], &inputs[1])),
             "sys::f32.ne" => Ok(self.compare(GlslTy::Float, "!=", &inputs[0], &inputs[1])),
             "sys::f32.lt" => Ok(self.compare(GlslTy::Float, "<", &inputs[0], &inputs[1])),
@@ -147,16 +149,8 @@ impl GlslCompiler {
             "sys::u32.le" => Ok(self.compare(GlslTy::Int, "<=", &inputs[0], &inputs[1])),
             "sys::u32.gt" => Ok(self.compare(GlslTy::Int, ">", &inputs[0], &inputs[1])),
             "sys::u32.ge" => Ok(self.compare(GlslTy::Int, ">=", &inputs[0], &inputs[1])),
-            "sys::u32.to_f32" => {
-                let v = self.fresh(GlslTy::Float);
-                self.emit(format!(
-                    "{} {} = float({});",
-                    v.ty.decl(),
-                    v.name,
-                    inputs[0].name
-                ));
-                Ok(vec![v])
-            }
+            "sys::u32.to_f32" => Ok(self.func_call(GlslTy::Float, "float", &inputs[0])),
+            "sys::u32.to_i32" => Ok(self.func_call(GlslTy::Int, "int", &inputs[0])),
 
             // --- i32 ---
             "sys::i32.lit" => {
@@ -189,16 +183,7 @@ impl GlslCompiler {
             "sys::i32.le" => Ok(self.compare(GlslTy::Int, "<=", &inputs[0], &inputs[1])),
             "sys::i32.gt" => Ok(self.compare(GlslTy::Int, ">", &inputs[0], &inputs[1])),
             "sys::i32.ge" => Ok(self.compare(GlslTy::Int, ">=", &inputs[0], &inputs[1])),
-            "sys::i32.to_f32" => {
-                let v = self.fresh(GlslTy::Float);
-                self.emit(format!(
-                    "{} {} = float({});",
-                    v.ty.decl(),
-                    v.name,
-                    inputs[0].name
-                ));
-                Ok(vec![v])
-            }
+            "sys::i32.to_f32" => Ok(self.func_call(GlslTy::Float, "float", &inputs[0])),
 
             // --- bool ---
             "sys::bool.lit" => {
@@ -424,6 +409,12 @@ impl GlslCompiler {
     fn unary(&mut self, ty: GlslTy, op: &str, a: &Var) -> Vec<Var> {
         let v = self.fresh(ty);
         self.emit(format!("{} {} = {}{};", v.ty.decl(), v.name, op, a.name));
+        vec![v]
+    }
+
+    fn func_call(&mut self, ty: GlslTy, func: &str, a: &Var) -> Vec<Var> {
+        let v = self.fresh(ty);
+        self.emit(format!("{} {} = {}({});", v.ty.decl(), v.name, func, a.name));
         vec![v]
     }
 

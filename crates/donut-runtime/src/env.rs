@@ -96,6 +96,10 @@ fn ops() -> Vec<Op> {
             Value::U32(a) => Ok(vec![Value::F32(*a as f64)]),
             _ => type_error(),
         }},
+        Op { name: "sys::u32.to_i32", f: |_, v| match &v[0] {
+            Value::U32(a) => Ok(vec![Value::I32(*a as i32)]),
+            _ => type_error(),
+        }},
         // f32
         Op { name: "sys::f32.lit", f: |args, _| Ok(vec![Value::F32(extract_rat(args)?)]) },
         Op { name: "sys::f32.add", f: |_, v| match (&v[0], &v[1]) {
@@ -116,6 +120,14 @@ fn ops() -> Vec<Op> {
         }},
         Op { name: "sys::f32.neg", f: |_, v| match &v[0] {
             Value::F32(a) => Ok(vec![Value::F32(-a)]),
+            _ => type_error(),
+        }},
+        Op { name: "sys::f32.floor", f: |_, v| match &v[0] {
+            Value::F32(a) => Ok(vec![Value::F32(a.floor())]),
+            _ => type_error(),
+        }},
+        Op { name: "sys::f32.ceil", f: |_, v| match &v[0] {
+            Value::F32(a) => Ok(vec![Value::F32(a.ceil())]),
             _ => type_error(),
         }},
         Op { name: "sys::f32.eq", f: |_, v| match (&v[0], &v[1]) {
