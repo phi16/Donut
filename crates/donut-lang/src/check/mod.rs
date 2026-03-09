@@ -72,6 +72,7 @@ type Result<T> = std::result::Result<T, CheckError>;
 
 struct ItemCtx<'a> {
     qname: &'a str,
+    cname: &'a str,
     span: &'a TokenSpan,
     color: Option<ColorSpec>,
     param_freshes: &'a [ParamInfo],
@@ -249,25 +250,6 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// Compute the canonical name for a prim_decl entry.
-    /// Uses current_origin (origin_name, prefix_depth) to strip user-scope prefix
-    /// and prepend origin with `::` separator.
-    fn canonical_name(&self, qname: &str) -> String {
-        if let Some((ref origin, depth)) = self.current_origin {
-            let local = if depth > 0 {
-                let prefix = &self.prefixes[depth - 1];
-                qname.strip_prefix(prefix.as_str())
-                    .and_then(|s| s.strip_prefix('.'))
-                    .unwrap_or(qname)
-            } else {
-                qname
-            };
-            format!("{}::{}", origin, local)
-        } else {
-            qname.to_string()
-        }
-    }
-
     /// Resolve a name with prefix search: try each prefix in reverse, then bare name.
     fn resolve_qualified(&self, name: &str, exists: impl Fn(&str) -> bool) -> Option<String> {
         for prefix in self.prefixes.iter().rev() {
@@ -337,7 +319,7 @@ impl<'a> Checker<'a> {
         let mut new_members = Vec::new();
         for child in children {
             if let CheckNode::Item(child_id) = child {
-                let name = &self.program.item(*child_id).name;
+                let name = &self.program.item(*child_id).names.lname;
                 let full_name = format!("{}.{}", canonical, name);
                 let entry_idx = self.lookup.get(&full_name).copied();
                 let is_sub_module = self.module_members.contains_key(&full_name);
@@ -401,7 +383,8 @@ impl<'a> Checker<'a> {
 
     fn check_item_inner(&mut self, item_id: ItemId) {
         let item = self.program.item(item_id);
-        let qname = self.qualified_name(&item.name);
+        let qname = self.qualified_name(&item.names.lname);
+        let cname = item.names.cname.clone();
 
         // Reuse cached entry for same ItemId (from import cache)
         if let Some(old_qname) = self.qname_cache.get(&item_id).cloned() {
@@ -429,7 +412,7 @@ impl<'a> Checker<'a> {
         };
         let has_params = !param_freshes.is_empty();
 
-        let ctx = ItemCtx { qname: &qname, span: &span, color, param_freshes: &param_freshes };
+        let ctx = ItemCtx { qname: &qname, cname: &cname, span: &span, color, param_freshes: &param_freshes };
 
         match &item.body {
             ItemBody::Value { val, members: _ } => {
@@ -519,7 +502,7 @@ impl<'a> Checker<'a> {
                     ctx.qname.to_string(), ctx.color, prim, Some(mt),
                     None, ctx.param_freshes,
                 );
-                self.register_prim_decl(prim_id, &ctx.qname, 0, idx);
+                self.register_prim_decl(prim_id, ctx.cname, 0, idx);
             }
             Ok((_, ty)) => {
                 let prim = self.make_prim();
@@ -530,7 +513,7 @@ impl<'a> Checker<'a> {
                         let idx = self.register_entry(
                             ctx.qname.to_string(), ctx.color, EntryBody::Cell(cell), ctx.param_freshes,
                         );
-                        self.register_prim_decl(prim_id, &ctx.qname, level, idx);
+                        self.register_prim_decl(prim_id, ctx.cname, level, idx);
                     }
                     Err(e) => self.check_error_at(ctx.span, e),
                 }
@@ -566,7 +549,7 @@ impl<'a> Checker<'a> {
             ctx.qname.to_string(), ctx.color, prim, ret,
             Some(meta_val), ctx.param_freshes,
         );
-        self.register_prim_decl(prim_id, &ctx.qname, 0, idx);
+        self.register_prim_decl(prim_id, ctx.cname, 0, idx);
         Ok(())
     }
 
@@ -867,12 +850,11 @@ impl<'a> Checker<'a> {
         self.meta_prim_ids.get(name).copied()
     }
 
-    /// Register a prim_decl entry with canonical name from the given entry.
-    fn register_prim_decl(&mut self, prim_id: PrimId, qname: &str, level: Level, entry_idx: usize) {
-        let canonical = self.canonical_name(qname);
+    /// Register a prim_decl entry with canonical name.
+    fn register_prim_decl(&mut self, prim_id: PrimId, cname: &str, level: Level, entry_idx: usize) {
         let entry = &self.entries[entry_idx];
         self.prim_decls.insert(prim_id, PrimDecl {
-            name: canonical,
+            name: cname.to_string(),
             level,
             color: entry.color,
             param_counts: entry.param_counts.clone(),

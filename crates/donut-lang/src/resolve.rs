@@ -195,6 +195,8 @@ struct Checker<'a> {
     extra_sources: HashMap<String, String>,
     /// Stack of CheckNode lists being built (mirrors scope nesting).
     check_order_stack: Vec<Vec<CheckNode>>,
+    /// Stack of qualified name prefixes for building qnames/cnames.
+    prefix_stack: Vec<String>,
 }
 
 impl<'a> Checker<'a> {
@@ -212,6 +214,7 @@ impl<'a> Checker<'a> {
             current_origin: None,
             extra_sources: HashMap::new(),
             check_order_stack: Vec::new(),
+            prefix_stack: Vec::new(),
         }
     }
 
@@ -240,6 +243,19 @@ impl<'a> Checker<'a> {
 
     fn val(&self, id: ValId) -> &S<Val> {
         &self.vals[id.0]
+    }
+
+    fn make_item_name(&self, lname: String) -> ItemName {
+        let qname = if let Some(prefix) = self.prefix_stack.last() {
+            format!("{}.{}", prefix, lname)
+        } else {
+            lname.clone()
+        };
+        let cname = match &self.current_origin {
+            Some(origin) => format!("{}::{}", origin, qname),
+            None => qname.clone(),
+        };
+        ItemName { lname, qname, cname }
     }
 
     fn error_at(&mut self, span: &TokenSpan, msg: impl Into<String>) {
@@ -401,9 +417,11 @@ impl<'a> Checker<'a> {
                 match source {
                     Some(source) => {
                         let old_origin = self.current_origin.take();
+                        let old_prefix = std::mem::take(&mut self.prefix_stack);
                         self.current_origin = Some(name.clone());
                         let (mut module, check_nodes) = self.resolve_import(&source);
                         self.current_origin = old_origin;
+                        self.prefix_stack = old_prefix;
                         module.origin = Some(name.clone());
                         self.import_cache.insert(name, (module.clone(), check_nodes.clone()));
                         (module, check_nodes)
@@ -488,7 +506,8 @@ impl<'a> Checker<'a> {
         let mut params = HashSet::new();
         for (name, val_id) in deco_param_defs {
             let span = self.val(*val_id).1.clone();
-            let item = Item::param(name.clone(), *val_id, span);
+            let names = self.make_item_name(name.clone());
+            let item = Item::param(names, *val_id, span);
             let id = self.alloc_item(item);
             params.insert(id);
             self.define(name.clone(), id);
@@ -677,6 +696,12 @@ impl<'a> Checker<'a> {
             }
         }
 
+        // --- Extract first_lname early (before seg_names_list is consumed) ---
+        let first_lname = seg_names_list.first()
+            .and_then(|sns| sns.last())
+            .map(|(n, _)| n.clone())
+            .unwrap();
+
         // --- += pre-check (before inner scope) ---
         let is_add = matches!(&op.0, semtree::AssignOp::Add);
         if is_add {
@@ -700,7 +725,8 @@ impl<'a> Checker<'a> {
                 let has_applicand = name_s.0 .1.is_some();
                 if !has_applicand && seg_names.len() == 1 {
                     let (name, span) = &seg_names[0];
-                    let item = Item::new(name.clone(), kind, span.clone());
+                    let names = self.make_item_name(name.clone());
+                    let item = Item::new(names, kind, span.clone());
                     let id = self.alloc_item(item);
                     if !self.define(name.clone(), id) {
                         self.error_at(span, format!("duplicate definition `{}`", name));
@@ -730,7 +756,8 @@ impl<'a> Checker<'a> {
                                 ty: resolved_ty,
                             };
                             let span = self.val(param.ty).1.clone();
-                            let item = Item::param(param.name.clone(), param.ty, span);
+                            let names = self.make_item_name(param.name.clone());
+                            let item = Item::param(names, param.ty, span);
                             let id = self.alloc_item(item);
                             self.define(param.name.clone(), id);
                             params.push(param);
@@ -774,6 +801,14 @@ impl<'a> Checker<'a> {
 
         // --- Resolve body (owned) ---
         let body_val_resolved = body_val.map(|v| v.resolve(self));
+
+        // Push prefix for body module / with clause resolution
+        let has_body_or_with = body_mod.is_some() || !with_clauses.is_empty();
+        if has_body_or_with {
+            let parent_qname = self.make_item_name(first_lname.clone()).qname;
+            self.prefix_stack.push(parent_qname);
+        }
+
         let (mut body_members, body_check_nodes) = match body_mod {
             Some(m) => self.resolve_module(m),
             None => (Module::new(), Vec::new()),
@@ -801,6 +836,10 @@ impl<'a> Checker<'a> {
 
         // With clauses + pop scope
         let (result, with_check_nodes) = self.merge_with_clauses(body_members, with_clauses);
+
+        if has_body_or_with {
+            self.prefix_stack.pop();
+        }
 
         // Resolve functor applicands before popping scope (deco params must be visible)
         let resolved_apps = if has_functor_app {
@@ -906,13 +945,14 @@ impl<'a> Checker<'a> {
                     members: result,
                 }
             };
-            let (first_name, span) = name_infos
+            let span = name_infos
                 .first()
                 .and_then(|ni| ni.seg_names.last())
-                .map(|(n, s)| (n.clone(), s.clone()))
+                .map(|(_, s)| s.clone())
                 .unwrap();
+            let names = self.make_item_name(first_lname.clone());
             let item = Item {
-                name: first_name,
+                names,
                 span,
                 kind,
                 ty: ty_resolved,

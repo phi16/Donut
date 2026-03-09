@@ -97,8 +97,15 @@ pub enum ItemBody {
 }
 
 #[derive(Debug)]
+pub struct ItemName {
+    pub lname: String,
+    pub qname: String,
+    pub cname: String,
+}
+
+#[derive(Debug)]
 pub struct Item {
-    pub name: String,
+    pub names: ItemName,
     pub span: TokenSpan,
     pub kind: Option<ItemKind>,
     pub ty: Option<ValId>,
@@ -243,9 +250,9 @@ impl Module {
 }
 
 impl Item {
-    pub fn new(name: String, kind: Option<ItemKind>, span: TokenSpan) -> Self {
+    pub fn new(names: ItemName, kind: Option<ItemKind>, span: TokenSpan) -> Self {
         Item {
-            name,
+            names,
             span,
             kind,
             ty: None,
@@ -259,9 +266,9 @@ impl Item {
         }
     }
 
-    pub fn param(name: String, ty: ValId, span: TokenSpan) -> Self {
+    pub fn param(names: ItemName, ty: ValId, span: TokenSpan) -> Self {
         Item {
-            name,
+            names,
             span,
             kind: Some(ItemKind::Param),
             ty: Some(ty),
