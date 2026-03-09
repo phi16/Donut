@@ -1,4 +1,4 @@
-use crate::{Runtime, Value};
+use crate::{extract_cell_width, Runtime, Value};
 use donut_core::common::{PrimArg, PrimId};
 use std::collections::HashMap;
 
@@ -72,6 +72,10 @@ fn ops() -> Vec<Op> {
             (Value::U32(a), Value::U32(b)) => Ok(vec![Value::Bool(a == b)]),
             _ => type_error(),
         }},
+        Op { name: "sys::u32.ne", f: |_, v| match (&v[0], &v[1]) {
+            (Value::U32(a), Value::U32(b)) => Ok(vec![Value::Bool(a != b)]),
+            _ => type_error(),
+        }},
         Op { name: "sys::u32.lt", f: |_, v| match (&v[0], &v[1]) {
             (Value::U32(a), Value::U32(b)) => Ok(vec![Value::Bool(a < b)]),
             _ => type_error(),
@@ -80,20 +84,16 @@ fn ops() -> Vec<Op> {
             (Value::U32(a), Value::U32(b)) => Ok(vec![Value::Bool(a <= b)]),
             _ => type_error(),
         }},
+        Op { name: "sys::u32.gt", f: |_, v| match (&v[0], &v[1]) {
+            (Value::U32(a), Value::U32(b)) => Ok(vec![Value::Bool(a > b)]),
+            _ => type_error(),
+        }},
+        Op { name: "sys::u32.ge", f: |_, v| match (&v[0], &v[1]) {
+            (Value::U32(a), Value::U32(b)) => Ok(vec![Value::Bool(a >= b)]),
+            _ => type_error(),
+        }},
         Op { name: "sys::u32.to_f32", f: |_, v| match &v[0] {
             Value::U32(a) => Ok(vec![Value::F32(*a as f64)]),
-            _ => type_error(),
-        }},
-        Op { name: "sys::u32.dup", f: |_, v| match &v[0] {
-            Value::U32(a) => Ok(vec![Value::U32(*a), Value::U32(*a)]),
-            _ => type_error(),
-        }},
-        Op { name: "sys::u32.drop", f: |_, v| match &v[0] {
-            Value::U32(_) => Ok(vec![]),
-            _ => type_error(),
-        }},
-        Op { name: "sys::u32.swap", f: |_, v| match (&v[0], &v[1]) {
-            (Value::U32(a), Value::U32(b)) => Ok(vec![Value::U32(*b), Value::U32(*a)]),
             _ => type_error(),
         }},
         // f32
@@ -118,20 +118,34 @@ fn ops() -> Vec<Op> {
             Value::F32(a) => Ok(vec![Value::F32(-a)]),
             _ => type_error(),
         }},
-        Op { name: "sys::f32.dup", f: |_, v| match &v[0] {
-            Value::F32(a) => Ok(vec![Value::F32(*a), Value::F32(*a)]),
+        Op { name: "sys::f32.eq", f: |_, v| match (&v[0], &v[1]) {
+            (Value::F32(a), Value::F32(b)) => Ok(vec![Value::Bool(a == b)]),
             _ => type_error(),
         }},
-        Op { name: "sys::f32.drop", f: |_, v| match &v[0] {
-            Value::F32(_) => Ok(vec![]),
+        Op { name: "sys::f32.ne", f: |_, v| match (&v[0], &v[1]) {
+            (Value::F32(a), Value::F32(b)) => Ok(vec![Value::Bool(a != b)]),
             _ => type_error(),
         }},
-        Op { name: "sys::f32.swap", f: |_, v| match (&v[0], &v[1]) {
-            (Value::F32(a), Value::F32(b)) => Ok(vec![Value::F32(*b), Value::F32(*a)]),
+        Op { name: "sys::f32.lt", f: |_, v| match (&v[0], &v[1]) {
+            (Value::F32(a), Value::F32(b)) => Ok(vec![Value::Bool(a < b)]),
+            _ => type_error(),
+        }},
+        Op { name: "sys::f32.le", f: |_, v| match (&v[0], &v[1]) {
+            (Value::F32(a), Value::F32(b)) => Ok(vec![Value::Bool(a <= b)]),
+            _ => type_error(),
+        }},
+        Op { name: "sys::f32.gt", f: |_, v| match (&v[0], &v[1]) {
+            (Value::F32(a), Value::F32(b)) => Ok(vec![Value::Bool(a > b)]),
+            _ => type_error(),
+        }},
+        Op { name: "sys::f32.ge", f: |_, v| match (&v[0], &v[1]) {
+            (Value::F32(a), Value::F32(b)) => Ok(vec![Value::Bool(a >= b)]),
             _ => type_error(),
         }},
         // bool
         Op { name: "sys::bool.lit", f: |args, _| Ok(vec![Value::Bool(extract_nat(args)? != 0)]) },
+        Op { name: "sys::bool.true", f: |_, _| Ok(vec![Value::Bool(true)]) },
+        Op { name: "sys::bool.false", f: |_, _| Ok(vec![Value::Bool(false)]) },
         Op { name: "sys::bool.not", f: |_, v| match &v[0] {
             Value::Bool(a) => Ok(vec![Value::Bool(!a)]),
             _ => type_error(),
@@ -144,17 +158,18 @@ fn ops() -> Vec<Op> {
             (Value::Bool(a), Value::Bool(b)) => Ok(vec![Value::Bool(*a || *b)]),
             _ => type_error(),
         }},
-        Op { name: "sys::bool.dup", f: |_, v| match &v[0] {
-            Value::Bool(a) => Ok(vec![Value::Bool(*a), Value::Bool(*a)]),
-            _ => type_error(),
-        }},
-        Op { name: "sys::bool.drop", f: |_, v| match &v[0] {
-            Value::Bool(_) => Ok(vec![]),
-            _ => type_error(),
-        }},
-        Op { name: "sys::bool.swap", f: |_, v| match (&v[0], &v[1]) {
-            (Value::Bool(a), Value::Bool(b)) => Ok(vec![Value::Bool(*b), Value::Bool(*a)]),
-            _ => type_error(),
+        Op { name: "sys::bool.ind", f: |_, v| {
+            let n = v.len();
+            let half = (n - 1) / 2;
+            let cond = match &v[n - 1] {
+                Value::Bool(b) => *b,
+                _ => return type_error(),
+            };
+            if cond {
+                Ok(v[..half].to_vec())
+            } else {
+                Ok(v[half..n - 1].to_vec())
+            }
         }},
         // f32x2
         Op { name: "sys::f32x2.lit", f: |args, _| Ok(vec![Value::F32x2(extract_rat_at(args, 0)?, extract_rat_at(args, 1)?)]) },
@@ -188,18 +203,6 @@ fn ops() -> Vec<Op> {
         }},
         Op { name: "sys::f32x2.scale", f: |_, v| match (&v[0], &v[1]) {
             (Value::F32(s), Value::F32x2(a, b)) => Ok(vec![Value::F32x2(s * a, s * b)]),
-            _ => type_error(),
-        }},
-        Op { name: "sys::f32x2.dup", f: |_, v| match &v[0] {
-            Value::F32x2(a, b) => Ok(vec![Value::F32x2(*a, *b), Value::F32x2(*a, *b)]),
-            _ => type_error(),
-        }},
-        Op { name: "sys::f32x2.drop", f: |_, v| match &v[0] {
-            Value::F32x2(_, _) => Ok(vec![]),
-            _ => type_error(),
-        }},
-        Op { name: "sys::f32x2.swap", f: |_, v| match (&v[0], &v[1]) {
-            (Value::F32x2(a0, a1), Value::F32x2(b0, b1)) => Ok(vec![Value::F32x2(*b0, *b1), Value::F32x2(*a0, *a1)]),
             _ => type_error(),
         }},
         // f32x3
@@ -236,17 +239,79 @@ fn ops() -> Vec<Op> {
             (Value::F32(s), Value::F32x3(a, b, c)) => Ok(vec![Value::F32x3(s * a, s * b, s * c)]),
             _ => type_error(),
         }},
-        Op { name: "sys::f32x3.dup", f: |_, v| match &v[0] {
-            Value::F32x3(a, b, c) => Ok(vec![Value::F32x3(*a, *b, *c), Value::F32x3(*a, *b, *c)]),
+        // i32
+        Op { name: "sys::i32.lit", f: |args, _| Ok(vec![Value::I32(extract_nat(args)? as i32)]) },
+        Op { name: "sys::i32.add", f: |_, v| match (&v[0], &v[1]) {
+            (Value::I32(a), Value::I32(b)) => Ok(vec![Value::I32(a.wrapping_add(*b))]),
             _ => type_error(),
         }},
-        Op { name: "sys::f32x3.drop", f: |_, v| match &v[0] {
-            Value::F32x3(_, _, _) => Ok(vec![]),
+        Op { name: "sys::i32.sub", f: |_, v| match (&v[0], &v[1]) {
+            (Value::I32(a), Value::I32(b)) => Ok(vec![Value::I32(a.wrapping_sub(*b))]),
             _ => type_error(),
         }},
-        Op { name: "sys::f32x3.swap", f: |_, v| match (&v[0], &v[1]) {
-            (Value::F32x3(a0, a1, a2), Value::F32x3(b0, b1, b2)) => Ok(vec![Value::F32x3(*b0, *b1, *b2), Value::F32x3(*a0, *a1, *a2)]),
+        Op { name: "sys::i32.mul", f: |_, v| match (&v[0], &v[1]) {
+            (Value::I32(a), Value::I32(b)) => Ok(vec![Value::I32(a.wrapping_mul(*b))]),
             _ => type_error(),
+        }},
+        Op { name: "sys::i32.div", f: |_, v| match (&v[0], &v[1]) {
+            (Value::I32(a), Value::I32(b)) => {
+                if *b == 0 { Ok(vec![Value::I32(0)]) }
+                else { Ok(vec![Value::I32(a.wrapping_div(*b))]) }
+            }
+            _ => type_error(),
+        }},
+        Op { name: "sys::i32.mod", f: |_, v| match (&v[0], &v[1]) {
+            (Value::I32(a), Value::I32(b)) => {
+                if *b == 0 { Ok(vec![Value::I32(0)]) }
+                else { Ok(vec![Value::I32(a.wrapping_rem(*b))]) }
+            }
+            _ => type_error(),
+        }},
+        Op { name: "sys::i32.neg", f: |_, v| match &v[0] {
+            Value::I32(a) => Ok(vec![Value::I32(a.wrapping_neg())]),
+            _ => type_error(),
+        }},
+        Op { name: "sys::i32.eq", f: |_, v| match (&v[0], &v[1]) {
+            (Value::I32(a), Value::I32(b)) => Ok(vec![Value::Bool(a == b)]),
+            _ => type_error(),
+        }},
+        Op { name: "sys::i32.ne", f: |_, v| match (&v[0], &v[1]) {
+            (Value::I32(a), Value::I32(b)) => Ok(vec![Value::Bool(a != b)]),
+            _ => type_error(),
+        }},
+        Op { name: "sys::i32.lt", f: |_, v| match (&v[0], &v[1]) {
+            (Value::I32(a), Value::I32(b)) => Ok(vec![Value::Bool(a < b)]),
+            _ => type_error(),
+        }},
+        Op { name: "sys::i32.le", f: |_, v| match (&v[0], &v[1]) {
+            (Value::I32(a), Value::I32(b)) => Ok(vec![Value::Bool(a <= b)]),
+            _ => type_error(),
+        }},
+        Op { name: "sys::i32.gt", f: |_, v| match (&v[0], &v[1]) {
+            (Value::I32(a), Value::I32(b)) => Ok(vec![Value::Bool(a > b)]),
+            _ => type_error(),
+        }},
+        Op { name: "sys::i32.ge", f: |_, v| match (&v[0], &v[1]) {
+            (Value::I32(a), Value::I32(b)) => Ok(vec![Value::Bool(a >= b)]),
+            _ => type_error(),
+        }},
+        Op { name: "sys::i32.to_f32", f: |_, v| match &v[0] {
+            Value::I32(a) => Ok(vec![Value::F32(*a as f64)]),
+            _ => type_error(),
+        }},
+        // val (polymorphic)
+        Op { name: "sys::val.dup", f: |_, v| {
+            let n = v.len();
+            let mut r = v.to_vec();
+            r.extend_from_slice(&v[..n]);
+            Ok(r)
+        }},
+        Op { name: "sys::val.drop", f: |_, _| Ok(vec![]) },
+        Op { name: "sys::val.swap", f: |args, v| {
+            let wx = extract_cell_width(args, 0)?;
+            let mut r = v[wx..].to_vec();
+            r.extend_from_slice(&v[..wx]);
+            Ok(r)
         }},
     ]
 }

@@ -66,7 +66,7 @@ fn test_mul() {
     let (rt, env) = setup("\
 two = sys.u32.lit[1] sys.u32.lit[1]; sys.u32.add
 three = two sys.u32.lit[1]; sys.u32.add
-nine = three; sys.u32.dup; sys.u32.mul
+nine = three; sys.val.dup[sys.u32]; sys.u32.mul
 ");
     assert_eq!(eval_entry(&rt, &env, "three"), vec![Value::U32(3)]);
     assert_eq!(eval_entry(&rt, &env, "nine"), vec![Value::U32(9)]);
@@ -104,7 +104,7 @@ fn test_comparison() {
     let (rt, env) = setup("\
 one = sys.u32.lit[1]
 two = sys.u32.lit[1] sys.u32.lit[1]; sys.u32.add
-eq_11 = one; sys.u32.dup; sys.u32.eq
+eq_11 = one; sys.val.dup[sys.u32]; sys.u32.eq
 lt_12 = one two; sys.u32.lt
 lt_21 = two one; sys.u32.lt
 ");
@@ -132,7 +132,7 @@ x = sys.u32.lit[1] sys.u32.lit[1]; sys.u32.add; sys.u32.to_f32
 #[test]
 fn test_dup() {
     let (rt, env) = setup("\
-x = sys.u32.lit[1]; sys.u32.dup; sys.u32.add
+x = sys.u32.lit[1]; sys.val.dup[sys.u32]; sys.u32.add
 ");
     assert_eq!(eval_entry(&rt, &env, "x"), vec![Value::U32(2)]);
 }
@@ -182,7 +182,7 @@ F(mycat.nat) = sys.u32
 F(mycat.zero) = sys.u32.lit[0]
 F(mycat.succ) = sys.u32.lit[1] sys.u32; sys.u32.add
 F(mycat.add) = sys.u32.add
-F(mycat.dup) = sys.u32.dup
+F(mycat.dup) = sys.val.dup[sys.u32]
 one = F(mycat.zero; mycat.succ)
 two = F(mycat.zero; mycat.succ; mycat.succ)
 sum = F(mycat.zero; mycat.succ) F(mycat.zero; mycat.succ); F(mycat.add)
@@ -479,7 +479,7 @@ shader = sys.f32x2.unpack sys.f32.lit[0]; sys.f32x3.pack
     assert!(glsl.contains(".x;"));
     assert!(glsl.contains(".y;"));
     assert!(glsl.contains("0.0"));
-    assert!(glsl.contains("gl_FragColor = vec4(color, 1.0);"));
+    assert!(glsl.contains("gl_FragColor = vec4(vec3(o0.x, o0.y, o0.z), 1.0);"));
 }
 
 #[test]
@@ -498,7 +498,7 @@ shader = sys.f32x2.unpack sys.f32.lit[0.5] sys.f32.lit[0.5]; sys.f32.mul sys.f32
 fn test_glsl_dup() {
     // unpack → dup x, drop y → (x, x, 0.0)
     let (_, env) = setup("\
-shader = sys.f32x2.unpack; sys.f32.dup sys.f32.drop sys.f32.lit[0]; sys.f32x3.pack
+shader = sys.f32x2.unpack; sys.val.dup[sys.f32] sys.val.drop[sys.f32] sys.f32.lit[0]; sys.f32x3.pack
 ");
     let glsl = compile_shader(&env, "shader").unwrap();
 

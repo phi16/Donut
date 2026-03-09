@@ -6,12 +6,12 @@ C: *
 [style.color[hue[0.3]]]
 bool: C → C with {
     lit[n: nat]: C → bool
+    true: C → bool
+    false: C → bool
     not: bool → bool
     and: bool bool → bool
     or: bool bool → bool
-    dup: bool → bool bool
-    drop: bool → C
-    swap: bool bool → bool bool
+    ind[x: C → C]: x x bool → x
 }
 
 [style.color[hue[0.1]]]
@@ -22,9 +22,12 @@ f32: C → C with {
     mul: f32 f32 → f32
     div: f32 f32 → f32
     neg: f32 → f32
-    dup: f32 → f32 f32
-    drop: f32 → C
-    swap: f32 f32 → f32 f32
+    eq: f32 f32 → bool
+    ne: f32 f32 → bool
+    lt: f32 f32 → bool
+    le: f32 f32 → bool
+    gt: f32 f32 → bool
+    ge: f32 f32 → bool
 }
 
 [style.color[hue[0.6]]]
@@ -37,12 +40,12 @@ u32: C → C with {
     mod: u32 u32 → u32
     neg: u32 → u32
     eq: u32 u32 → bool
+    ne: u32 u32 → bool
     lt: u32 u32 → bool
     le: u32 u32 → bool
+    gt: u32 u32 → bool
+    ge: u32 u32 → bool
     to_f32: u32 → f32
-    dup: u32 → u32 u32
-    drop: u32 → C
-    swap: u32 u32 → u32 u32
 }
 
 [style.color[hue[0.05]]]
@@ -56,9 +59,6 @@ f32x2: C → C with {
     div: f32x2 f32x2 → f32x2
     neg: f32x2 → f32x2
     scale: f32 f32x2 → f32x2
-    dup: f32x2 → f32x2 f32x2
-    drop: f32x2 → C
-    swap: f32x2 f32x2 → f32x2 f32x2
 }
 
 [style.color[hue[0.95]]]
@@ -72,7 +72,28 @@ f32x3: C → C with {
     div: f32x3 f32x3 → f32x3
     neg: f32x3 → f32x3
     scale: f32 f32x3 → f32x3
-    dup: f32x3 → f32x3 f32x3
-    drop: f32x3 → C
-    swap: f32x3 f32x3 → f32x3 f32x3
+}
+
+[style.color[hue[0.55]]]
+i32: C → C with {
+    lit[n: nat]: C → i32
+    add: i32 i32 → i32
+    sub: i32 i32 → i32
+    mul: i32 i32 → i32
+    div: i32 i32 → i32
+    mod: i32 i32 → i32
+    neg: i32 → i32
+    eq: i32 i32 → bool
+    ne: i32 i32 → bool
+    lt: i32 i32 → bool
+    le: i32 i32 → bool
+    gt: i32 i32 → bool
+    ge: i32 i32 → bool
+    to_f32: i32 → f32
+}
+
+val = {
+    dup[x: C → C]: x → x x
+    drop[x: C → C]: x → C
+    swap[x: C → C, y: C → C]: x y → y x
 }

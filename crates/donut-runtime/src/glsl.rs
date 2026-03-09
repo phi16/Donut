@@ -109,9 +109,12 @@ impl GlslCompiler {
             "sys::f32.mul" => Ok(self.binary(GlslTy::Float, "*", &inputs[0], &inputs[1])),
             "sys::f32.div" => Ok(self.binary(GlslTy::Float, "/", &inputs[0], &inputs[1])),
             "sys::f32.neg" => Ok(self.unary(GlslTy::Float, "-", &inputs[0])),
-            "sys::f32.dup" => Ok(vec![inputs[0].clone(), inputs[0].clone()]),
-            "sys::f32.drop" => Ok(vec![]),
-            "sys::f32.swap" => Ok(vec![inputs[1].clone(), inputs[0].clone()]),
+            "sys::f32.eq" => Ok(self.compare(GlslTy::Float, "==", &inputs[0], &inputs[1])),
+            "sys::f32.ne" => Ok(self.compare(GlslTy::Float, "!=", &inputs[0], &inputs[1])),
+            "sys::f32.lt" => Ok(self.compare(GlslTy::Float, "<", &inputs[0], &inputs[1])),
+            "sys::f32.le" => Ok(self.compare(GlslTy::Float, "<=", &inputs[0], &inputs[1])),
+            "sys::f32.gt" => Ok(self.compare(GlslTy::Float, ">", &inputs[0], &inputs[1])),
+            "sys::f32.ge" => Ok(self.compare(GlslTy::Float, ">=", &inputs[0], &inputs[1])),
 
             // --- u32 ---
             "sys::u32.lit" => {
@@ -139,8 +142,11 @@ impl GlslCompiler {
             }
             "sys::u32.neg" => Ok(self.unary(GlslTy::Int, "-", &inputs[0])),
             "sys::u32.eq" => Ok(self.compare(GlslTy::Int, "==", &inputs[0], &inputs[1])),
+            "sys::u32.ne" => Ok(self.compare(GlslTy::Int, "!=", &inputs[0], &inputs[1])),
             "sys::u32.lt" => Ok(self.compare(GlslTy::Int, "<", &inputs[0], &inputs[1])),
             "sys::u32.le" => Ok(self.compare(GlslTy::Int, "<=", &inputs[0], &inputs[1])),
+            "sys::u32.gt" => Ok(self.compare(GlslTy::Int, ">", &inputs[0], &inputs[1])),
+            "sys::u32.ge" => Ok(self.compare(GlslTy::Int, ">=", &inputs[0], &inputs[1])),
             "sys::u32.to_f32" => {
                 let v = self.fresh(GlslTy::Float);
                 self.emit(format!(
@@ -151,15 +157,64 @@ impl GlslCompiler {
                 ));
                 Ok(vec![v])
             }
-            "sys::u32.dup" => Ok(vec![inputs[0].clone(), inputs[0].clone()]),
-            "sys::u32.drop" => Ok(vec![]),
-            "sys::u32.swap" => Ok(vec![inputs[1].clone(), inputs[0].clone()]),
+
+            // --- i32 ---
+            "sys::i32.lit" => {
+                let n = extract_nat(&prim.args, 0)?;
+                let v = self.fresh(GlslTy::Int);
+                self.emit(format!("{} {} = {};", v.ty.decl(), v.name, n as i32));
+                Ok(vec![v])
+            }
+            "sys::i32.add" => Ok(self.binary(GlslTy::Int, "+", &inputs[0], &inputs[1])),
+            "sys::i32.sub" => Ok(self.binary(GlslTy::Int, "-", &inputs[0], &inputs[1])),
+            "sys::i32.mul" => Ok(self.binary(GlslTy::Int, "*", &inputs[0], &inputs[1])),
+            "sys::i32.div" => Ok(self.binary(GlslTy::Int, "/", &inputs[0], &inputs[1])),
+            "sys::i32.mod" => {
+                let v = self.fresh(GlslTy::Int);
+                self.emit(format!(
+                    "{} {} = {} - {} * ({} / {});",
+                    v.ty.decl(),
+                    v.name,
+                    inputs[0].name,
+                    inputs[1].name,
+                    inputs[0].name,
+                    inputs[1].name
+                ));
+                Ok(vec![v])
+            }
+            "sys::i32.neg" => Ok(self.unary(GlslTy::Int, "-", &inputs[0])),
+            "sys::i32.eq" => Ok(self.compare(GlslTy::Int, "==", &inputs[0], &inputs[1])),
+            "sys::i32.ne" => Ok(self.compare(GlslTy::Int, "!=", &inputs[0], &inputs[1])),
+            "sys::i32.lt" => Ok(self.compare(GlslTy::Int, "<", &inputs[0], &inputs[1])),
+            "sys::i32.le" => Ok(self.compare(GlslTy::Int, "<=", &inputs[0], &inputs[1])),
+            "sys::i32.gt" => Ok(self.compare(GlslTy::Int, ">", &inputs[0], &inputs[1])),
+            "sys::i32.ge" => Ok(self.compare(GlslTy::Int, ">=", &inputs[0], &inputs[1])),
+            "sys::i32.to_f32" => {
+                let v = self.fresh(GlslTy::Float);
+                self.emit(format!(
+                    "{} {} = float({});",
+                    v.ty.decl(),
+                    v.name,
+                    inputs[0].name
+                ));
+                Ok(vec![v])
+            }
 
             // --- bool ---
             "sys::bool.lit" => {
                 let n = extract_nat(&prim.args, 0)?;
                 let v = self.fresh(GlslTy::Bool);
                 self.emit(format!("{} {} = {};", v.ty.decl(), v.name, n != 0));
+                Ok(vec![v])
+            }
+            "sys::bool.true" => {
+                let v = self.fresh(GlslTy::Bool);
+                self.emit(format!("{} {} = true;", v.ty.decl(), v.name));
+                Ok(vec![v])
+            }
+            "sys::bool.false" => {
+                let v = self.fresh(GlslTy::Bool);
+                self.emit(format!("{} {} = false;", v.ty.decl(), v.name));
                 Ok(vec![v])
             }
             "sys::bool.not" => {
@@ -189,9 +244,21 @@ impl GlslCompiler {
                 ));
                 Ok(vec![v])
             }
-            "sys::bool.dup" => Ok(vec![inputs[0].clone(), inputs[0].clone()]),
-            "sys::bool.drop" => Ok(vec![]),
-            "sys::bool.swap" => Ok(vec![inputs[1].clone(), inputs[0].clone()]),
+            "sys::bool.ind" => {
+                let n = inputs.len();
+                let half = (n - 1) / 2;
+                let cond = &inputs[n - 1];
+                let mut result = Vec::new();
+                for i in 0..half {
+                    let v = self.fresh(inputs[i].ty.clone());
+                    self.emit(format!(
+                        "{} {} = {} ? {} : {};",
+                        v.ty.decl(), v.name, cond.name, inputs[i].name, inputs[i + half].name
+                    ));
+                    result.push(v);
+                }
+                Ok(result)
+            }
 
             // --- f32x2 ---
             "sys::f32x2.lit" => {
@@ -251,9 +318,6 @@ impl GlslCompiler {
                 ));
                 Ok(vec![v])
             }
-            "sys::f32x2.dup" => Ok(vec![inputs[0].clone(), inputs[0].clone()]),
-            "sys::f32x2.drop" => Ok(vec![]),
-            "sys::f32x2.swap" => Ok(vec![inputs[1].clone(), inputs[0].clone()]),
 
             // --- f32x3 ---
             "sys::f32x3.lit" => {
@@ -323,9 +387,20 @@ impl GlslCompiler {
                 ));
                 Ok(vec![v])
             }
-            "sys::f32x3.dup" => Ok(vec![inputs[0].clone(), inputs[0].clone()]),
-            "sys::f32x3.drop" => Ok(vec![]),
-            "sys::f32x3.swap" => Ok(vec![inputs[1].clone(), inputs[0].clone()]),
+
+            // val (polymorphic)
+            "sys::val.dup" => {
+                let mut r = inputs.to_vec();
+                r.extend_from_slice(inputs);
+                Ok(r)
+            }
+            "sys::val.drop" => Ok(vec![]),
+            "sys::val.swap" => {
+                let wx = crate::extract_cell_width(&prim.args, 0)?;
+                let mut r = inputs[wx..].to_vec();
+                r.extend_from_slice(&inputs[..wx]);
+                Ok(r)
+            }
 
             _ => Err(format!("unsupported prim for GLSL: {}", name)),
         }
@@ -449,6 +524,80 @@ fn format_float(v: f64) -> String {
     }
 }
 
+fn float_width(ty: &GlslTy) -> usize {
+    match ty {
+        GlslTy::Float => 1,
+        GlslTy::Vec2 => 2,
+        GlslTy::Vec3 => 3,
+        GlslTy::Int | GlslTy::Bool => 0,
+    }
+}
+
+fn total_float_width(types: &[GlslTy]) -> Option<usize> {
+    let mut total = 0;
+    for ty in types {
+        let w = float_width(ty);
+        if w == 0 {
+            return None;
+        }
+        total += w;
+    }
+    Some(total)
+}
+
+/// Expand output variable names into individual float component expressions.
+/// e.g. ["o0", "o1"] with types [Vec2, Float] → ["o0.x", "o0.y", "o1"]
+fn expand_to_floats(names: &[String], types: &[GlslTy]) -> Vec<String> {
+    let mut comps = Vec::new();
+    for (name, ty) in names.iter().zip(types.iter()) {
+        match ty {
+            GlslTy::Float => comps.push(name.clone()),
+            GlslTy::Vec2 => {
+                comps.push(format!("{}.x", name));
+                comps.push(format!("{}.y", name));
+            }
+            GlslTy::Vec3 => {
+                comps.push(format!("{}.x", name));
+                comps.push(format!("{}.y", name));
+                comps.push(format!("{}.z", name));
+            }
+            _ => {}
+        }
+    }
+    comps
+}
+
+/// Build UV component expressions from the cell's input float width.
+///
+/// Padding rules (ad-hoc, easy to change):
+/// - 2 components → [uv.x, uv.y]        (full UV)
+/// - 1 component  → [uv.x]              (x only, y=0 implicit)
+fn build_uv_components(input_width: usize) -> Result<Vec<&'static str>, String> {
+    match input_width {
+        2 => Ok(vec!["uv.x", "uv.y"]),
+        1 => Ok(vec!["uv.x"]),
+        n => Err(format!(
+            "source must have 1..=2 float components, got {}",
+            n
+        )),
+    }
+}
+
+/// Build the RGB vec3 expression from output float components.
+///
+/// Padding rules (ad-hoc, easy to change):
+/// - 3 components → vec3(r, g, b)          (direct RGB)
+/// - 2 components → vec3(r, g, 0.0)        (RG, B=0)
+/// - 1 component  → vec3(x, x, x)          (grayscale)
+fn build_rgb_expr(float_comps: &[String]) -> Result<String, String> {
+    match float_comps.len() {
+        3 => Ok(format!("vec3({}, {}, {})", float_comps[0], float_comps[1], float_comps[2])),
+        2 => Ok(format!("vec3({}, {}, 0.0)", float_comps[0], float_comps[1])),
+        1 => Ok(format!("vec3({})", float_comps[0])),
+        n => Err(format!("target must have 1..=3 float components, got {}", n)),
+    }
+}
+
 fn prim_to_glsl_ty(
     prim_id: PrimId,
     prim_names: &HashMap<PrimId, String>,
@@ -461,6 +610,7 @@ fn prim_to_glsl_ty(
         "sys::f32x2" => Ok(GlslTy::Vec2),
         "sys::f32x3" => Ok(GlslTy::Vec3),
         "sys::u32" => Ok(GlslTy::Int),
+        "sys::i32" => Ok(GlslTy::Int),
         "sys::bool" => Ok(GlslTy::Bool),
         _ => Err(format!("unsupported type for GLSL: {}", name)),
     }
@@ -528,14 +678,53 @@ impl GlslFunction {
         s
     }
 
-    /// Build a complete fragment shader for f32x2 → f32x3 (UV → RGB).
+    /// Build a complete fragment shader (UV → RGB).
+    ///
+    /// Input types must total 1..=2 float components.
+    /// Output types must total 1..=3 float components.
     pub fn to_fragment_shader(&self) -> Result<String, String> {
-        if self.inputs != [GlslTy::Vec2] {
-            return Err(format!("source must be f32x2, got {:?}", self.inputs));
+        let input_width = total_float_width(&self.inputs)
+            .ok_or("input types must be float/vec2/vec3 for fragment shader")?;
+        let _ = total_float_width(&self.outputs)
+            .ok_or("output types must be float/vec2/vec3 for fragment shader")?;
+        let uv_comps = build_uv_components(input_width)?;
+
+        // Build input arguments from UV components
+        let mut input_args = Vec::new();
+        let mut offset = 0;
+        for ty in &self.inputs {
+            let w = float_width(ty);
+            if *ty == GlslTy::Vec2 && offset == 0 && w == 2 {
+                input_args.push("uv".to_string());
+            } else {
+                for j in 0..w {
+                    input_args.push(uv_comps[offset + j].to_string());
+                }
+            }
+            offset += w;
         }
-        if self.outputs != [GlslTy::Vec3] {
-            return Err(format!("target must be f32x3, got {:?}", self.outputs));
+
+        // Output variable declarations and call arguments
+        let mut out_decls = Vec::new();
+        let mut out_names = Vec::new();
+        for (i, ty) in self.outputs.iter().enumerate() {
+            let name = format!("o{}", i);
+            out_decls.push(format!("    {} {};\n", ty.decl(), name));
+            out_names.push(name);
         }
+
+        // Function call: cell(input_args..., out_names...)
+        let call_args: Vec<&str> = input_args
+            .iter()
+            .chain(out_names.iter())
+            .map(|s| s.as_str())
+            .collect();
+        let call_str = format!("    cell({});\n", call_args.join(", "));
+
+        // gl_FragColor = vec4(rgb, 1.0)
+        let float_comps = expand_to_floats(&out_names, &self.outputs);
+        let rgb = build_rgb_expr(&float_comps)?;
+        let frag_color = format!("vec4({}, 1.0)", rgb);
 
         let mut shader = String::new();
         shader.push_str("precision mediump float;\n");
@@ -543,9 +732,11 @@ impl GlslFunction {
         shader.push_str(&self.to_function("cell"));
         shader.push_str("\nvoid main() {\n");
         shader.push_str("    vec2 uv = gl_FragCoord.xy / u_resolution;\n");
-        shader.push_str("    vec3 color;\n");
-        shader.push_str("    cell(uv, color);\n");
-        shader.push_str("    gl_FragColor = vec4(color, 1.0);\n");
+        for decl in &out_decls {
+            shader.push_str(decl);
+        }
+        shader.push_str(&call_str);
+        shader.push_str(&format!("    gl_FragColor = {};\n", frag_color));
         shader.push_str("}\n");
 
         Ok(shader)

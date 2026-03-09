@@ -749,6 +749,18 @@ fn cell_param_as_body() {
 }
 
 #[test]
+fn cell_param_identity() {
+    // id[C: *, x: C → C]: x → x = x  should produce an identity cell
+    let env = check_source(
+        r#"
+        id[C: *, x: C → C]: x → x = x
+        "#,
+    )
+    .unwrap();
+    assert!(env.lookup.contains_key("id"));
+}
+
+#[test]
 fn type_alias_in_parametric_module() {
     // Type alias inside a parametric module should be instantiated correctly
     let env = check_source(

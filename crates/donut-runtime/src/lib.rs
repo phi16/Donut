@@ -4,12 +4,14 @@ pub mod glsl;
 use donut_core::cell::Globular;
 use donut_core::common::{PrimArg, PrimId};
 use donut_core::free_cell::{Cell, CellF, FreeCell};
+use donut_core::pure_cell::PureCell;
 use std::collections::HashMap;
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     U32(u32),
+    I32(i32),
     F32(f64),
     Bool(bool),
     F32x2(f64, f64),
@@ -20,6 +22,7 @@ impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Value::U32(v) => write!(f, "{}", v),
+            Value::I32(v) => write!(f, "{}", v),
             Value::F32(v) => write!(f, "{}", v),
             Value::Bool(v) => write!(f, "{}", v),
             Value::F32x2(x, y) => write!(f, "({}, {})", x, y),
@@ -190,6 +193,21 @@ pub(crate) fn source_width(cell: &Cell) -> usize {
         CellF::Comp(0, children) => children.iter().map(source_width).sum(),
         CellF::Zero(_) => 0,
         CellF::Comp(_, _) => 0,
+    }
+}
+
+/// Compute the number of value slots for a 1-cell PureCell (type parameter).
+pub(crate) fn width_pure_1cell(cell: &PureCell) -> usize {
+    match cell {
+        PureCell::Prim(_, _, _) => 1,
+        PureCell::Comp(_, children, _) => children.iter().map(width_pure_1cell).sum(),
+    }
+}
+
+pub(crate) fn extract_cell_width(args: &[PrimArg], index: usize) -> Result<usize, String> {
+    match args.get(index) {
+        Some(PrimArg::Cell(cell)) => Ok(width_pure_1cell(cell)),
+        _ => Err(format!("missing cell parameter at index {}", index)),
     }
 }
 

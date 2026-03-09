@@ -523,8 +523,12 @@ impl<'a> Checker<'a> {
         // Try cell interpretation first
         let body_s = self.program.val(body_id);
         let cell_err = match self.eval_val(&body_s.0) {
-            Ok(cell) => {
+            Ok(mut cell) => {
                 if let Some((declared_dim, ref declared_ty)) = declared_ty {
+                    // Lift cell to declared dimension via id (e.g., 1-cell x → id(x) as 2-cell)
+                    while cell.pure.dim().in_space < declared_dim {
+                        cell = FreeCell::from_pure(&PureCell::id(cell.pure));
+                    }
                     let dim = cell.pure.dim().in_space;
                     if declared_dim != dim {
                         self.error_at(span, "declared type dimension does not match body");
