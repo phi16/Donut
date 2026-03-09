@@ -98,6 +98,7 @@ pub enum ItemBody {
 
 #[derive(Debug)]
 pub struct Item {
+    pub name: String,
     pub span: TokenSpan,
     pub kind: Option<ItemKind>,
     pub ty: Option<ValId>,
@@ -124,7 +125,7 @@ pub struct Module {
 
 #[derive(Debug, Clone)]
 pub enum CheckNode {
-    Item { name: String, item_id: ItemId },
+    Item(ItemId),
     Scope { item_id: ItemId, children: Vec<CheckNode> },
 }
 
@@ -242,8 +243,9 @@ impl Module {
 }
 
 impl Item {
-    pub fn new(kind: Option<ItemKind>, span: TokenSpan) -> Self {
+    pub fn new(name: String, kind: Option<ItemKind>, span: TokenSpan) -> Self {
         Item {
+            name,
             span,
             kind,
             ty: None,
@@ -257,8 +259,9 @@ impl Item {
         }
     }
 
-    pub fn param(ty: ValId, span: TokenSpan) -> Self {
+    pub fn param(name: String, ty: ValId, span: TokenSpan) -> Self {
         Item {
+            name,
             span,
             kind: Some(ItemKind::Param),
             ty: Some(ty),

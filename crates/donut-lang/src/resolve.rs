@@ -274,8 +274,8 @@ impl<'a> Checker<'a> {
     /// Generate CheckNodes for an already-resolved Module (used for imports and path inheritance).
     fn generate_check_nodes_for_module(&self, module: &Module) -> Vec<CheckNode> {
         let mut nodes = Vec::new();
-        for (name, item_id) in module.internal.iter().chain(&module.entries) {
-            nodes.push(CheckNode::Item { name: name.clone(), item_id: *item_id });
+        for (_, item_id) in module.internal.iter().chain(&module.entries) {
+            nodes.push(CheckNode::Item(*item_id));
             if let Some(members) = self.item(*item_id).members() {
                 if !members.entries.is_empty() || !members.internal.is_empty() {
                     let children = self.generate_check_nodes_for_module(members);
@@ -495,7 +495,7 @@ impl<'a> Checker<'a> {
         let mut params = HashSet::new();
         for (name, val_id) in deco_param_defs {
             let span = self.val(*val_id).1.clone();
-            let item = Item::param(*val_id, span);
+            let item = Item::param(name.clone(), *val_id, span);
             let id = self.alloc_item(item);
             params.insert(id);
             self.define(name.clone(), id);
@@ -705,7 +705,7 @@ impl<'a> Checker<'a> {
             for (seg_names, has_applicand) in &name_infos_partial {
                 if !has_applicand && seg_names.len() == 1 {
                     let (name, span) = &seg_names[0];
-                    let item = Item::new(kind, span.clone());
+                    let item = Item::new(name.clone(), kind, span.clone());
                     let id = self.alloc_item(item);
                     if !self.define(name.clone(), id) {
                         self.error_at(span, format!("duplicate definition `{}`", name));
@@ -735,7 +735,7 @@ impl<'a> Checker<'a> {
                                 ty: resolved_ty,
                             };
                             let span = self.val(param.ty).1.clone();
-                            let item = Item::param(param.ty, span);
+                            let item = Item::param(param.name.clone(), param.ty, span);
                             let id = self.alloc_item(item);
                             self.define(param.name.clone(), id);
                             params.push(param);
@@ -914,7 +914,13 @@ impl<'a> Checker<'a> {
                 .and_then(|ni| ni.seg_names.last())
                 .map(|(_, s)| s.clone())
                 .unwrap_or(TokenSpan { start: 0, end: 0 });
+            let first_name = name_infos
+                .first()
+                .and_then(|ni| ni.seg_names.last())
+                .map(|(n, _)| n.clone())
+                .unwrap_or_default();
             let item = Item {
+                name: first_name,
                 span,
                 kind,
                 ty: ty_resolved,
@@ -928,12 +934,7 @@ impl<'a> Checker<'a> {
                 self.register_path(&ni.seg_names, item_id);
             }
             // Emit CheckNodes
-            let first_name = name_infos
-                .first()
-                .and_then(|ni| ni.seg_names.last())
-                .map(|(n, _)| n.clone())
-                .unwrap_or_default();
-            self.emit_check_node(CheckNode::Item { name: first_name, item_id });
+            self.emit_check_node(CheckNode::Item(item_id));
             if has_members && !is_functor {
                 let mut children = body_check_nodes;
                 children.extend(with_check_nodes);

@@ -284,9 +284,8 @@ impl<'a> Checker<'a> {
     fn process_check_order(&mut self, nodes: &[CheckNode]) {
         for node in nodes {
             match node {
-                CheckNode::Item { name, item_id } => {
-                    let item = self.program.item(*item_id);
-                    self.check_item(name, item, *item_id);
+                CheckNode::Item(item_id) => {
+                    self.check_item(*item_id);
                 }
                 CheckNode::Scope { item_id, children } => {
                     self.process_scope(*item_id, children);
@@ -330,9 +329,8 @@ impl<'a> Checker<'a> {
         // Check all items and sub-scopes
         for child in children {
             match child {
-                CheckNode::Item { name, item_id: child_id } => {
-                    let child_item = self.program.item(*child_id);
-                    self.check_item(name, child_item, *child_id);
+                CheckNode::Item(child_id) => {
+                    self.check_item(*child_id);
                 }
                 CheckNode::Scope { item_id: scope_id, children: grandchildren } => {
                     self.process_scope(*scope_id, grandchildren);
@@ -344,7 +342,8 @@ impl<'a> Checker<'a> {
         // (sub-module scopes must be registered before we check is_sub_module)
         let mut new_members = Vec::new();
         for child in children {
-            if let CheckNode::Item { name, .. } = child {
+            if let CheckNode::Item(child_id) = child {
+                let name = &self.program.item(*child_id).name;
                 let full_name = format!("{}.{}", canonical, name);
                 let entry_idx = self.lookup.get(&full_name).copied();
                 let is_sub_module = self.module_members.contains_key(&full_name);
@@ -381,7 +380,8 @@ impl<'a> Checker<'a> {
         self.current_origin = prev_origin;
     }
 
-    fn check_item(&mut self, name: &str, item: &Item, item_id: ItemId) {
+    fn check_item(&mut self, item_id: ItemId) {
+        let item = self.program.item(item_id);
         if matches!(item.kind, Some(ItemKind::Param)) {
             return;
         }
@@ -394,13 +394,14 @@ impl<'a> Checker<'a> {
             }
         }
 
-        self.check_item_inner(name, item, item_id);
+        self.check_item_inner(item_id);
 
         self.current_origin = prev_origin;
     }
 
-    fn check_item_inner(&mut self, name: &str, item: &Item, item_id: ItemId) {
-        let qname = self.qualified_name(name);
+    fn check_item_inner(&mut self, item_id: ItemId) {
+        let item = self.program.item(item_id);
+        let qname = self.qualified_name(&item.name);
 
         // Reuse cached entry for same ItemId (from import cache)
         if let Some(old_qname) = self.item_cache.get(&item_id).cloned() {

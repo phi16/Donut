@@ -196,7 +196,7 @@ impl<'a> HoverBuilder<'a> {
         }
 
         // Internal items (from use/import) — walk val expressions only
-        for (_name, item_id) in &module.internal {
+        for (_, item_id) in &module.internal {
             let item = self.program.item(*item_id);
             if let Some(ty_id) = item.ty {
                 self.walk_val(ty_id, prefixes);
