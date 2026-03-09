@@ -226,6 +226,8 @@ pub struct Env {
     pub module_params: HashMap<String, Vec<ParamInfo>>,
     pub meta_ret_types: HashMap<PrimId, MetaType>,
     pub meta_prim_names: HashMap<PrimId, String>,
+    /// Module prefix → member short names.
+    pub module_members: HashMap<String, Vec<String>>,
 }
 
 impl Env {
@@ -278,12 +280,18 @@ impl Env {
             .map(|p| match &p.kind {
                 ParamKind::Meta(mt) => format!("{}: {}", p.name, self.display_meta_type(mt)),
                 ParamKind::Cell => {
-                    if let Some(&idx) = self.lookup.get(&p.name) {
-                        if let Some(ty) = self.entries[idx].display_type(self) {
-                            return format!("{}: {}", p.name, ty);
+                    let ty = self.entries.iter().find_map(|e| {
+                        let cell = e.as_cell()?;
+                        if cell.pure.extract_prim_id() == Some(p.prim_id) {
+                            Some(display_cell_type(&cell.pure, &self.prim_decls))
+                        } else {
+                            None
                         }
+                    });
+                    match ty {
+                        Some(ty) => format!("{}: {}", p.name, ty),
+                        None => format!("{}: ?", p.name),
                     }
-                    p.name.clone()
                 }
             })
             .collect();

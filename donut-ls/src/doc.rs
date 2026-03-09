@@ -5,6 +5,7 @@ pub struct Doc {
     pub tokens: Vec<crate::lang::TokenData>,
     pub last_result_id: Option<u32>,
     pub hover_map: HashMap<usize, crate::lang::HoverInfo>,
+    pub completion: crate::lang::CompletionData,
 }
 
 impl Doc {
@@ -14,6 +15,7 @@ impl Doc {
             tokens: Vec::new(),
             last_result_id: None,
             hover_map: HashMap::new(),
+            completion: crate::lang::CompletionData::empty(),
         }
     }
 

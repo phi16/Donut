@@ -66,6 +66,7 @@ fn run_analysis(
     let contents = doc.to_string();
     let result = analyze(&contents);
     doc.hover_map = result.hover_map;
+    doc.completion = result.completion;
     let mut prev_line = 0;
     let mut prev_column = 0;
     let mut semantic = Vec::new();
@@ -275,29 +276,50 @@ impl<'a> Server<'a> {
 
     fn completion(&mut self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
         let cursor_pos = params.text_document_position.position;
-        let last_backslash = std::mem::take(&mut self.last_backslash);
-        let backslash_pos = {
-            let c = match &params.context {
-                Some(c) => c,
-                None => return Ok(None),
-            };
-            match &c.trigger_kind {
-                &CompletionTriggerKind::TRIGGER_CHARACTER => match &c.trigger_character {
-                    Some(s) if s == "\\" => Position {
-                        line: cursor_pos.line,
-                        character: cursor_pos.character - 1,
-                    },
-                    _ => return Ok(None),
-                },
-                &CompletionTriggerKind::TRIGGER_FOR_INCOMPLETE_COMPLETIONS => {
-                    match last_backslash {
-                        None => return Ok(None),
-                        Some(last_backslash) => last_backslash,
-                    }
-                }
-                _ => return Ok(None),
+        let trigger = params.context.as_ref().and_then(|c| {
+            if c.trigger_kind == CompletionTriggerKind::TRIGGER_CHARACTER {
+                c.trigger_character.clone()
+            } else if c.trigger_kind == CompletionTriggerKind::TRIGGER_FOR_INCOMPLETE_COMPLETIONS {
+                Some("\\continue".to_string())
+            } else {
+                None
             }
+        });
+
+        eprintln!("[completion] trigger={:?}, cursor={}:{}", trigger, cursor_pos.line, cursor_pos.character);
+
+        match trigger.as_deref() {
+            Some("\\") => self.completion_unicode(cursor_pos, &params),
+            Some("\\continue") => {
+                let last_backslash = std::mem::take(&mut self.last_backslash);
+                match last_backslash {
+                    Some(pos) => self.completion_unicode_continue(cursor_pos, pos, &params),
+                    None => Ok(None),
+                }
+            }
+            Some(".") => self.completion_dot(cursor_pos, &params),
+            _ => self.completion_invoked(cursor_pos, &params),
+        }
+    }
+
+    fn completion_unicode(
+        &mut self,
+        cursor_pos: Position,
+        params: &CompletionParams,
+    ) -> Result<Option<CompletionResponse>> {
+        let backslash_pos = Position {
+            line: cursor_pos.line,
+            character: cursor_pos.character.saturating_sub(1),
         };
+        self.completion_unicode_continue(cursor_pos, backslash_pos, params)
+    }
+
+    fn completion_unicode_continue(
+        &mut self,
+        cursor_pos: Position,
+        backslash_pos: Position,
+        params: &CompletionParams,
+    ) -> Result<Option<CompletionResponse>> {
         let range = Range {
             start: backslash_pos,
             end: cursor_pos,
@@ -307,12 +329,11 @@ impl<'a> Server<'a> {
             let doc = doc.lock().unwrap();
             let s = doc.loc_utf16(
                 backslash_pos.line as usize,
-                backslash_pos.character as usize + 1, // without backslash
+                backslash_pos.character as usize + 1,
             );
             let e = doc.loc_utf16(cursor_pos.line as usize, cursor_pos.character as usize);
             doc.substr(s, e)
         };
-        eprintln!("completion input = {:?}", input);
 
         use crate::input::InputEntry;
         let mut is_incomplete = false;
@@ -350,14 +371,97 @@ impl<'a> Server<'a> {
                 },
             })
             .collect();
-        let res = CompletionResponse::List(CompletionList {
-            is_incomplete,
-            items: cands,
-        });
         if is_incomplete {
             self.last_backslash = Some(range.start);
         }
-        Ok(Some(res))
+        Ok(Some(CompletionResponse::List(CompletionList {
+            is_incomplete,
+            items: cands,
+        })))
+    }
+
+    fn completion_dot(
+        &mut self,
+        cursor_pos: Position,
+        params: &CompletionParams,
+    ) -> Result<Option<CompletionResponse>> {
+        let doc = self.get_doc(&params.text_document_position.text_document.uri)?;
+        let mut doc = doc.lock().unwrap();
+
+        // Ensure analysis is current (tokens/hover_map/completion may be stale)
+        let _ = run_analysis(&mut doc);
+
+        // Debug: dump all tokens around cursor line
+        eprintln!("[dot] cursor={}:{}", cursor_pos.line, cursor_pos.character);
+        for (i, t) in doc.tokens.iter().enumerate() {
+            if t.line == cursor_pos.line {
+                eprintln!("  token[{}] col={} len={} idx={:?} type={:?}",
+                    i, t.column, t.length, t.token_index, t.token_type);
+            }
+        }
+
+        // Find the dot token at cursor - 1 (cursor is after the dot)
+        let dot_col = cursor_pos.character.saturating_sub(1);
+        let dot_token = doc.token_index_at(cursor_pos.line, dot_col);
+        eprintln!("[dot] dot_col={}, dot_token={:?}", dot_col, dot_token);
+
+        // Look up the prefix from the syntax tree (dot_prefixes)
+        let prefix = dot_token
+            .and_then(|idx| doc.completion.dot_prefixes.get(&idx));
+        eprintln!("[dot] prefix={:?}", prefix);
+
+        // Debug: dump all dot_prefixes
+        eprintln!("[dot] all dot_prefixes:");
+        for (k, v) in &doc.completion.dot_prefixes {
+            eprintln!("  token_idx={} -> {:?}", k, v);
+        }
+
+        // Debug: dump all scope keys
+        eprintln!("[dot] all scope keys: {:?}", doc.completion.scopes.keys().collect::<Vec<_>>());
+
+        let candidates = match prefix.and_then(|p| doc.completion.scopes.get(p)) {
+            Some(c) => c,
+            None => {
+                eprintln!("[dot] no candidates found, returning None");
+                return Ok(None);
+            }
+        };
+
+        eprintln!("[dot] found {} candidates", candidates.len());
+        let items = candidates
+            .iter()
+            .map(|c| candidate_to_item(c, cursor_pos.line))
+            .collect();
+        Ok(Some(CompletionResponse::List(CompletionList {
+            is_incomplete: false,
+            items,
+        })))
+    }
+
+    fn completion_invoked(
+        &mut self,
+        cursor_pos: Position,
+        params: &CompletionParams,
+    ) -> Result<Option<CompletionResponse>> {
+        let doc = self.get_doc(&params.text_document_position.text_document.uri)?;
+        let mut doc = doc.lock().unwrap();
+
+        // Ensure analysis is current
+        let _ = run_analysis(&mut doc);
+
+        let candidates = match doc.completion.scopes.get("") {
+            Some(c) => c,
+            None => return Ok(None),
+        };
+
+        let items = candidates
+            .iter()
+            .map(|c| candidate_to_item(c, cursor_pos.line))
+            .collect();
+        Ok(Some(CompletionResponse::List(CompletionList {
+            is_incomplete: false,
+            items,
+        })))
     }
 
     fn publish_diagnostics(&mut self, params: PublishDiagnosticsParams) -> Result<()> {
@@ -479,4 +583,52 @@ where
     N: lsp_types::notification::Notification,
 {
     N::METHOD
+}
+
+fn candidate_to_item(
+    c: &crate::lang::CompletionCandidate,
+    cursor_line: u32,
+) -> CompletionItem {
+    use crate::lang::CompletionKind;
+
+    let kind = match &c.kind {
+        CompletionKind::Cell(_) => Some(CompletionItemKind::VARIABLE),
+        CompletionKind::Meta => Some(CompletionItemKind::CONSTANT),
+        CompletionKind::Type => Some(CompletionItemKind::CLASS),
+        CompletionKind::Module => Some(CompletionItemKind::MODULE),
+    };
+
+    let kind_str = match &c.kind {
+        CompletionKind::Cell(dim) => format!("{}-cell", dim),
+        CompletionKind::Meta => "meta".to_string(),
+        CompletionKind::Type => "type".to_string(),
+        CompletionKind::Module => "module".to_string(),
+    };
+    let detail = match (&c.type_expr, c.params.is_empty()) {
+        (Some(ty), true) => format!("{} ({})", ty, kind_str),
+        (Some(ty), false) => format!("{} {} ({})", c.params, ty, kind_str),
+        (None, true) => format!("({})", kind_str),
+        (None, false) => format!("{} ({})", c.params, kind_str),
+    };
+
+    // Mark entries defined after cursor as deprecated (strikethrough)
+    let defined_after = !c.is_imported && c.def_line > cursor_line;
+    let tags = if defined_after {
+        Some(vec![CompletionItemTag::DEPRECATED])
+    } else {
+        None
+    };
+
+    CompletionItem {
+        label: c.label.clone(),
+        kind,
+        detail: Some(detail),
+        tags,
+        sort_text: Some(if defined_after {
+            format!("1_{}", c.label)
+        } else {
+            format!("0_{}", c.label)
+        }),
+        ..Default::default()
+    }
 }

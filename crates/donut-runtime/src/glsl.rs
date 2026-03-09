@@ -82,13 +82,15 @@ impl GlslCompiler {
                 Ok(result)
             }
             CellF::Zero(_) => Err("cannot compile a 0-cell to GLSL".into()),
-            CellF::Comp(axis, _) => {
-                Err(format!("unsupported composition axis {} for GLSL", axis))
-            }
+            CellF::Comp(axis, _) => Err(format!("unsupported composition axis {} for GLSL", axis)),
         }
     }
 
-    fn compile_prim(&mut self, prim: &donut_core::common::Prim, inputs: &[Var]) -> Result<Vec<Var>, String> {
+    fn compile_prim(
+        &mut self,
+        prim: &donut_core::common::Prim,
+        inputs: &[Var],
+    ) -> Result<Vec<Var>, String> {
         let name = self
             .prim_names
             .get(&prim.id)
@@ -126,7 +128,12 @@ impl GlslCompiler {
                 let v = self.fresh(GlslTy::Int);
                 self.emit(format!(
                     "{} {} = {} - {} * ({} / {});",
-                    v.ty.decl(), v.name, inputs[0].name, inputs[1].name, inputs[0].name, inputs[1].name
+                    v.ty.decl(),
+                    v.name,
+                    inputs[0].name,
+                    inputs[1].name,
+                    inputs[0].name,
+                    inputs[1].name
                 ));
                 Ok(vec![v])
             }
@@ -136,7 +143,12 @@ impl GlslCompiler {
             "sys::u32.le" => Ok(self.compare(GlslTy::Int, "<=", &inputs[0], &inputs[1])),
             "sys::u32.to_f32" => {
                 let v = self.fresh(GlslTy::Float);
-                self.emit(format!("{} {} = float({});", v.ty.decl(), v.name, inputs[0].name));
+                self.emit(format!(
+                    "{} {} = float({});",
+                    v.ty.decl(),
+                    v.name,
+                    inputs[0].name
+                ));
                 Ok(vec![v])
             }
             "sys::u32.dup" => Ok(vec![inputs[0].clone(), inputs[0].clone()]),
@@ -159,7 +171,10 @@ impl GlslCompiler {
                 let v = self.fresh(GlslTy::Bool);
                 self.emit(format!(
                     "{} {} = {} && {};",
-                    v.ty.decl(), v.name, inputs[0].name, inputs[1].name
+                    v.ty.decl(),
+                    v.name,
+                    inputs[0].name,
+                    inputs[1].name
                 ));
                 Ok(vec![v])
             }
@@ -167,7 +182,10 @@ impl GlslCompiler {
                 let v = self.fresh(GlslTy::Bool);
                 self.emit(format!(
                     "{} {} = {} || {};",
-                    v.ty.decl(), v.name, inputs[0].name, inputs[1].name
+                    v.ty.decl(),
+                    v.name,
+                    inputs[0].name,
+                    inputs[1].name
                 ));
                 Ok(vec![v])
             }
@@ -182,7 +200,10 @@ impl GlslCompiler {
                 let v = self.fresh(GlslTy::Vec2);
                 self.emit(format!(
                     "{} {} = vec2({}, {});",
-                    v.ty.decl(), v.name, format_float(x), format_float(y)
+                    v.ty.decl(),
+                    v.name,
+                    format_float(x),
+                    format_float(y)
                 ));
                 Ok(vec![v])
             }
@@ -190,15 +211,28 @@ impl GlslCompiler {
                 let v = self.fresh(GlslTy::Vec2);
                 self.emit(format!(
                     "{} {} = vec2({}, {});",
-                    v.ty.decl(), v.name, inputs[0].name, inputs[1].name
+                    v.ty.decl(),
+                    v.name,
+                    inputs[0].name,
+                    inputs[1].name
                 ));
                 Ok(vec![v])
             }
             "sys::f32x2.unpack" => {
                 let vx = self.fresh(GlslTy::Float);
                 let vy = self.fresh(GlslTy::Float);
-                self.emit(format!("{} {} = {}.x;", vx.ty.decl(), vx.name, inputs[0].name));
-                self.emit(format!("{} {} = {}.y;", vy.ty.decl(), vy.name, inputs[0].name));
+                self.emit(format!(
+                    "{} {} = {}.x;",
+                    vx.ty.decl(),
+                    vx.name,
+                    inputs[0].name
+                ));
+                self.emit(format!(
+                    "{} {} = {}.y;",
+                    vy.ty.decl(),
+                    vy.name,
+                    inputs[0].name
+                ));
                 Ok(vec![vx, vy])
             }
             "sys::f32x2.add" => Ok(self.binary(GlslTy::Vec2, "+", &inputs[0], &inputs[1])),
@@ -210,7 +244,10 @@ impl GlslCompiler {
                 let v = self.fresh(GlslTy::Vec2);
                 self.emit(format!(
                     "{} {} = {} * {};",
-                    v.ty.decl(), v.name, inputs[0].name, inputs[1].name
+                    v.ty.decl(),
+                    v.name,
+                    inputs[0].name,
+                    inputs[1].name
                 ));
                 Ok(vec![v])
             }
@@ -226,7 +263,11 @@ impl GlslCompiler {
                 let v = self.fresh(GlslTy::Vec3);
                 self.emit(format!(
                     "{} {} = vec3({}, {}, {});",
-                    v.ty.decl(), v.name, format_float(x), format_float(y), format_float(z)
+                    v.ty.decl(),
+                    v.name,
+                    format_float(x),
+                    format_float(y),
+                    format_float(z)
                 ));
                 Ok(vec![v])
             }
@@ -234,7 +275,11 @@ impl GlslCompiler {
                 let v = self.fresh(GlslTy::Vec3);
                 self.emit(format!(
                     "{} {} = vec3({}, {}, {});",
-                    v.ty.decl(), v.name, inputs[0].name, inputs[1].name, inputs[2].name
+                    v.ty.decl(),
+                    v.name,
+                    inputs[0].name,
+                    inputs[1].name,
+                    inputs[2].name
                 ));
                 Ok(vec![v])
             }
@@ -242,9 +287,24 @@ impl GlslCompiler {
                 let vx = self.fresh(GlslTy::Float);
                 let vy = self.fresh(GlslTy::Float);
                 let vz = self.fresh(GlslTy::Float);
-                self.emit(format!("{} {} = {}.x;", vx.ty.decl(), vx.name, inputs[0].name));
-                self.emit(format!("{} {} = {}.y;", vy.ty.decl(), vy.name, inputs[0].name));
-                self.emit(format!("{} {} = {}.z;", vz.ty.decl(), vz.name, inputs[0].name));
+                self.emit(format!(
+                    "{} {} = {}.x;",
+                    vx.ty.decl(),
+                    vx.name,
+                    inputs[0].name
+                ));
+                self.emit(format!(
+                    "{} {} = {}.y;",
+                    vy.ty.decl(),
+                    vy.name,
+                    inputs[0].name
+                ));
+                self.emit(format!(
+                    "{} {} = {}.z;",
+                    vz.ty.decl(),
+                    vz.name,
+                    inputs[0].name
+                ));
                 Ok(vec![vx, vy, vz])
             }
             "sys::f32x3.add" => Ok(self.binary(GlslTy::Vec3, "+", &inputs[0], &inputs[1])),
@@ -256,7 +316,10 @@ impl GlslCompiler {
                 let v = self.fresh(GlslTy::Vec3);
                 self.emit(format!(
                     "{} {} = {} * {};",
-                    v.ty.decl(), v.name, inputs[0].name, inputs[1].name
+                    v.ty.decl(),
+                    v.name,
+                    inputs[0].name,
+                    inputs[1].name
                 ));
                 Ok(vec![v])
             }
@@ -274,7 +337,11 @@ impl GlslCompiler {
         let v = self.fresh(ty);
         self.emit(format!(
             "{} {} = {} {} {};",
-            v.ty.decl(), v.name, a.name, op, b.name
+            v.ty.decl(),
+            v.name,
+            a.name,
+            op,
+            b.name
         ));
         vec![v]
     }
@@ -289,7 +356,11 @@ impl GlslCompiler {
         let v = self.fresh(GlslTy::Bool);
         self.emit(format!(
             "{} {} = {} {} {};",
-            v.ty.decl(), v.name, a.name, op, b.name
+            v.ty.decl(),
+            v.name,
+            a.name,
+            op,
+            b.name
         ));
         vec![v]
     }
@@ -333,13 +404,40 @@ fn sanitize_glsl_name(name: &str) -> String {
 fn is_glsl_reserved(name: &str) -> bool {
     matches!(
         name,
-        "float" | "int" | "bool" | "void" | "vec2" | "vec3" | "vec4"
-            | "mat2" | "mat3" | "mat4" | "sampler2D" | "samplerCube"
-            | "main" | "if" | "else" | "for" | "while" | "do"
-            | "return" | "break" | "continue" | "discard"
-            | "in" | "out" | "inout" | "uniform" | "varying"
-            | "precision" | "true" | "false"
-            | "texture" | "texture2D" | "gl_FragCoord" | "gl_FragColor"
+        "float"
+            | "int"
+            | "bool"
+            | "void"
+            | "vec2"
+            | "vec3"
+            | "vec4"
+            | "mat2"
+            | "mat3"
+            | "mat4"
+            | "sampler2D"
+            | "samplerCube"
+            | "main"
+            | "if"
+            | "else"
+            | "for"
+            | "while"
+            | "do"
+            | "return"
+            | "break"
+            | "continue"
+            | "discard"
+            | "in"
+            | "out"
+            | "inout"
+            | "uniform"
+            | "varying"
+            | "precision"
+            | "true"
+            | "false"
+            | "texture"
+            | "texture2D"
+            | "gl_FragCoord"
+            | "gl_FragColor"
     )
 }
 
@@ -351,7 +449,10 @@ fn format_float(v: f64) -> String {
     }
 }
 
-fn prim_to_glsl_ty(prim_id: PrimId, prim_names: &HashMap<PrimId, String>) -> Result<GlslTy, String> {
+fn prim_to_glsl_ty(
+    prim_id: PrimId,
+    prim_names: &HashMap<PrimId, String>,
+) -> Result<GlslTy, String> {
     let name = prim_names
         .get(&prim_id)
         .ok_or_else(|| format!("unknown type prim {}", prim_id))?;

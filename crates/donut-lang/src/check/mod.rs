@@ -153,6 +153,11 @@ impl<'a> Checker<'a> {
                 _ => None,
             })
             .collect();
+        let module_members: HashMap<String, Vec<String>> = self
+            .module_members
+            .into_iter()
+            .map(|(k, refs)| (k, refs.into_iter().map(|r| r.name).collect()))
+            .collect();
         let env = Env {
             entries: self.entries,
             lookup: self.lookup,
@@ -161,6 +166,7 @@ impl<'a> Checker<'a> {
             module_params: self.module_params,
             meta_ret_types: self.meta_ret_types,
             meta_prim_names,
+            module_members,
         };
         (env, self.errors)
     }

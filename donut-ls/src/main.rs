@@ -24,7 +24,7 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         hover_provider: Some(HoverProviderCapability::Simple(true)),
         completion_provider: Some(CompletionOptions {
             resolve_provider: Some(false),
-            trigger_characters: Some(vec!["\\".to_string()]),
+            trigger_characters: Some(vec!["\\".to_string(), ".".to_string()]),
             all_commit_characters: Some(vec![" ".to_string(), "\t".to_string(), "\n".to_string()]),
             work_done_progress_options: Default::default(),
             completion_item: None,
