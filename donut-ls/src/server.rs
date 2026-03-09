@@ -6,35 +6,22 @@ use lsp_types::*;
 use std::sync::{Arc, Mutex};
 use std::{collections::HashMap, error::Error};
 
-struct TokenTypeSignature(pub u32);
-
-#[allow(dead_code)]
-impl TokenTypeSignature {
-    pub const PARAMETER: Self = Self(0);
-    pub const NAMESPACE: Self = Self(1);
-    pub const VARIABLE: Self = Self(2);
-    pub const PROPERTY: Self = Self(3);
-    pub const MACRO: Self = Self(4);
-    pub const KEYWORD: Self = Self(5);
-    pub const COMMENT: Self = Self(6);
-    pub const STRING: Self = Self(7);
-    pub const NUMBER: Self = Self(8);
-    pub const OPERATOR: Self = Self(9);
-}
+/// SemanticTokenType の登録順。インデックスがそのまま LSP の token_type になる。
+const SEMANTIC_TOKEN_TYPES: &[SemanticTokenType] = &[
+    SemanticTokenType::PARAMETER,  // 0
+    SemanticTokenType::NAMESPACE,  // 1
+    SemanticTokenType::VARIABLE,   // 2
+    SemanticTokenType::PROPERTY,   // 3
+    SemanticTokenType::MACRO,      // 4
+    SemanticTokenType::KEYWORD,    // 5
+    SemanticTokenType::COMMENT,    // 6
+    SemanticTokenType::STRING,     // 7
+    SemanticTokenType::NUMBER,     // 8
+    SemanticTokenType::OPERATOR,   // 9
+];
 
 pub fn token_type_list() -> Vec<SemanticTokenType> {
-    vec![
-        SemanticTokenType::PARAMETER,
-        SemanticTokenType::NAMESPACE,
-        SemanticTokenType::VARIABLE,
-        SemanticTokenType::PROPERTY,
-        SemanticTokenType::MACRO,
-        SemanticTokenType::KEYWORD,
-        SemanticTokenType::COMMENT,
-        SemanticTokenType::STRING,
-        SemanticTokenType::NUMBER,
-        SemanticTokenType::OPERATOR,
-    ]
+    SEMANTIC_TOKEN_TYPES.to_vec()
 }
 
 pub fn token_modifiers_list() -> Vec<SemanticTokenModifier> {
@@ -44,49 +31,50 @@ pub fn token_modifiers_list() -> Vec<SemanticTokenModifier> {
     ]
 }
 
-fn from_token_type(t: TokenType) -> (u32, u32) {
-    type Sig = TokenTypeSignature;
-    let res = match t {
-        TokenType::Unknown => (Sig::VARIABLE, 0),
-        TokenType::Parameter => (Sig::PARAMETER, 0),
-        TokenType::Keyword => (Sig::KEYWORD, 0),
-        TokenType::Operator => (Sig::OPERATOR, 0),
-        TokenType::Symbol => (Sig::OPERATOR, 0),
-        TokenType::Number => (Sig::NUMBER, 0),
-        TokenType::String => (Sig::STRING, 0),
-        TokenType::Comment => (Sig::COMMENT, 0),
-        TokenType::Namespace => (Sig::NAMESPACE, 0),
+fn from_token_type(t: &TokenType) -> (u32, u32) {
+    let idx = match t {
+        TokenType::Parameter => 0,
+        TokenType::Namespace => 1,
+        TokenType::Unknown => 2,   // VARIABLE
+        TokenType::Keyword => 5,
+        TokenType::Comment => 6,
+        TokenType::String => 7,
+        TokenType::Number => 8,
+        TokenType::Operator | TokenType::Symbol => 9,
     };
-    (res.0 .0, res.1)
+    (idx, 0)
 }
 
-fn run_analysis(
-    doc: &mut Doc,
-) -> Result<(Vec<SemanticToken>, Vec<crate::lang::Diagnostic>)> {
+/// 分析を実行し、結果を Doc にキャッシュ。診断を返す。
+fn update_analysis(doc: &mut Doc) -> Vec<crate::lang::Diagnostic> {
     let contents = doc.to_string();
     let result = analyze(&contents);
     doc.hover_map = result.hover_map;
     doc.completion = result.completion;
+    doc.tokens = result.tokens;
+    result.diagnostics
+}
+
+/// Doc に格納済みのトークン列から LSP SemanticToken 列を構築。
+fn build_semantic_tokens(doc: &Doc) -> Vec<SemanticToken> {
     let mut prev_line = 0;
     let mut prev_column = 0;
-    let mut semantic = Vec::new();
-    for t in &result.tokens {
+    doc.tokens.iter().map(|t| {
         if prev_line != t.line {
             prev_column = 0;
         }
-        let (token_type, token_modifiers_bitset) = from_token_type(t.token_type.clone());
-        semantic.push(SemanticToken {
+        let (token_type, token_modifiers_bitset) = from_token_type(&t.token_type);
+        let st = SemanticToken {
             delta_line: t.line - prev_line,
             delta_start: t.column - prev_column,
             length: t.length,
             token_type,
             token_modifiers_bitset,
-        });
+        };
         prev_line = t.line;
         prev_column = t.column;
-    }
-    doc.tokens = result.tokens;
-    Ok((semantic, result.diagnostics))
+        st
+    }).collect()
 }
 
 struct Server<'a> {
@@ -190,56 +178,37 @@ impl<'a> Server<'a> {
         self.publish_diagnostics(params)
     }
 
+    fn run_and_publish(&mut self, uri: lsp_types::Uri) -> Result<SemanticTokens> {
+        let result_id = self.fresh_result_id();
+        let doc = self.get_doc(&uri)?;
+        let (data, diags) = {
+            let mut doc = doc.lock().unwrap();
+            let diags = update_analysis(&mut doc);
+            let data = build_semantic_tokens(&doc);
+            doc.last_result_id = Some(result_id);
+            (data, diags)
+        };
+        self.send_diagnostics(uri, diags)?;
+        Ok(SemanticTokens {
+            result_id: Some(result_id.to_string()),
+            data,
+        })
+    }
+
     fn semantic_tokens_full(
         &mut self,
         params: SemanticTokensParams,
     ) -> Result<Option<SemanticTokensResult>> {
-        let uri = params.text_document.uri;
-        let doc = self.get_doc(&uri)?;
-        let (result, diags) = {
-            let mut doc = doc.lock().unwrap();
-            match run_analysis(&mut doc) {
-                Ok((r, diags)) => (r, diags),
-                Err(_) => (vec![], vec![]),
-            }
-        };
-        let result_id = self.fresh_result_id();
-        {
-            let mut doc = doc.lock().unwrap();
-            doc.last_result_id = Some(result_id);
-        }
-        self.send_diagnostics(uri, diags)?;
-        let result = SemanticTokensResult::Tokens(SemanticTokens {
-            result_id: Some(result_id.to_string()),
-            data: result,
-        });
-        Ok(Some(result))
+        let tokens = self.run_and_publish(params.text_document.uri)?;
+        Ok(Some(SemanticTokensResult::Tokens(tokens)))
     }
     fn semantic_tokens_full_delta(
         &mut self,
         params: SemanticTokensDeltaParams,
     ) -> Result<Option<SemanticTokensFullDeltaResult>> {
-        let uri = params.text_document.uri;
-        let doc = self.get_doc(&uri)?;
-        let (result, diags) = {
-            let mut doc = doc.lock().unwrap();
-            match run_analysis(&mut doc) {
-                Ok((r, diags)) => (r, diags),
-                Err(_) => (vec![], vec![]),
-            }
-        };
-        self.send_diagnostics(uri, diags)?;
-        let result_id = self.fresh_result_id();
-        {
-            let mut doc = doc.lock().unwrap();
-            doc.last_result_id = Some(result_id);
-        }
         // TODO: TokensDelta
-        let result = SemanticTokensFullDeltaResult::Tokens(SemanticTokens {
-            result_id: Some(result_id.to_string()),
-            data: result,
-        });
-        Ok(Some(result))
+        let tokens = self.run_and_publish(params.text_document.uri)?;
+        Ok(Some(SemanticTokensFullDeltaResult::Tokens(tokens)))
     }
     fn semantic_tokens_range(
         &mut self,
@@ -253,26 +222,17 @@ impl<'a> Server<'a> {
         let pos = params.text_document_position_params.position;
         let doc = self.get_doc(&uri)?;
         let doc = doc.lock().unwrap();
-        let token_idx = doc.token_index_at(pos.line, pos.character);
-        let hover_info = token_idx.and_then(|idx| doc.hover_map.get(&idx));
-        match hover_info {
-            Some(info) => {
-                let detail = info.display_detail();
-                let content = if let Some(ty) = &info.type_expr {
-                    format!("```donut\n{}{}: {}\n```\n{}", info.name, info.params, ty, detail)
-                } else {
-                    format!("```donut\n{}{}\n```\n{}", info.name, info.params, detail)
-                };
-                Ok(Some(Hover {
-                    contents: HoverContents::Markup(MarkupContent {
-                        kind: MarkupKind::Markdown,
-                        value: content,
-                    }),
-                    range: None,
-                }))
-            }
-            None => Ok(None),
-        }
+        let hover = doc
+            .token_index_at(pos.line, pos.character)
+            .and_then(|idx| doc.hover_map.get(&idx))
+            .map(|info| Hover {
+                contents: HoverContents::Markup(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value: info.display_markdown(),
+                }),
+                range: None,
+            });
+        Ok(hover)
     }
 
     fn completion(&mut self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
@@ -386,30 +346,17 @@ impl<'a> Server<'a> {
     ) -> Result<Option<CompletionResponse>> {
         let doc = self.get_doc(&params.text_document_position.text_document.uri)?;
         let mut doc = doc.lock().unwrap();
-
-        // Ensure analysis is current (tokens/hover_map/completion may be stale)
-        let _ = run_analysis(&mut doc);
+        update_analysis(&mut doc);
 
         // Find the dot token at cursor - 1 (cursor is after the dot)
         let dot_col = cursor_pos.character.saturating_sub(1);
-        let dot_token = doc.token_index_at(cursor_pos.line, dot_col);
+        let scope = doc.token_index_at(cursor_pos.line, dot_col)
+            .and_then(|idx| doc.completion.dot_prefixes.get(&idx).map(|s| s.as_str()));
 
-        // Look up the prefix from the syntax tree (dot_prefixes)
-        let prefix = dot_token
-            .and_then(|idx| doc.completion.dot_prefixes.get(&idx));
-
-        let candidates = match prefix.and_then(|p| doc.completion.scopes.get(p)) {
-            Some(c) => c,
-            None => return Ok(None),
-        };
-        let items = candidates
-            .iter()
-            .map(|c| candidate_to_item(c, cursor_pos.line))
-            .collect();
-        Ok(Some(CompletionResponse::List(CompletionList {
-            is_incomplete: false,
-            items,
-        })))
+        match scope {
+            Some(scope) => Ok(build_completion_list(&doc, scope, cursor_pos.line)),
+            None => Ok(None),
+        }
     }
 
     fn completion_invoked(
@@ -419,23 +366,8 @@ impl<'a> Server<'a> {
     ) -> Result<Option<CompletionResponse>> {
         let doc = self.get_doc(&params.text_document_position.text_document.uri)?;
         let mut doc = doc.lock().unwrap();
-
-        // Ensure analysis is current
-        let _ = run_analysis(&mut doc);
-
-        let candidates = match doc.completion.scopes.get("") {
-            Some(c) => c,
-            None => return Ok(None),
-        };
-
-        let items = candidates
-            .iter()
-            .map(|c| candidate_to_item(c, cursor_pos.line))
-            .collect();
-        Ok(Some(CompletionResponse::List(CompletionList {
-            is_incomplete: false,
-            items,
-        })))
+        update_analysis(&mut doc);
+        Ok(build_completion_list(&doc, "", cursor_pos.line))
     }
 
     fn publish_diagnostics(&mut self, params: PublishDiagnosticsParams) -> Result<()> {
@@ -559,30 +491,29 @@ where
     N::METHOD
 }
 
+fn build_completion_list(doc: &Doc, scope: &str, cursor_line: u32) -> Option<CompletionResponse> {
+    let candidates = doc.completion.scopes.get(scope)?;
+    let items = candidates.iter().map(|c| candidate_to_item(c, cursor_line)).collect();
+    Some(CompletionResponse::List(CompletionList {
+        is_incomplete: false,
+        items,
+    }))
+}
+
 fn candidate_to_item(c: &CompletionCandidate, cursor_line: u32) -> CompletionItem {
     use donut_lang::check::EntryKind;
 
-    let lsp_kind = if c.is_module {
+    let lsp_kind = if c.entry.is_module {
         Some(CompletionItemKind::MODULE)
     } else {
-        match c.kind {
+        match c.entry.kind {
             EntryKind::Cell(_) => Some(CompletionItemKind::VARIABLE),
             EntryKind::Meta => Some(CompletionItemKind::CONSTANT),
             EntryKind::Type => Some(CompletionItemKind::CLASS),
         }
     };
 
-    let kind_str = if c.is_module {
-        "module".to_string()
-    } else {
-        c.kind.display()
-    };
-    let detail = match (&c.type_expr, c.params.is_empty()) {
-        (Some(ty), true) => format!("{} ({})", ty, kind_str),
-        (Some(ty), false) => format!("{} {} ({})", c.params, ty, kind_str),
-        (None, true) => format!("({})", kind_str),
-        (None, false) => format!("{} ({})", c.params, kind_str),
-    };
+    let detail = c.entry.display_completion_detail();
 
     let defined_after = !c.is_imported && c.def_line > cursor_line;
     let tags = if defined_after {

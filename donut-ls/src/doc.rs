@@ -15,7 +15,7 @@ impl Doc {
             tokens: Vec::new(),
             last_result_id: None,
             hover_map: HashMap::new(),
-            completion: crate::lang::CompletionData::empty(),
+            completion: Default::default(),
         }
     }
 

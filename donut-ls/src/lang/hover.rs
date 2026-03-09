@@ -2,7 +2,7 @@ use donut_lang::check::{EntryKind, Env};
 use donut_lang::types::item::*;
 use std::collections::HashMap;
 
-use super::{build_entry_info, build_module_info, HoverInfo, TokenType};
+use super::{build_entry_info, build_module_info, EntryInfo, HoverInfo, TokenType};
 
 pub(super) struct HoverBuilder<'a> {
     program: &'a Program,
@@ -50,23 +50,25 @@ impl<'a> HoverBuilder<'a> {
                 if path_name == "*" {
                     self.map.insert(path.segments[0].1.start, HoverInfo {
                         name: "*".to_string(),
-                        kind: EntryKind::Meta,
-                        is_module: false,
-                        type_expr: Some("meta".to_string()),
-                        params: String::new(),
+                        entry: EntryInfo {
+                            kind: EntryKind::Meta,
+                            is_module: false,
+                            type_expr: Some("meta".to_string()),
+                            params: String::new(),
+                        },
                     });
                 } else if let Some(resolved) = self.resolve_name(&path_name, prefixes) {
-                    if let Some(info) = build_entry_info(&resolved, self.env) {
+                    if let Some(entry) = build_entry_info(&resolved, self.env) {
                         // 最後のセグメントにはエントリの hover info
                         let last = path.segments.len() - 1;
-                        self.map.insert(path.segments[last].1.start, info);
+                        self.map.insert(path.segments[last].1.start, HoverInfo {
+                            name: resolved.clone(),
+                            entry,
+                        });
                         // 中間セグメントにはモジュールプレフィックスの hover info
                         for i in 0..last {
                             let prefix = parts[..=i].join(".");
-                            self.map.insert(
-                                path.segments[i].1.start,
-                                build_module_info(&prefix, self.env),
-                            );
+                            self.insert_module_hover(path.segments[i].1.start, &prefix);
                         }
                     }
                     // . の左側のセグメントを Namespace として色付け
@@ -80,10 +82,7 @@ impl<'a> HoverBuilder<'a> {
                         if self.env.module_members.contains_key(&prefix) {
                             for j in 0..=i {
                                 let seg_prefix = parts[..=j].join(".");
-                                self.map.insert(
-                                    path.segments[j].1.start,
-                                    build_module_info(&seg_prefix, self.env),
-                                );
+                                self.insert_module_hover(path.segments[j].1.start, &seg_prefix);
                             }
                             for j in 0..i {
                                 self.styles.insert(path.segments[j].1.start, TokenType::Namespace);
@@ -119,15 +118,25 @@ impl<'a> HoverBuilder<'a> {
         }
     }
 
+    fn insert_module_hover(&mut self, token_index: usize, qname: &str) {
+        self.map.insert(token_index, HoverInfo {
+            name: qname.to_string(),
+            entry: build_module_info(qname, self.env),
+        });
+    }
+
     fn walk_item(&mut self, qname: &str, item: &Item, prefixes: &[&str]) {
         let has_members = item.members().map_or(false, |m| !m.entries.is_empty());
         let is_module_def = has_members && item.ty.is_none();
 
         // Definition site hover
         if is_module_def {
-            self.map.insert(item.span.start, build_module_info(qname, self.env));
-        } else if let Some(info) = build_entry_info(qname, self.env) {
-            self.map.insert(item.span.start, info);
+            self.insert_module_hover(item.span.start, qname);
+        } else if let Some(entry) = build_entry_info(qname, self.env) {
+            self.map.insert(item.span.start, HoverInfo {
+                name: qname.to_string(),
+                entry,
+            });
         }
 
         // Walk type expression

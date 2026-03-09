@@ -3,7 +3,7 @@ use donut_lang::types::item::Program;
 use donut_lang::types::token;
 use std::collections::HashMap;
 
-use super::{build_entry_info, CompletionCandidate, CompletionData};
+use super::{build_entry_info, build_module_info, CompletionCandidate, CompletionData};
 
 pub(super) fn build_completion_data(
     program: &Program,
@@ -21,31 +21,25 @@ pub(super) fn build_completion_data(
         let def_line = tokens.get(item.span.start).map(|t| t.pos.line as u32).unwrap_or(0);
         let is_imported = item.origin.is_some();
 
-        if let Some(info) = build_entry_info(name, env) {
-            top_level.push(CompletionCandidate {
-                label: name.clone(),
-                kind: info.kind,
-                is_module: info.is_module,
-                type_expr: info.type_expr,
-                params: info.params,
-                def_line,
-                is_imported,
-            });
+        let entry = if let Some(info) = build_entry_info(name, env) {
+            Some(info)
         } else {
             // Not in env.lookup — check if it's a known module
             let has_members = item.members().map_or(false, |m| !m.entries.is_empty());
             let is_module = env.module_members.contains_key(name);
             if is_module || has_members {
-                top_level.push(CompletionCandidate {
-                    label: name.clone(),
-                    kind: donut_lang::check::EntryKind::Cell(0), // unused
-                    is_module: true,
-                    type_expr: None,
-                    params: env.display_module_params(name),
-                    def_line,
-                    is_imported,
-                });
+                Some(build_module_info(name, env))
+            } else {
+                None
             }
+        };
+        if let Some(entry) = entry {
+            top_level.push(CompletionCandidate {
+                label: name.clone(),
+                entry,
+                def_line,
+                is_imported,
+            });
         }
     }
     scopes.insert(String::new(), top_level);
@@ -55,29 +49,20 @@ pub(super) fn build_completion_data(
         let mut candidates = Vec::new();
         for member_name in members {
             let full_name = format!("{}.{}", prefix, member_name);
-            if let Some(info) = build_entry_info(&full_name, env) {
+            let entry = if let Some(info) = build_entry_info(&full_name, env) {
+                Some((info, env.entries[env.lookup[&full_name]].origin.is_some()))
+            } else if env.module_members.contains_key(&full_name) {
+                Some((build_module_info(&full_name, env), true))
+            } else {
+                None
+            };
+            if let Some((entry, is_imported)) = entry {
                 candidates.push(CompletionCandidate {
                     label: member_name.clone(),
-                    kind: info.kind,
-                    is_module: info.is_module,
-                    type_expr: info.type_expr,
-                    params: info.params,
+                    entry,
                     def_line: 0,
-                    is_imported: env.entries[env.lookup[&full_name]].origin.is_some(),
+                    is_imported,
                 });
-            } else {
-                let is_sub_module = env.module_members.contains_key(&full_name);
-                if is_sub_module {
-                    candidates.push(CompletionCandidate {
-                        label: member_name.clone(),
-                        kind: donut_lang::check::EntryKind::Cell(0), // unused
-                        is_module: true,
-                        type_expr: None,
-                        params: env.display_module_params(&full_name),
-                        def_line: 0,
-                        is_imported: true,
-                    });
-                }
             }
         }
         scopes.insert(prefix.clone(), candidates);

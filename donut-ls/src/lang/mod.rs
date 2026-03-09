@@ -41,20 +41,47 @@ pub struct TokenData {
 }
 
 #[derive(Clone)]
-pub struct HoverInfo {
-    pub name: String,
+pub struct EntryInfo {
     pub kind: EntryKind,
     pub is_module: bool,
     pub type_expr: Option<String>,
     pub params: String,
 }
 
-impl HoverInfo {
+impl EntryInfo {
     pub fn display_detail(&self) -> String {
         if self.is_module {
             "module".to_string()
         } else {
             self.kind.display()
+        }
+    }
+
+    /// Completion アイテムの detail 文字列を生成
+    pub fn display_completion_detail(&self) -> String {
+        let kind_str = self.display_detail();
+        match (&self.type_expr, self.params.is_empty()) {
+            (Some(ty), true) => format!("{} ({})", ty, kind_str),
+            (Some(ty), false) => format!("{} {} ({})", self.params, ty, kind_str),
+            (None, true) => format!("({})", kind_str),
+            (None, false) => format!("{} ({})", self.params, kind_str),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct HoverInfo {
+    pub name: String,
+    pub entry: EntryInfo,
+}
+
+impl HoverInfo {
+    pub fn display_markdown(&self) -> String {
+        let detail = self.entry.display_detail();
+        if let Some(ty) = &self.entry.type_expr {
+            format!("```donut\n{}{}: {}\n```\n{}", self.name, self.entry.params, ty, detail)
+        } else {
+            format!("```donut\n{}{}\n```\n{}", self.name, self.entry.params, detail)
         }
     }
 }
@@ -64,29 +91,17 @@ impl HoverInfo {
 #[derive(Clone)]
 pub struct CompletionCandidate {
     pub label: String,
-    pub kind: EntryKind,
-    pub is_module: bool,
-    pub type_expr: Option<String>,
-    pub params: String,
+    pub entry: EntryInfo,
     pub def_line: u32,
     pub is_imported: bool,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct CompletionData {
     /// prefix → candidates. "" for top-level.
     pub scopes: HashMap<String, Vec<CompletionCandidate>>,
     /// dot token index → prefix string (e.g. token for "." after "sys.f32" → "sys.f32").
     pub dot_prefixes: HashMap<usize, String>,
-}
-
-impl CompletionData {
-    pub fn empty() -> Self {
-        CompletionData {
-            scopes: HashMap::new(),
-            dot_prefixes: HashMap::new(),
-        }
-    }
 }
 
 pub struct AnalysisResult {
@@ -98,13 +113,12 @@ pub struct AnalysisResult {
 
 // --- Shared hover/completion info construction ---
 
-/// Build HoverInfo for an entry by qualified name.
-fn build_entry_info(qname: &str, env: &Env) -> Option<HoverInfo> {
+/// Build EntryInfo for an entry by qualified name.
+fn build_entry_info(qname: &str, env: &Env) -> Option<EntryInfo> {
     let &idx = env.lookup.get(qname)?;
     let entry = &env.entries[idx];
     let is_module = env.module_members.contains_key(qname);
-    Some(HoverInfo {
-        name: qname.to_string(),
+    Some(EntryInfo {
         kind: entry.kind(),
         is_module,
         type_expr: if is_module { None } else { entry.display_type(env) },
@@ -116,10 +130,9 @@ fn build_entry_info(qname: &str, env: &Env) -> Option<HoverInfo> {
     })
 }
 
-/// Build HoverInfo for a module (not in env.lookup, but known as a module).
-fn build_module_info(qname: &str, env: &Env) -> HoverInfo {
-    HoverInfo {
-        name: qname.to_string(),
+/// Build EntryInfo for a module (not in env.lookup, but known as a module).
+fn build_module_info(qname: &str, env: &Env) -> EntryInfo {
+    EntryInfo {
         kind: EntryKind::Cell(0), // unused when is_module=true
         is_module: true,
         type_expr: None,
@@ -138,6 +151,14 @@ fn to_diag(pos: &types::common::TokenPos, msg: &str, source: &'static str) -> Di
         message: msg.to_string(),
         source,
     }
+}
+
+fn collect_diags(
+    diags: &mut Vec<Diagnostic>,
+    errors: &[(types::common::TokenPos, String)],
+    source: &'static str,
+) {
+    diags.extend(errors.iter().map(|(pos, msg)| to_diag(pos, msg, source)));
 }
 
 fn to_utf16(lines: &[&str], line: usize, col: usize, len: usize) -> (u32, u32) {
@@ -189,52 +210,30 @@ pub fn analyze(code: &str) -> AnalysisResult {
         .collect::<Vec<_>>();
 
     // tokenize エラーを診断として収集
-    let mut diags: Vec<Diagnostic> = tokenize_errors
-        .iter()
-        .map(|(pos, msg)| to_diag(pos, msg, "[tokenize]"))
-        .collect();
+    let mut diags = Vec::new();
+    collect_diags(&mut diags, &tokenize_errors, "[tokenize]");
 
     // parse + marking + dot prefix 収集を一度の syntree 走査で実行
     let mut ctx = Context::new(token_data);
     let (program, parse_errors) = donut_lang::parse::parse(&tokens);
     program.mark(&mut ctx);
-    for (pos, msg) in &parse_errors {
-        diags.push(to_diag(pos, msg, "[parse]"));
-    }
+    collect_diags(&mut diags, &parse_errors, "[parse]");
     let (token_data, dot_prefixes) = ctx.into_parts();
 
     // convert（意味解析）を実行
     let (sem_program, convert_errors) = donut_lang::convert::convert(program, &tokens);
-    for (pos, msg) in &convert_errors {
-        diags.push(to_diag(pos, msg, "[convert]"));
-    }
+    collect_diags(&mut diags, &convert_errors, "[convert]");
 
     // resolve（名前解決）を実行
     let (resolved, resolve_errors) = donut_lang::resolve::resolve(sem_program, &tokens);
-    for (pos, msg) in &resolve_errors {
-        diags.push(to_diag(pos, msg, "[resolve]"));
-    }
+    collect_diags(&mut diags, &resolve_errors, "[resolve]");
 
     // check（型検査）を実行
     let (env, check_errors) = donut_lang::check::check(&resolved, &tokens);
-    for (pos, msg) in &check_errors {
-        diags.push(to_diag(pos, msg, "[check]"));
-    }
+    collect_diags(&mut diags, &check_errors, "[check]");
 
     // hover map とスタイルオーバーライドを構築
     let (hover_map, style_overrides) = HoverBuilder::new(&resolved, &env).build();
-
-    // コメントトークンを構築
-    let comments_iter = comments.into_iter().map(|pos| {
-        let (utf16_col, utf16_len) = to_utf16(&lines, pos.line, pos.col, pos.len);
-        TokenData {
-            line: pos.line as u32,
-            column: utf16_col,
-            length: utf16_len,
-            token_type: TokenType::Comment,
-            token_index: None,
-        }
-    });
 
     // スタイルオーバーライドを適用
     let mut token_data = token_data;
@@ -246,29 +245,19 @@ pub fn analyze(code: &str) -> AnalysisResult {
         }
     }
 
-    // トークンとコメントを行・列順にマージ
-    let mut tokens_iter = token_data.into_iter().peekable();
-    let mut comments_iter = comments_iter.peekable();
-    let mut res = Vec::new();
-    loop {
-        match (tokens_iter.peek(), comments_iter.peek()) {
-            (Some(t), Some(c)) => {
-                if (t.line, t.column) <= (c.line, c.column) {
-                    res.push(tokens_iter.next().unwrap());
-                } else {
-                    res.push(comments_iter.next().unwrap());
-                }
-            }
-            (Some(_), None) => {
-                res.extend(tokens_iter);
-                break;
-            }
-            (None, _) => {
-                res.extend(comments_iter);
-                break;
-            }
+    // コメントトークンを追加し、行・列順にソート
+    let comment_tokens = comments.into_iter().map(|pos| {
+        let (utf16_col, utf16_len) = to_utf16(&lines, pos.line, pos.col, pos.len);
+        TokenData {
+            line: pos.line as u32,
+            column: utf16_col,
+            length: utf16_len,
+            token_type: TokenType::Comment,
+            token_index: None,
         }
-    }
+    });
+    let mut res: Vec<_> = token_data.into_iter().chain(comment_tokens).collect();
+    res.sort_by_key(|t| (t.line, t.column));
 
     // 補完データを構築
     let completion = build_completion_data(&resolved, &env, &tokens, dot_prefixes);
@@ -326,31 +315,31 @@ mod tests {
     fn hover_basic_cells() {
         let r = analyze("u: *\nx: u → u");
         let u = find_hover(&r, "u").unwrap();
-        assert_eq!(u.kind, EntryKind::Cell(0));
-        assert_eq!(u.type_expr.as_deref(), Some("*"));
+        assert_eq!(u.entry.kind, EntryKind::Cell(0));
+        assert_eq!(u.entry.type_expr.as_deref(), Some("*"));
 
         let x = find_hover(&r, "x").unwrap();
-        assert_eq!(x.kind, EntryKind::Cell(1));
-        assert_eq!(x.type_expr.as_deref(), Some("u → u"));
+        assert_eq!(x.entry.kind, EntryKind::Cell(1));
+        assert_eq!(x.entry.type_expr.as_deref(), Some("u → u"));
     }
 
     #[test]
     fn hover_module() {
         let r = analyze("cat = {\n  u: *\n  x: u → u\n}");
         let cat = find_hover(&r, "cat").unwrap();
-        assert!(cat.is_module);
+        assert!(cat.entry.is_module);
 
         let u = find_hover(&r, "cat.u").unwrap();
-        assert_eq!(u.kind, EntryKind::Cell(0));
+        assert_eq!(u.entry.kind, EntryKind::Cell(0));
     }
 
     #[test]
     fn hover_nested_path() {
         let r = analyze("cat = {\n  u: *\n  x: u → u\n}\ny = cat.x");
         let cat = find_hover(&r, "cat").unwrap();
-        assert!(cat.is_module);
+        assert!(cat.entry.is_module);
         let x = find_hover(&r, "cat.x").unwrap();
-        assert_eq!(x.kind, EntryKind::Cell(1));
+        assert_eq!(x.entry.kind, EntryKind::Cell(1));
     }
 
     #[test]
@@ -358,30 +347,30 @@ mod tests {
         // Parameters are attached to name: x[u: *], not [u: *] x
         let r = analyze("x[u: *]: u → u");
         let x = find_hover(&r, "x").unwrap();
-        assert_eq!(x.kind, EntryKind::Cell(1));
-        assert!(!x.params.is_empty());
+        assert_eq!(x.entry.kind, EntryKind::Cell(1));
+        assert!(!x.entry.params.is_empty());
     }
 
     #[test]
     fn hover_meta() {
         let r = analyze("nat: meta");
         let n = find_hover(&r, "nat").unwrap();
-        assert_eq!(n.kind, EntryKind::Meta);
+        assert_eq!(n.entry.kind, EntryKind::Meta);
     }
 
     #[test]
     fn hover_type_alias() {
         let r = analyze("u: *\nv = u → u\nx: v");
         let v = find_hover(&r, "v").unwrap();
-        assert_eq!(v.kind, EntryKind::Type);
+        assert_eq!(v.entry.kind, EntryKind::Type);
     }
 
     #[test]
     fn hover_2cell() {
         let r = analyze("u: *\nx: u → u\ny: u → u\nm: x → y");
         let m = find_hover(&r, "m").unwrap();
-        assert_eq!(m.kind, EntryKind::Cell(2));
-        assert_eq!(m.type_expr.as_deref(), Some("x → y"));
+        assert_eq!(m.entry.kind, EntryKind::Cell(2));
+        assert_eq!(m.entry.type_expr.as_deref(), Some("x → y"));
     }
 
     #[test]
@@ -423,45 +412,45 @@ mod tests {
     fn completion_module_kind() {
         let r = analyze("cat = {\n  u: *\n}");
         let cat = find_completion(&r, "", "cat").unwrap();
-        assert!(cat.is_module);
+        assert!(cat.entry.is_module);
 
         let u = find_completion(&r, "cat", "u").unwrap();
-        assert_eq!(u.kind, EntryKind::Cell(0));
-        assert!(!u.is_module);
+        assert_eq!(u.entry.kind, EntryKind::Cell(0));
+        assert!(!u.entry.is_module);
     }
 
     #[test]
     fn completion_cell_kind() {
         let r = analyze("u: *\nx: u → u\nm: x → x");
         let u = find_completion(&r, "", "u").unwrap();
-        assert_eq!(u.kind, EntryKind::Cell(0));
+        assert_eq!(u.entry.kind, EntryKind::Cell(0));
         let x = find_completion(&r, "", "x").unwrap();
-        assert_eq!(x.kind, EntryKind::Cell(1));
+        assert_eq!(x.entry.kind, EntryKind::Cell(1));
         let m = find_completion(&r, "", "m").unwrap();
-        assert_eq!(m.kind, EntryKind::Cell(2));
+        assert_eq!(m.entry.kind, EntryKind::Cell(2));
     }
 
     #[test]
     fn completion_meta_kind() {
         let r = analyze("nat: meta");
         let n = find_completion(&r, "", "nat").unwrap();
-        assert_eq!(n.kind, EntryKind::Meta);
+        assert_eq!(n.entry.kind, EntryKind::Meta);
     }
 
     #[test]
     fn completion_type_kind() {
         let r = analyze("u: *\nv = u → u");
         let v = find_completion(&r, "", "v").unwrap();
-        assert_eq!(v.kind, EntryKind::Type);
+        assert_eq!(v.entry.kind, EntryKind::Type);
     }
 
     #[test]
     fn completion_type_expr() {
         let r = analyze("u: *\nx: u → u");
         let u = find_completion(&r, "", "u").unwrap();
-        assert_eq!(u.type_expr.as_deref(), Some("*"));
+        assert_eq!(u.entry.type_expr.as_deref(), Some("*"));
         let x = find_completion(&r, "", "x").unwrap();
-        assert_eq!(x.type_expr.as_deref(), Some("u → u"));
+        assert_eq!(x.entry.type_expr.as_deref(), Some("u → u"));
     }
 
     #[test]
@@ -604,7 +593,7 @@ mod tests {
         let r = analyze("u: *\ncat = {\n  x: u → u\n} with {\n  m: x → x\n}");
         let m = find_hover(&r, "cat.m");
         assert!(m.is_some());
-        assert_eq!(m.unwrap().kind, EntryKind::Cell(2));
+        assert_eq!(m.unwrap().entry.kind, EntryKind::Cell(2));
     }
 
     #[test]
@@ -619,7 +608,7 @@ mod tests {
     fn completion_params_display() {
         let r = analyze("x[u: *]: u → u");
         let x = find_completion(&r, "", "x").unwrap();
-        assert!(!x.params.is_empty());
+        assert!(!x.entry.params.is_empty());
     }
 
     #[test]
