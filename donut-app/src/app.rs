@@ -2,16 +2,16 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use crate::shader_view::ShaderView;
 use donut_core::cell::*;
 use donut_core::common::*;
 use donut_core::free_cell::FreeCell;
-use donut_lang::check::Env;
+use donut_lang::old_check::Env;
 use donut_layout::layout_solver::LayoutSolver;
 use donut_renderer::geometry::{Geometry, R};
 use donut_renderer::prim_table::PrimTable;
 use donut_renderer::render::Renderer;
 use donut_runtime::Runtime;
-use crate::shader_view::ShaderView;
 use wasm_bindgen::JsCast;
 
 const MARGIN: R = 100.0;
@@ -78,16 +78,12 @@ impl App {
     }
 
     fn find_last_cell(env: &Env) -> Option<usize> {
-        env.entries
-            .iter()
-            .enumerate()
-            .rev()
-            .find_map(|(i, e)| {
-                if e.origin.is_some() {
-                    return None;
-                }
-                e.as_cell().map(|_| i)
-            })
+        env.entries.iter().enumerate().rev().find_map(|(i, e)| {
+            if e.origin.is_some() {
+                return None;
+            }
+            e.as_cell().map(|_| i)
+        })
     }
 
     fn load(code: &str) -> (Env, PrimTable, Runtime, Vec<String>) {
@@ -337,7 +333,8 @@ impl App {
             self.diagnostics_el.set_inner_text("");
         } else {
             let _ = self.diagnostics_el.class_list().add_1("has-errors");
-            self.diagnostics_el.set_inner_text(&self.diagnostics.join("\n"));
+            self.diagnostics_el
+                .set_inner_text(&self.diagnostics.join("\n"));
         }
 
         // Update eval result

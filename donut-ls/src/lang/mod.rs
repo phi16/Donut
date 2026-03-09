@@ -2,7 +2,7 @@ mod completion;
 mod hover;
 mod marking;
 
-use donut_lang::check::{EntryKind, Env};
+use donut_lang::old_check::{EntryKind, Env};
 use donut_lang::types;
 use std::collections::HashMap;
 
@@ -79,9 +79,15 @@ impl HoverInfo {
     pub fn display_markdown(&self) -> String {
         let detail = self.entry.display_detail();
         if let Some(ty) = &self.entry.type_expr {
-            format!("```donut\n{}{}: {}\n```\n{}", self.name, self.entry.params, ty, detail)
+            format!(
+                "```donut\n{}{}: {}\n```\n{}",
+                self.name, self.entry.params, ty, detail
+            )
         } else {
-            format!("```donut\n{}{}\n```\n{}", self.name, self.entry.params, detail)
+            format!(
+                "```donut\n{}{}\n```\n{}",
+                self.name, self.entry.params, detail
+            )
         }
     }
 }
@@ -121,7 +127,11 @@ fn build_entry_info(qname: &str, env: &Env) -> Option<EntryInfo> {
     Some(EntryInfo {
         kind: entry.kind(),
         is_module,
-        type_expr: if is_module { None } else { entry.display_type(env) },
+        type_expr: if is_module {
+            None
+        } else {
+            entry.display_type(env)
+        },
         params: if is_module {
             env.display_module_params(qname)
         } else {
@@ -225,11 +235,11 @@ pub fn analyze(code: &str) -> AnalysisResult {
     collect_diags(&mut diags, &convert_errors, "[convert]");
 
     // resolve（名前解決）を実行
-    let (resolved, resolve_errors) = donut_lang::resolve::resolve(sem_program, &tokens);
+    let (resolved, resolve_errors) = donut_lang::old_resolve::resolve(sem_program, &tokens);
     collect_diags(&mut diags, &resolve_errors, "[resolve]");
 
     // check（型検査）を実行
-    let (env, check_errors) = donut_lang::check::check(&resolved, &tokens);
+    let (env, check_errors) = donut_lang::old_check::check(&resolved, &tokens);
     collect_diags(&mut diags, &check_errors, "[check]");
 
     // hover map とスタイルオーバーライドを構築
@@ -288,19 +298,30 @@ mod tests {
     }
 
     fn completion_labels(r: &AnalysisResult, scope: &str) -> Vec<String> {
-        let mut labels: Vec<_> = r.completion.scopes
+        let mut labels: Vec<_> = r
+            .completion
+            .scopes
             .get(scope)
             .map_or(vec![], |cs| cs.iter().map(|c| c.label.clone()).collect());
         labels.sort();
         labels
     }
 
-    fn find_completion<'a>(r: &'a AnalysisResult, scope: &str, label: &str) -> Option<&'a CompletionCandidate> {
-        r.completion.scopes.get(scope)?.iter().find(|c| c.label == label)
+    fn find_completion<'a>(
+        r: &'a AnalysisResult,
+        scope: &str,
+        label: &str,
+    ) -> Option<&'a CompletionCandidate> {
+        r.completion
+            .scopes
+            .get(scope)?
+            .iter()
+            .find(|c| c.label == label)
     }
 
     fn token_type_at(r: &AnalysisResult, line: u32, col: u32) -> Option<&TokenType> {
-        r.tokens.iter()
+        r.tokens
+            .iter()
             .find(|t| t.line == line && t.column <= col && col < t.column + t.length)
             .map(|t| &t.token_type)
     }
@@ -557,7 +578,10 @@ mod tests {
         let r = analyze("// just a comment");
         assert!(r.diagnostics.is_empty());
         assert!(r.hover_map.is_empty());
-        assert!(r.tokens.iter().any(|t| matches!(t.token_type, TokenType::Comment)));
+        assert!(r
+            .tokens
+            .iter()
+            .any(|t| matches!(t.token_type, TokenType::Comment)));
     }
 
     #[test]
@@ -572,7 +596,10 @@ mod tests {
     #[test]
     fn completion_module_not_duplicated() {
         let r = analyze("m = {\n  a: *\n  b: *\n}");
-        let count = r.completion.scopes.get("")
+        let count = r
+            .completion
+            .scopes
+            .get("")
             .map_or(0, |cs| cs.iter().filter(|c| c.label == "m").count());
         assert_eq!(count, 1);
     }
@@ -581,11 +608,20 @@ mod tests {
     fn namespace_marking_deep() {
         let r = analyze("a = {\n  b = {\n    c: *\n  }\n}\nx = a.b.c");
         let ty_a = token_type_at(&r, 5, 4);
-        assert!(matches!(ty_a, Some(TokenType::Namespace)), "a should be Namespace");
+        assert!(
+            matches!(ty_a, Some(TokenType::Namespace)),
+            "a should be Namespace"
+        );
         let ty_b = token_type_at(&r, 5, 6);
-        assert!(matches!(ty_b, Some(TokenType::Namespace)), "b should be Namespace");
+        assert!(
+            matches!(ty_b, Some(TokenType::Namespace)),
+            "b should be Namespace"
+        );
         let ty_c = token_type_at(&r, 5, 8);
-        assert!(!matches!(ty_c, Some(TokenType::Namespace)), "c should not be Namespace");
+        assert!(
+            !matches!(ty_c, Some(TokenType::Namespace)),
+            "c should not be Namespace"
+        );
     }
 
     #[test]

@@ -1,7 +1,7 @@
 use crate::geometry::*;
 use crate::prim_table::PrimTable;
 use donut_core::common::Prim;
-use donut_lang::check::Color;
+use donut_lang::old_check::Color;
 
 pub struct Renderer {
     context: web_sys::CanvasRenderingContext2d,
@@ -228,22 +228,10 @@ impl Renderer {
                     let x0t = st.1;
                     let (x1s, y1) = (ts.1, target.1);
                     let x1t = tt.1;
-                    let (x0st, y0st) = (
-                        lerp(x0s, x1s, source.2[0]),
-                        lerp(y0, y1, source.2[1]),
-                    );
-                    let (x0tt, y0tt) = (
-                        lerp(x0t, x1t, source.2[0]),
-                        lerp(y0, y1, source.2[1]),
-                    );
-                    let (x1st, y1st) = (
-                        lerp(x1s, x0s, target.2[0]),
-                        lerp(y1, y0, target.2[1]),
-                    );
-                    let (x1tt, y1tt) = (
-                        lerp(x1t, x0t, target.2[0]),
-                        lerp(y1, y0, target.2[1]),
-                    );
+                    let (x0st, y0st) = (lerp(x0s, x1s, source.2[0]), lerp(y0, y1, source.2[1]));
+                    let (x0tt, y0tt) = (lerp(x0t, x1t, source.2[0]), lerp(y0, y1, source.2[1]));
+                    let (x1st, y1st) = (lerp(x1s, x0s, target.2[0]), lerp(y1, y0, target.2[1]));
+                    let (x1tt, y1tt) = (lerp(x1t, x0t, target.2[0]), lerp(y1, y0, target.2[1]));
                     self.context.begin_path();
                     self.context.move_to(x0s, y0);
                     self.context

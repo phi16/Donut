@@ -1,5 +1,5 @@
-use donut_lang::check::Env;
-use donut_lang::types::item::Program;
+use donut_lang::old_check::Env;
+use donut_lang::types::old_item::Program;
 use donut_lang::types::token;
 use std::collections::HashMap;
 
@@ -15,10 +15,17 @@ pub(super) fn build_completion_data(
 
     // Top-level entries from root module
     let mut top_level = Vec::new();
-    let all_root = program.root.internal.iter().chain(program.root.entries.iter());
+    let all_root = program
+        .root
+        .internal
+        .iter()
+        .chain(program.root.entries.iter());
     for (name, item_id) in all_root {
         let item = program.item(*item_id);
-        let def_line = tokens.get(item.span.start).map(|t| t.pos.line as u32).unwrap_or(0);
+        let def_line = tokens
+            .get(item.span.start)
+            .map(|t| t.pos.line as u32)
+            .unwrap_or(0);
         let is_imported = item.origin.is_some();
 
         let entry = if let Some(info) = build_entry_info(name, env) {
@@ -68,7 +75,10 @@ pub(super) fn build_completion_data(
         scopes.insert(prefix.clone(), candidates);
     }
 
-    CompletionData { scopes, dot_prefixes }
+    CompletionData {
+        scopes,
+        dot_prefixes,
+    }
 }
 
 #[cfg(test)]
@@ -78,19 +88,26 @@ mod tests {
     use super::super::marking::{Context, Marking};
     use super::super::TokenType;
 
-    fn collect_dot_prefixes(code: &str) -> (std::collections::HashMap<usize, String>, Vec<token::Token<'_>>) {
+    fn collect_dot_prefixes(
+        code: &str,
+    ) -> (
+        std::collections::HashMap<usize, String>,
+        Vec<token::Token<'_>>,
+    ) {
         let (tokens, _, _) = donut_lang::tokenize::tokenize(code);
         let (program, _) = donut_lang::parse::parse(&tokens);
 
-        let token_data: Vec<_> = tokens.iter().enumerate().map(|(i, t)| {
-            super::super::TokenData {
+        let token_data: Vec<_> = tokens
+            .iter()
+            .enumerate()
+            .map(|(i, t)| super::super::TokenData {
                 line: t.pos.line as u32,
                 column: t.pos.col as u32,
                 length: t.pos.len as u32,
                 token_index: Some(i),
                 token_type: TokenType::Unknown,
-            }
-        }).collect();
+            })
+            .collect();
 
         let mut ctx = Context::new(token_data);
         program.mark(&mut ctx);
@@ -99,11 +116,16 @@ mod tests {
     }
 
     fn last_dot_index(tokens: &[token::Token]) -> usize {
-        tokens.iter().rposition(|t| t.str == ".").expect("no dot found")
+        tokens
+            .iter()
+            .rposition(|t| t.str == ".")
+            .expect("no dot found")
     }
 
     fn nth_dot_index(tokens: &[token::Token], n: usize) -> usize {
-        tokens.iter().enumerate()
+        tokens
+            .iter()
+            .enumerate()
             .filter(|(_, t)| t.str == ".")
             .nth(n)
             .map(|(i, _)| i)
@@ -119,7 +141,8 @@ mod tests {
 
     #[test]
     fn dot_prefix_nested() {
-        let (prefixes, tokens) = collect_dot_prefixes("x = {\n  y = {\n    z = 1\n  }\n}\nw = x.y.");
+        let (prefixes, tokens) =
+            collect_dot_prefixes("x = {\n  y = {\n    z = 1\n  }\n}\nw = x.y.");
         let dot = last_dot_index(&tokens);
         assert_eq!(prefixes.get(&dot).map(|s| s.as_str()), Some("x.y"));
     }
@@ -133,7 +156,8 @@ mod tests {
 
     #[test]
     fn dot_prefix_middle() {
-        let (prefixes, tokens) = collect_dot_prefixes("x = {\n  y = {\n    z = 1\n  }\n}\nw = x.y.z");
+        let (prefixes, tokens) =
+            collect_dot_prefixes("x = {\n  y = {\n    z = 1\n  }\n}\nw = x.y.z");
         let dot0 = nth_dot_index(&tokens, 0);
         assert_eq!(prefixes.get(&dot0).map(|s| s.as_str()), Some("x"));
 

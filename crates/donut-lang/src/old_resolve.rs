@@ -1,5 +1,5 @@
 use crate::types::common::*;
-use crate::types::item::*;
+use crate::types::old_item::*;
 use crate::types::semtree;
 use crate::types::token::Token;
 use std::collections::{HashMap, HashSet};
@@ -89,18 +89,19 @@ impl Resolve for S<semtree::Path<semtree::ParamVal>> {
         let S(path, _) = self;
 
         // Name resolution
-        let name_spans: Vec<(&str, &TokenSpan)> = path.0.iter().map(|seg_s| {
-            let S(seg, span) = seg_s;
-            (seg.0 .0.as_str(), span)
-        }).collect();
+        let name_spans: Vec<(&str, &TokenSpan)> = path
+            .0
+            .iter()
+            .map(|seg_s| {
+                let S(seg, span) = seg_s;
+                (seg.0.0.as_str(), span)
+            })
+            .collect();
         ctx.resolve_segments(&name_spans);
 
         // Convert segments (resolving param vals recursively)
-        let segments: Vec<S<Segment>> = path
-            .0
-            .into_iter()
-            .map(|seg_s| seg_s.resolve(ctx))
-            .collect();
+        let segments: Vec<S<Segment>> =
+            path.0.into_iter().map(|seg_s| seg_s.resolve(ctx)).collect();
 
         let applicand = path.1.map(|v| {
             assert!(!ctx.in_applicand);
@@ -121,15 +122,10 @@ impl Resolve for S<semtree::Segment<semtree::ParamVal>> {
     type Output = S<Segment>;
     fn resolve(self, ctx: &mut Checker) -> S<Segment> {
         let S(seg, span) = self;
-        let params: Vec<ParamVal> = seg
-            .1
-             .0
-            .into_iter()
-            .map(|pv| pv.resolve(ctx))
-            .collect();
+        let params: Vec<ParamVal> = seg.1.0.into_iter().map(|pv| pv.resolve(ctx)).collect();
         S(
             Segment {
-                name: seg.0 .0,
+                name: seg.0.0,
                 params,
             },
             span,
@@ -154,8 +150,7 @@ impl Resolve for S<semtree::Lit> {
             semtree::Lit::Number(s) => Lit::Number(s),
             semtree::Lit::String(s) => Lit::String(s),
             semtree::Lit::Array(vs) => {
-                let items: Vec<ValId> =
-                    vs.into_iter().map(|v| v.resolve(ctx)).collect();
+                let items: Vec<ValId> = vs.into_iter().map(|v| v.resolve(ctx)).collect();
                 Lit::Array(items)
             }
             semtree::Lit::Object(kvs) => {
@@ -266,7 +261,11 @@ impl<'a> Checker<'a> {
             Some(origin) => format!("{}::{}", origin, qname),
             None => qname.clone(),
         };
-        ItemName { lname, qname, cname }
+        ItemName {
+            lname,
+            qname,
+            cname,
+        }
     }
 
     fn error_at(&mut self, span: &TokenSpan, msg: impl Into<String>) {
@@ -306,7 +305,10 @@ impl<'a> Checker<'a> {
             if let Some(members) = self.item(*item_id).members() {
                 if !members.entries.is_empty() || !members.internal.is_empty() {
                     let children = self.generate_check_nodes_for_module(members);
-                    nodes.push(CheckNode::Scope { item_id: *item_id, children });
+                    nodes.push(CheckNode::Scope {
+                        item_id: *item_id,
+                        children,
+                    });
                 }
             }
         }
@@ -330,10 +332,14 @@ impl<'a> Checker<'a> {
 
     // --- Comp flat helpers ---
 
-    fn resolve_comp_flat(&mut self, val_s: S<semtree::Val>, axis: donut_core::common::Axis, out: &mut Vec<ValId>) {
+    fn resolve_comp_flat(
+        &mut self,
+        val_s: S<semtree::Val>,
+        axis: donut_core::common::Axis,
+        out: &mut Vec<ValId>,
+    ) {
         match val_s {
-            S(semtree::Val::Op(l, op_s, _, r), _)
-                if matches!(&op_s.0, semtree::Op::Comp(n) if *n == axis) =>
+            S(semtree::Val::Op(l, op_s, _, r), _) if matches!(&op_s.0, semtree::Op::Comp(n) if *n == axis) =>
             {
                 self.resolve_comp_flat(*l, axis, out);
                 self.resolve_comp_flat(*r, axis, out);
@@ -346,9 +352,7 @@ impl<'a> Checker<'a> {
 
     fn resolve_comp_star_flat(&mut self, val_s: S<semtree::Val>, out: &mut Vec<ValId>) {
         match val_s {
-            S(semtree::Val::Op(l, op_s, _, r), _)
-                if matches!(&op_s.0, semtree::Op::CompStar) =>
-            {
+            S(semtree::Val::Op(l, op_s, _, r), _) if matches!(&op_s.0, semtree::Op::CompStar) => {
                 self.resolve_comp_star_flat(*l, out);
                 self.resolve_comp_star_flat(*r, out);
             }
@@ -365,7 +369,10 @@ impl<'a> Checker<'a> {
             return;
         };
         let Some(mut current) = self.lookup(first_name) else {
-            if first_name != "*" && first_name != "meta" && !crate::convert::is_number_str(first_name) {
+            if first_name != "*"
+                && first_name != "meta"
+                && !crate::convert::is_number_str(first_name)
+            {
                 self.error_at(first_span, format!("undefined name `{}`", first_name));
             }
             return;
@@ -436,7 +443,8 @@ impl<'a> Checker<'a> {
                         self.prefix_stack = old_prefix;
                         self.param_count_stack = old_param_counts;
                         module.origin = Some(name.clone());
-                        self.import_cache.insert(name, (module.clone(), check_nodes.clone()));
+                        self.import_cache
+                            .insert(name, (module.clone(), check_nodes.clone()));
                         (module, check_nodes)
                     }
                     None => {
@@ -467,7 +475,13 @@ impl<'a> Checker<'a> {
 
         match main {
             semtree::DeclMain::Unit(unit) => {
-                self.process_unit_decl(unit, deco_param_defs, deco_vals, with_clauses, where_clauses);
+                self.process_unit_decl(
+                    unit,
+                    deco_param_defs,
+                    deco_vals,
+                    with_clauses,
+                    where_clauses,
+                );
             }
             semtree::DeclMain::Mod(mod_s) => {
                 if matches!(&mod_s.0, semtree::Module::Use(_)) {
@@ -658,7 +672,12 @@ impl<'a> Checker<'a> {
         with_clauses: Vec<S<semtree::Module>>,
         where_clauses: Vec<S<semtree::Module>>,
     ) {
-        let semtree::DeclUnit { names, ty, op, body } = unit;
+        let semtree::DeclUnit {
+            names,
+            ty,
+            op,
+            body,
+        } = unit;
 
         // Compute item kind from op and body
         let kind = match &body {
@@ -692,7 +711,7 @@ impl<'a> Checker<'a> {
                 pd.0.iter()
                     .map(|seg_s| {
                         let S(seg, span) = seg_s;
-                        (seg.0 .0.clone(), span.clone())
+                        (seg.0.0.clone(), span.clone())
                     })
                     .collect()
             })
@@ -710,7 +729,8 @@ impl<'a> Checker<'a> {
         }
 
         // --- Extract first_lname early (before seg_names_list is consumed) ---
-        let first_lname = seg_names_list.first()
+        let first_lname = seg_names_list
+            .first()
             .and_then(|sns| sns.last())
             .map(|(n, _)| n.clone())
             .unwrap();
@@ -722,10 +742,7 @@ impl<'a> Checker<'a> {
                 if seg_names.len() == 1 {
                     let (name, span) = &seg_names[0];
                     if self.lookup(name).is_none() {
-                        self.error_at(
-                            span,
-                            format!("`{}` must be declared before `+=`", name),
-                        );
+                        self.error_at(span, format!("`{}` must be declared before `+=`", name));
                     }
                 }
             }
@@ -735,7 +752,7 @@ impl<'a> Checker<'a> {
         // Functor app lines (has_applicand) don't define new names.
         if !is_add {
             for (name_s, seg_names) in names.iter().zip(&seg_names_list) {
-                let has_applicand = name_s.0 .1.is_some();
+                let has_applicand = name_s.0.1.is_some();
                 if !has_applicand && seg_names.len() == 1 {
                     let (name, span) = &seg_names[0];
                     let names = self.make_item_name(name.clone());
@@ -760,7 +777,7 @@ impl<'a> Checker<'a> {
             let semtree::Path(segs, applicand) = pd;
             for seg_s in segs {
                 let S(seg, _) = seg_s;
-                for param_decl in seg.1 .0 {
+                for param_decl in seg.1.0 {
                     let resolved_ty = param_decl.ty.resolve(self);
                     if i == 0 {
                         for name in param_decl.names {
@@ -797,16 +814,10 @@ impl<'a> Checker<'a> {
                 self.error_at(&op.1, "functor application only allows `=`");
             }
             if let Some(ref m) = body_mod {
-                self.error_at(
-                    &m.1,
-                    "functor application cannot have a module body",
-                );
+                self.error_at(&m.1, "functor application cannot have a module body");
             }
             for wc in &with_clauses {
-                self.error_at(
-                    &wc.1,
-                    "functor application cannot have `with` clauses",
-                );
+                self.error_at(&wc.1, "functor application cannot have `with` clauses");
             }
         } else if self.has_deco_params() {
             self.error_at(&op.1, "decorator parameters require a functor application");
@@ -875,7 +886,8 @@ impl<'a> Checker<'a> {
                         self.in_applicand = true;
                         let app_resolved = applicand.resolve(self);
                         self.in_applicand = false;
-                        let all_deco_params: HashSet<ItemId> = self.deco_param_stack.iter().flatten().copied().collect();
+                        let all_deco_params: HashSet<ItemId> =
+                            self.deco_param_stack.iter().flatten().copied().collect();
                         for dp in &all_deco_params {
                             if !self.used_deco_params.contains(dp) {
                                 self.error_at(
@@ -900,20 +912,20 @@ impl<'a> Checker<'a> {
         if let Some((resolved_apps, mapping_params)) = resolved_apps {
             self.register_functor_app(name_infos, body_val_resolved, mapping_params, resolved_apps);
         } else if is_add {
-            let all_seg_names: Vec<&[(String, TokenSpan)]> =
-                name_infos.iter().map(|ni| ni.seg_names.as_slice()).collect();
+            let all_seg_names: Vec<&[(String, TokenSpan)]> = name_infos
+                .iter()
+                .map(|ni| ni.seg_names.as_slice())
+                .collect();
             let (members_to_merge, merge_check_nodes) = match body_val_resolved {
                 Some(val_id) => {
                     let val_s = self.val(val_id);
                     let span = val_s.1.clone();
                     match &val_s.0 {
                         Val::Path(path) => {
-                            let path_names: Vec<String> = path
-                                .segments
-                                .iter()
-                                .map(|s| s.0.name.clone())
-                                .collect();
-                            let module = self.lookup_path(&path_names)
+                            let path_names: Vec<String> =
+                                path.segments.iter().map(|s| s.0.name.clone()).collect();
+                            let module = self
+                                .lookup_path(&path_names)
                                 .and_then(|id| self.item(id).members())
                                 .cloned()
                                 .unwrap_or_else(Module::new);
@@ -947,8 +959,7 @@ impl<'a> Checker<'a> {
                 self.merge_into_path(seg_names, members_to_merge.clone());
             }
         } else {
-            let is_functor = ty_resolved
-                .map_or(false, |id| is_functor_type(&self.val(id).0));
+            let is_functor = ty_resolved.map_or(false, |id| is_functor_type(&self.val(id).0));
             let has_members = !result.entries.is_empty() || !result.internal.is_empty();
             let body = if is_functor {
                 ItemBody::Functor {
@@ -1005,12 +1016,10 @@ impl<'a> Checker<'a> {
                 let lookup_result = self.lookup(fname);
                 match lookup_result {
                     Some(id) => {
-                        let is_functor =
-                            matches!(&self.item(id).body, ItemBody::Functor { .. });
+                        let is_functor = matches!(&self.item(id).body, ItemBody::Functor { .. });
                         if is_functor {
                             if let Some(v) = body_val_resolved {
-                                if let ItemBody::Functor { mappings } =
-                                    &mut self.item_mut(id).body
+                                if let ItemBody::Functor { mappings } = &mut self.item_mut(id).body
                                 {
                                     mappings.push(FunctorMapping {
                                         params: mapping_params.clone(),
@@ -1020,17 +1029,11 @@ impl<'a> Checker<'a> {
                                 }
                             }
                         } else {
-                            self.error_at(
-                                fspan,
-                                format!("`{}` is not a functor", fname),
-                            );
+                            self.error_at(fspan, format!("`{}` is not a functor", fname));
                         }
                     }
                     None => {
-                        self.error_at(
-                            fspan,
-                            format!("undefined functor `{}`", fname),
-                        );
+                        self.error_at(fspan, format!("undefined functor `{}`", fname));
                     }
                 }
             }

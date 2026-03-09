@@ -1,4 +1,4 @@
-use crate::check::{Color, Env};
+use crate::old_check::{Color, Env};
 use donut_core::cell::Globular;
 
 fn check_source(code: &str) -> Result<Env, String> {
@@ -307,7 +307,10 @@ fn prim_args_distinguish_instances() {
     assert_eq!(tb.as_cell().unwrap().pure.dim().in_space, 2);
 
     // ta and tb have different source: ta.s() = a, tb.s() = b
-    assert_ne!(ta.as_cell().unwrap().pure.s(), tb.as_cell().unwrap().pure.s());
+    assert_ne!(
+        ta.as_cell().unwrap().pure.s(),
+        tb.as_cell().unwrap().pure.s()
+    );
 }
 
 // --- Functor ---
@@ -762,7 +765,15 @@ fn type_alias_arrow() {
         "#,
     )
     .unwrap();
-    assert_eq!(env.entries[env.lookup["m"]].as_cell().unwrap().pure.dim().in_space, 2);
+    assert_eq!(
+        env.entries[env.lookup["m"]]
+            .as_cell()
+            .unwrap()
+            .pure
+            .dim()
+            .in_space,
+        2
+    );
 }
 
 #[test]
@@ -775,7 +786,15 @@ fn type_alias_star() {
         "#,
     )
     .unwrap();
-    assert_eq!(env.entries[env.lookup["u"]].as_cell().unwrap().pure.dim().in_space, 0);
+    assert_eq!(
+        env.entries[env.lookup["u"]]
+            .as_cell()
+            .unwrap()
+            .pure
+            .dim()
+            .in_space,
+        0
+    );
 }
 
 // --- Parametric type-level entries (issue.donut) ---
@@ -907,7 +926,15 @@ fn type_alias_alias() {
         "#,
     )
     .unwrap();
-    assert_eq!(env.entries[env.lookup["m"]].as_cell().unwrap().pure.dim().in_space, 2);
+    assert_eq!(
+        env.entries[env.lookup["m"]]
+            .as_cell()
+            .unwrap()
+            .pure
+            .dim()
+            .in_space,
+        2
+    );
 }
 
 // --- Module member meta reference ---
@@ -954,7 +981,15 @@ fn type_alias_cross_usage() {
     assert_eq!(f.as_cell().unwrap().pure.s(), u.as_cell().unwrap().pure);
     assert_eq!(g.as_cell().unwrap().pure.s(), u.as_cell().unwrap().pure);
     // alpha is a 2-cell
-    assert_eq!(env.entries[env.lookup["alpha"]].as_cell().unwrap().pure.dim().in_space, 2);
+    assert_eq!(
+        env.entries[env.lookup["alpha"]]
+            .as_cell()
+            .unwrap()
+            .pure
+            .dim()
+            .in_space,
+        2
+    );
 }
 
 #[test]
@@ -963,20 +998,76 @@ fn typed_donut_example() {
     let env = check_source(input).unwrap();
 
     // Type alias Endo[u] = u → u: f should be 1-cell
-    assert_eq!(env.entries[env.lookup["f"]].as_cell().unwrap().pure.dim().in_space, 1);
+    assert_eq!(
+        env.entries[env.lookup["f"]]
+            .as_cell()
+            .unwrap()
+            .pure
+            .dim()
+            .in_space,
+        1
+    );
     // Hom[u, v] = u → v: h should be 1-cell
-    assert_eq!(env.entries[env.lookup["h"]].as_cell().unwrap().pure.dim().in_space, 1);
+    assert_eq!(
+        env.entries[env.lookup["h"]]
+            .as_cell()
+            .unwrap()
+            .pure
+            .dim()
+            .in_space,
+        1
+    );
 
     // alpha: f → g should be 2-cell (same source/target)
-    assert_eq!(env.entries[env.lookup["alpha"]].as_cell().unwrap().pure.dim().in_space, 2);
+    assert_eq!(
+        env.entries[env.lookup["alpha"]]
+            .as_cell()
+            .unwrap()
+            .pure
+            .dim()
+            .in_space,
+        2
+    );
 
     // End (chained alias) works: k is 1-cell
-    assert_eq!(env.entries[env.lookup["k"]].as_cell().unwrap().pure.dim().in_space, 1);
+    assert_eq!(
+        env.entries[env.lookup["k"]]
+            .as_cell()
+            .unwrap()
+            .pure
+            .dim()
+            .in_space,
+        1
+    );
 
     // Parametric module with type alias inside
-    assert_eq!(env.entries[env.lookup["cu.x"]].as_cell().unwrap().pure.dim().in_space, 1);
-    assert_eq!(env.entries[env.lookup["cu.m"]].as_cell().unwrap().pure.dim().in_space, 2);
-    assert_eq!(env.entries[env.lookup["cu.a"]].as_cell().unwrap().pure.dim().in_space, 3);
+    assert_eq!(
+        env.entries[env.lookup["cu.x"]]
+            .as_cell()
+            .unwrap()
+            .pure
+            .dim()
+            .in_space,
+        1
+    );
+    assert_eq!(
+        env.entries[env.lookup["cu.m"]]
+            .as_cell()
+            .unwrap()
+            .pure
+            .dim()
+            .in_space,
+        2
+    );
+    assert_eq!(
+        env.entries[env.lookup["cu.a"]]
+            .as_cell()
+            .unwrap()
+            .pure
+            .dim()
+            .in_space,
+        3
+    );
 
     // id_cell[u, f] = f: witness should equal f
     assert_eq!(
@@ -985,8 +1076,24 @@ fn typed_donut_example() {
     );
 
     // obj[X] = *: p and q are 0-cells (different objects)
-    assert_eq!(env.entries[env.lookup["p"]].as_cell().unwrap().pure.dim().in_space, 0);
-    assert_eq!(env.entries[env.lookup["q"]].as_cell().unwrap().pure.dim().in_space, 0);
+    assert_eq!(
+        env.entries[env.lookup["p"]]
+            .as_cell()
+            .unwrap()
+            .pure
+            .dim()
+            .in_space,
+        0
+    );
+    assert_eq!(
+        env.entries[env.lookup["q"]]
+            .as_cell()
+            .unwrap()
+            .pure
+            .dim()
+            .in_space,
+        0
+    );
     assert_ne!(
         env.entries[env.lookup["p"]].as_cell().unwrap().pure,
         env.entries[env.lookup["q"]].as_cell().unwrap().pure,
@@ -1176,7 +1283,7 @@ fn parametric_module_prim_decl_display() {
     assert_eq!(env.prim_decls.get(&n_prim_id).unwrap().name, "n");
 
     // display_prim with concrete args
-    use crate::check::display_prim;
+    use crate::old_check::display_prim;
     use donut_core::common::{Prim, PrimArg};
     let prim = Prim::with_args(prim_id, vec![PrimArg::Nat(20), PrimArg::Nat(32)]);
     assert_eq!(display_prim(&prim, &env.prim_decls), "u[20].x[32]");
@@ -1184,7 +1291,7 @@ fn parametric_module_prim_decl_display() {
 
 #[test]
 fn sys_lit_prim_display() {
-    use crate::check::{display_prim, display_pure_cell};
+    use crate::old_check::{display_prim, display_pure_cell};
     let env = check_source(
         r#"
         import "base"
@@ -1246,7 +1353,7 @@ fn sys_prim_param_counts() {
 
 #[test]
 fn display_prim_with_args_sys() {
-    use crate::check::display_prim;
+    use crate::old_check::display_prim;
     use donut_core::common::{Prim, PrimArg};
     let env = check_source(
         r#"
@@ -1273,7 +1380,7 @@ fn display_prim_with_args_sys() {
 
 #[test]
 fn display_pure_cell_composition() {
-    use crate::check::display_pure_cell;
+    use crate::old_check::display_pure_cell;
     let env = check_source(
         r#"
         import "base"
@@ -1310,7 +1417,10 @@ fn entry_display_type_various() {
     assert_eq!(env.entries[c_idx].display_type(&env), Some("*".to_string()));
 
     let &f_idx = env.lookup.get("f").unwrap();
-    assert_eq!(env.entries[f_idx].display_type(&env), Some("C → D".to_string()));
+    assert_eq!(
+        env.entries[f_idx].display_type(&env),
+        Some("C → D".to_string())
+    );
 }
 
 #[test]
@@ -1355,7 +1465,7 @@ fn all_params_no_params_entry() {
 
 #[test]
 fn format_name_with_args_no_origin() {
-    use crate::check::display_prim;
+    use crate::old_check::display_prim;
     use donut_core::common::{Prim, PrimArg};
     let env = check_source(
         r#"
@@ -1395,7 +1505,7 @@ fn meta_display_params() {
     assert_eq!(params.len(), 1);
     assert_eq!(params[0].name, "c");
     match &params[0].kind {
-        crate::check::ParamKind::Meta(mt) => {
+        crate::old_check::ParamKind::Meta(mt) => {
             assert_eq!(env.display_meta_type(&mt), "color");
         }
         _ => panic!("expected Meta param kind"),
@@ -1472,7 +1582,11 @@ fn insufficient_module_params_partial() {
     );
     let err = result.unwrap_err();
     assert!(err.contains("u"), "error should mention u: {}", err);
-    assert!(err.contains("2"), "error should mention expected count: {}", err);
+    assert!(
+        err.contains("2"),
+        "error should mention expected count: {}",
+        err
+    );
 }
 
 #[test]
@@ -1485,7 +1599,10 @@ fn insufficient_params_error() {
         x = f32x3.lit[1]
         "#,
     );
-    assert!(result.is_err(), "f32x3.lit[1] should be a parameter count error");
+    assert!(
+        result.is_err(),
+        "f32x3.lit[1] should be a parameter count error"
+    );
 }
 
 #[test]
@@ -1498,7 +1615,10 @@ fn insufficient_params_error_two_of_three() {
         x = f32x3.lit[1, 2]
         "#,
     );
-    assert!(result.is_err(), "f32x3.lit[1, 2] should be a parameter count error");
+    assert!(
+        result.is_err(),
+        "f32x3.lit[1, 2] should be a parameter count error"
+    );
 }
 
 #[test]
@@ -1524,7 +1644,11 @@ fn sys_import_named_to_f32() {
         x = sys.u32.lit[1]; sys.u32.to_f32
         "#,
     );
-    assert!(result.is_ok(), "sys.u32.to_f32 (named) should resolve: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "sys.u32.to_f32 (named) should resolve: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -1537,7 +1661,11 @@ fn sys_import_bare_to_f32() {
         x = u32.lit[1]; u32.to_f32
         "#,
     );
-    assert!(result.is_ok(), "u32.to_f32 (bare) should resolve: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "u32.to_f32 (bare) should resolve: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -1553,7 +1681,11 @@ fn add_assign_cross_ref() {
         }
         "#,
     );
-    assert!(result.is_ok(), "+= cross ref should resolve: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "+= cross ref should resolve: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -1563,7 +1695,11 @@ fn builtin_sys_passes() {
         use "sys"
         "#,
     );
-    assert!(result.is_ok(), "sys builtin should pass: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "sys builtin should pass: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -1573,7 +1709,11 @@ fn builtin_base_passes() {
         use "base"
         "#,
     );
-    assert!(result.is_ok(), "base builtin should pass: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "base builtin should pass: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -1590,10 +1730,14 @@ fn builtin_ui_passes() {
 
 /// Helper: get entry qname and prim_decl cname for a given lookup key.
 fn get_names(env: &Env, key: &str) -> (String, Option<String>) {
-    let &idx = env.lookup.get(key).expect(&format!("lookup key '{}' not found", key));
+    let &idx = env
+        .lookup
+        .get(key)
+        .expect(&format!("lookup key '{}' not found", key));
     let entry = &env.entries[idx];
     let qname = entry.name.clone();
-    let cname = entry.as_cell()
+    let cname = entry
+        .as_cell()
         .and_then(|c| c.pure.extract_prim_id())
         .and_then(|pid| env.prim_decls.get(&pid))
         .map(|d| d.name.clone());

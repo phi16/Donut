@@ -8,16 +8,16 @@ use std::{collections::HashMap, error::Error};
 
 /// SemanticTokenType の登録順。インデックスがそのまま LSP の token_type になる。
 const SEMANTIC_TOKEN_TYPES: &[SemanticTokenType] = &[
-    SemanticTokenType::PARAMETER,  // 0
-    SemanticTokenType::NAMESPACE,  // 1
-    SemanticTokenType::VARIABLE,   // 2
-    SemanticTokenType::PROPERTY,   // 3
-    SemanticTokenType::MACRO,      // 4
-    SemanticTokenType::KEYWORD,    // 5
-    SemanticTokenType::COMMENT,    // 6
-    SemanticTokenType::STRING,     // 7
-    SemanticTokenType::NUMBER,     // 8
-    SemanticTokenType::OPERATOR,   // 9
+    SemanticTokenType::PARAMETER, // 0
+    SemanticTokenType::NAMESPACE, // 1
+    SemanticTokenType::VARIABLE,  // 2
+    SemanticTokenType::PROPERTY,  // 3
+    SemanticTokenType::MACRO,     // 4
+    SemanticTokenType::KEYWORD,   // 5
+    SemanticTokenType::COMMENT,   // 6
+    SemanticTokenType::STRING,    // 7
+    SemanticTokenType::NUMBER,    // 8
+    SemanticTokenType::OPERATOR,  // 9
 ];
 
 pub fn token_type_list() -> Vec<SemanticTokenType> {
@@ -35,7 +35,7 @@ fn from_token_type(t: &TokenType) -> (u32, u32) {
     let idx = match t {
         TokenType::Parameter => 0,
         TokenType::Namespace => 1,
-        TokenType::Unknown => 2,   // VARIABLE
+        TokenType::Unknown => 2, // VARIABLE
         TokenType::Keyword => 5,
         TokenType::Comment => 6,
         TokenType::String => 7,
@@ -59,22 +59,25 @@ fn update_analysis(doc: &mut Doc) -> Vec<crate::lang::Diagnostic> {
 fn build_semantic_tokens(doc: &Doc) -> Vec<SemanticToken> {
     let mut prev_line = 0;
     let mut prev_column = 0;
-    doc.tokens.iter().map(|t| {
-        if prev_line != t.line {
-            prev_column = 0;
-        }
-        let (token_type, token_modifiers_bitset) = from_token_type(&t.token_type);
-        let st = SemanticToken {
-            delta_line: t.line - prev_line,
-            delta_start: t.column - prev_column,
-            length: t.length,
-            token_type,
-            token_modifiers_bitset,
-        };
-        prev_line = t.line;
-        prev_column = t.column;
-        st
-    }).collect()
+    doc.tokens
+        .iter()
+        .map(|t| {
+            if prev_line != t.line {
+                prev_column = 0;
+            }
+            let (token_type, token_modifiers_bitset) = from_token_type(&t.token_type);
+            let st = SemanticToken {
+                delta_line: t.line - prev_line,
+                delta_start: t.column - prev_column,
+                length: t.length,
+                token_type,
+                token_modifiers_bitset,
+            };
+            prev_line = t.line;
+            prev_column = t.column;
+            st
+        })
+        .collect()
 }
 
 struct Server<'a> {
@@ -350,7 +353,8 @@ impl<'a> Server<'a> {
 
         // Find the dot token at cursor - 1 (cursor is after the dot)
         let dot_col = cursor_pos.character.saturating_sub(1);
-        let scope = doc.token_index_at(cursor_pos.line, dot_col)
+        let scope = doc
+            .token_index_at(cursor_pos.line, dot_col)
             .and_then(|idx| doc.completion.dot_prefixes.get(&idx).map(|s| s.as_str()));
 
         match scope {
@@ -493,7 +497,10 @@ where
 
 fn build_completion_list(doc: &Doc, scope: &str, cursor_line: u32) -> Option<CompletionResponse> {
     let candidates = doc.completion.scopes.get(scope)?;
-    let items = candidates.iter().map(|c| candidate_to_item(c, cursor_line)).collect();
+    let items = candidates
+        .iter()
+        .map(|c| candidate_to_item(c, cursor_line))
+        .collect();
     Some(CompletionResponse::List(CompletionList {
         is_incomplete: false,
         items,
@@ -501,7 +508,7 @@ fn build_completion_list(doc: &Doc, scope: &str, cursor_line: u32) -> Option<Com
 }
 
 fn candidate_to_item(c: &CompletionCandidate, cursor_line: u32) -> CompletionItem {
-    use donut_lang::check::EntryKind;
+    use donut_lang::old_check::EntryKind;
 
     let lsp_kind = if c.entry.is_module {
         Some(CompletionItemKind::MODULE)

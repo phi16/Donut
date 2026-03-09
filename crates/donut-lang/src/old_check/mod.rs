@@ -2,20 +2,20 @@ mod color;
 mod eval;
 
 use crate::types::common::Error;
-use crate::types::env::*;
-use crate::types::item::*;
+use crate::types::old_env::*;
+use crate::types::old_item::*;
 use crate::types::token::Token;
 use color::ColorSpec;
-use donut_core::cell::{check_prim, Diagram, Globular};
+use donut_core::cell::{Diagram, Globular, check_prim};
 use donut_core::common::{Level, Prim, PrimArg, PrimId};
 use donut_core::free_cell::FreeCell;
 use donut_core::pure_cell::PureCell;
 use eval::{apply_functor, make_cell, match_ty};
 use std::collections::HashMap;
 
-pub use crate::types::env::{
-    display_cell_type, display_prim, display_pure_cell, Color, Entry, EntryKind, Env, MetaType,
-    ParamInfo, ParamKind, PrimDecl,
+pub use crate::types::old_env::{
+    Color, Entry, EntryKind, Env, MetaType, ParamInfo, ParamKind, PrimDecl, display_cell_type,
+    display_prim, display_pure_cell,
 };
 
 // --- Check error ---
@@ -25,7 +25,11 @@ pub(super) enum CheckError {
     IncompatibleDimension,
     EmptyComposition,
     NoFunctorMapping(Prim),
-    ParamCount { name: String, expected: usize, got: usize },
+    ParamCount {
+        name: String,
+        expected: usize,
+        got: usize,
+    },
     General(String),
 }
 
@@ -43,14 +47,14 @@ impl CheckError {
             ),
             CheckError::IncompatibleDimension => "incompatible dimension".to_string(),
             CheckError::EmptyComposition => "empty composition".to_string(),
-            CheckError::NoFunctorMapping(prim) => format!(
-                "functor: no mapping for {}",
-                display_prim(prim, prim_decls),
-            ),
-            CheckError::ParamCount { name, expected, got } => format!(
-                "{}: expected {} parameter(s), got {}",
-                name, expected, got,
-            ),
+            CheckError::NoFunctorMapping(prim) => {
+                format!("functor: no mapping for {}", display_prim(prim, prim_decls),)
+            }
+            CheckError::ParamCount {
+                name,
+                expected,
+                got,
+            } => format!("{}: expected {} parameter(s), got {}", name, expected, got,),
             CheckError::General(msg) => msg.clone(),
         }
     }
@@ -278,17 +282,16 @@ impl<'a> Checker<'a> {
 
         let item = self.program.item(item_id);
 
-        let canonical = item.members()
+        let canonical = item
+            .members()
             .and_then(|m| m.origin.as_deref())
             .unwrap_or(&qname)
             .to_string();
         let need_alias = canonical != qname;
 
         // Re-enter params
-        let (param_freshes, param_args) = self.scope_params
-            .get(&item_id)
-            .cloned()
-            .unwrap_or_default();
+        let (param_freshes, param_args) =
+            self.scope_params.get(&item_id).cloned().unwrap_or_default();
         self.accumulated_args.extend_from_slice(&param_args);
 
         self.prefixes.push(canonical.clone());
@@ -306,7 +309,10 @@ impl<'a> Checker<'a> {
                 let entry_idx = self.lookup.get(&full_name).copied();
                 let is_sub_module = self.module_members.contains_key(&full_name);
                 if entry_idx.is_some() || is_sub_module {
-                    new_members.push(MemberRef { name: name.clone(), entry: entry_idx });
+                    new_members.push(MemberRef {
+                        name: name.clone(),
+                        entry: entry_idx,
+                    });
                 }
             }
         }
@@ -320,12 +326,18 @@ impl<'a> Checker<'a> {
 
         // Record module_params
         if !param_freshes.is_empty() {
-            self.module_params.entry(qname.clone()).or_insert(param_freshes);
+            self.module_params
+                .entry(qname.clone())
+                .or_insert(param_freshes);
         }
 
         // Merge new members with existing
         if !new_members.is_empty() || !param_args.is_empty() {
-            let mut all_members = self.module_members.get(&canonical).cloned().unwrap_or_default();
+            let mut all_members = self
+                .module_members
+                .get(&canonical)
+                .cloned()
+                .unwrap_or_default();
             all_members.extend(new_members);
             self.module_members.insert(canonical.clone(), all_members);
         }
@@ -376,7 +388,15 @@ impl<'a> Checker<'a> {
 
         let origin = item.origin.as_deref();
         let param_counts = &item.param_counts;
-        let ctx = ItemCtx { qname: &qname, cname: &cname, span: &span, color, param_freshes: &param_freshes, param_counts, origin };
+        let ctx = ItemCtx {
+            qname: &qname,
+            cname: &cname,
+            span: &span,
+            color,
+            param_freshes: &param_freshes,
+            param_counts,
+            origin,
+        };
 
         match &item.body {
             ItemBody::Value { val, members: _ } => {
@@ -422,7 +442,6 @@ impl<'a> Checker<'a> {
                     }
                     (None, None) => {}
                 }
-
             }
             ItemBody::Functor { mappings } => {
                 self.check_functor(&ctx, item_id, mappings);
@@ -433,7 +452,8 @@ impl<'a> Checker<'a> {
         if has_params {
             let start = self.accumulated_args.len() - param_freshes.len();
             let args = self.accumulated_args[start..].to_vec();
-            self.scope_params.insert(item_id, (param_freshes.clone(), args));
+            self.scope_params
+                .insert(item_id, (param_freshes.clone(), args));
         }
 
         self.exit_params(&param_freshes);
@@ -443,7 +463,9 @@ impl<'a> Checker<'a> {
 
     /// Create lookup aliases for all members of an already-checked module.
     fn alias_members(&mut self, old_prefix: &str, new_prefix: &str) {
-        let Some(members) = self.module_members.get(old_prefix).cloned() else { return };
+        let Some(members) = self.module_members.get(old_prefix).cloned() else {
+            return;
+        };
         for m in &members {
             let old_name = format!("{}.{}", old_prefix, m.name);
             let new_name = format!("{}.{}", new_prefix, m.name);
@@ -509,12 +531,7 @@ impl<'a> Checker<'a> {
         Ok(())
     }
 
-    fn check_body(
-        &mut self,
-        ctx: &ItemCtx,
-        body_id: ValId,
-        declared_ty: Option<(u8, Ty)>,
-    ) {
+    fn check_body(&mut self, ctx: &ItemCtx, body_id: ValId, declared_ty: Option<(u8, Ty)>) {
         let declared_meta = match &declared_ty {
             Some((_, Ty::Meta(mt))) => Some(mt.clone()),
             _ => None,
@@ -621,10 +638,13 @@ impl<'a> Checker<'a> {
         };
 
         let mut functor_map: HashMap<PrimId, FunctorEntry> = HashMap::new();
-        functor_map.insert(src_prim_id, FunctorEntry {
-            param_prims: vec![],
-            cell: tgt_cell.pure.clone(),
-        });
+        functor_map.insert(
+            src_prim_id,
+            FunctorEntry {
+                param_prims: vec![],
+                cell: tgt_cell.pure.clone(),
+            },
+        );
 
         for mapping in mappings {
             // Enter mapping-level params (e.g., [n: nat])
@@ -645,7 +665,10 @@ impl<'a> Checker<'a> {
             let app_val = &self.program.val(mapping.applicand).0;
             if let Val::Path(path) = app_val {
                 if path.applicand.is_some() {
-                    self.error_at(&app_span, "functor application cannot be used in mapping left-hand side");
+                    self.error_at(
+                        &app_span,
+                        "functor application cannot be used in mapping left-hand side",
+                    );
                     self.exit_params(&mapping_freshes);
                     continue;
                 }
@@ -743,13 +766,14 @@ impl<'a> Checker<'a> {
                 }
             }
 
-            let param_prims: Vec<PrimId> = mapping_freshes.iter()
-                .map(|p| p.prim_id)
-                .collect();
-            functor_map.insert(app_prim_id, FunctorEntry {
-                param_prims,
-                cell: val_pure,
-            });
+            let param_prims: Vec<PrimId> = mapping_freshes.iter().map(|p| p.prim_id).collect();
+            functor_map.insert(
+                app_prim_id,
+                FunctorEntry {
+                    param_prims,
+                    cell: val_pure,
+                },
+            );
         }
 
         self.functor_maps.insert(ctx.qname.to_string(), functor_map);
@@ -781,13 +805,23 @@ impl<'a> Checker<'a> {
                 ParamKind::Meta(_) => {
                     let prim = Prim::new(fresh_id);
                     let param_name = self.qualified_name(&param.name);
-                    let idx = self.add_entry(param_name, param_color, EntryBody::Meta(prim), vec![], None);
+                    let idx = self.add_entry(
+                        param_name,
+                        param_color,
+                        EntryBody::Meta(prim),
+                        vec![],
+                        None,
+                    );
                     self.meta_values.insert(idx, PrimArg::App(fresh_id, vec![]));
                     self.accumulated_args.push(PrimArg::App(fresh_id, vec![]));
                     self.register_param_prim_decl(fresh_id, &param.name, 0);
                 }
             }
-            freshes.push(ParamInfo { name: param.name.clone(), prim_id: fresh_id, kind: param_kind });
+            freshes.push(ParamInfo {
+                name: param.name.clone(),
+                prim_id: fresh_id,
+                kind: param_kind,
+            });
         }
         Ok(freshes)
     }
@@ -805,23 +839,29 @@ impl<'a> Checker<'a> {
     /// Register a prim_decl entry with canonical name.
     fn register_prim_decl(&mut self, prim_id: PrimId, cname: &str, level: Level, entry_idx: usize) {
         let entry = &self.entries[entry_idx];
-        self.prim_decls.insert(prim_id, PrimDecl {
-            name: cname.to_string(),
-            level,
-            color: entry.color,
-            param_counts: entry.param_counts.clone(),
-        });
+        self.prim_decls.insert(
+            prim_id,
+            PrimDecl {
+                name: cname.to_string(),
+                level,
+                color: entry.color,
+                param_counts: entry.param_counts.clone(),
+            },
+        );
     }
 
     /// Register a prim_decl entry for a parameter (gray, no param_counts).
     /// Uses the local (unqualified) name for display purposes.
     fn register_param_prim_decl(&mut self, prim_id: PrimId, local_name: &str, level: Level) {
-        self.prim_decls.insert(prim_id, PrimDecl {
-            name: local_name.to_string(),
-            level,
-            color: Color::gray(),
-            param_counts: vec![],
-        });
+        self.prim_decls.insert(
+            prim_id,
+            PrimDecl {
+                name: local_name.to_string(),
+                level,
+                color: Color::gray(),
+                param_counts: vec![],
+            },
+        );
     }
 
     /// Register an entry with the common pattern: add_entry + entry_params.
@@ -852,7 +892,12 @@ impl<'a> Checker<'a> {
             self.meta_ret_types.insert(prim.id, ret);
         }
         // Register short name for meta_id() lookups
-        let short_name = ctx.qname.rsplit('.').next().unwrap_or(ctx.qname).to_string();
+        let short_name = ctx
+            .qname
+            .rsplit('.')
+            .next()
+            .unwrap_or(ctx.qname)
+            .to_string();
         self.meta_prim_ids.insert(short_name, prim.id);
         let idx = self.register_entry(ctx, EntryBody::Meta(prim));
         if let Some(val) = meta_val {
@@ -860,7 +905,6 @@ impl<'a> Checker<'a> {
         }
         idx
     }
-
 }
 
 // --- Public API ---

@@ -1,7 +1,7 @@
 use crate::convert::convert;
 use crate::parse::parse;
 use crate::tokenize::tokenize;
-use crate::types::item::*;
+use crate::types::old_item::*;
 
 fn check_errs(code: &str) -> Vec<String> {
     let (tokens, _, _) = tokenize(code.trim());
@@ -11,7 +11,7 @@ fn check_errs(code: &str) -> Vec<String> {
         conv_errors.is_empty(),
         "unexpected convert errors: {conv_errors:?}"
     );
-    let (_program, errors) = crate::resolve::resolve(sem_prog, &tokens);
+    let (_program, errors) = crate::old_resolve::resolve(sem_prog, &tokens);
     errors.into_iter().map(|(_, msg)| msg).collect()
 }
 
@@ -28,7 +28,7 @@ fn check_module(code: &str) -> Program {
         conv_errors.is_empty(),
         "unexpected convert errors: {conv_errors:?}"
     );
-    let (program, errors) = crate::resolve::resolve(sem_prog, &tokens);
+    let (program, errors) = crate::old_resolve::resolve(sem_prog, &tokens);
     assert!(errors.is_empty(), "unexpected check errors: {errors:?}");
     program
 }
@@ -270,8 +270,7 @@ fn with_self_ref() {
 
 #[test]
 fn with_duplicate_key() {
-    let errs =
-        check_errs("x = \"a\"\n  with {\n    y = \"b\"\n  }\n  with {\n    y = \"c\"\n  }");
+    let errs = check_errs("x = \"a\"\n  with {\n    y = \"b\"\n  }\n  with {\n    y = \"c\"\n  }");
     assert!(
         errs.iter()
             .any(|e| e.contains("duplicate member") && e.contains("y")),
@@ -325,28 +324,19 @@ fn add_from_ref() {
 #[test]
 fn add_literal_error() {
     let errs = check_errs("x = \"a\"\nx += \"b\"");
-    assert!(
-        errs.iter().any(|e| e.contains("`+=` requires")),
-        "{errs:?}"
-    );
+    assert!(errs.iter().any(|e| e.contains("`+=` requires")), "{errs:?}");
 }
 
 #[test]
 fn add_comp_error() {
     let errs = check_errs("a = \"x\"\nb = \"y\"\nx = \"z\"\nx += a ; b");
-    assert!(
-        errs.iter().any(|e| e.contains("`+=` requires")),
-        "{errs:?}"
-    );
+    assert!(errs.iter().any(|e| e.contains("`+=` requires")), "{errs:?}");
 }
 
 #[test]
 fn add_arrow_error() {
     let errs = check_errs("a = \"x\"\nb = \"y\"\nx = \"z\"\nx += a → b");
-    assert!(
-        errs.iter().any(|e| e.contains("`+=` requires")),
-        "{errs:?}"
-    );
+    assert!(errs.iter().any(|e| e.contains("`+=` requires")), "{errs:?}");
 }
 
 #[test]
@@ -394,10 +384,7 @@ r3 = x.c
 #[test]
 fn add_number_error() {
     let errs = check_errs("x = \"a\"\nx += 42");
-    assert!(
-        errs.iter().any(|e| e.contains("`+=` requires")),
-        "{errs:?}"
-    );
+    assert!(errs.iter().any(|e| e.contains("`+=` requires")), "{errs:?}");
 }
 
 // --- Value and members coexistence ---
@@ -930,8 +917,14 @@ x = "hello"
 y = "world"
 "#,
     );
-    assert_eq!(val_as_string(&p, get_item(&p, "x").val().unwrap()), Some("\"hello\""));
-    assert_eq!(val_as_string(&p, get_item(&p, "y").val().unwrap()), Some("\"world\""));
+    assert_eq!(
+        val_as_string(&p, get_item(&p, "x").val().unwrap()),
+        Some("\"hello\"")
+    );
+    assert_eq!(
+        val_as_string(&p, get_item(&p, "y").val().unwrap()),
+        Some("\"world\"")
+    );
 }
 
 #[test]
@@ -942,7 +935,10 @@ a = "v"
 b = a
 "#,
     );
-    assert_eq!(val_as_path_name(&p, get_item(&p, "b").val().unwrap()), Some("a"));
+    assert_eq!(
+        val_as_path_name(&p, get_item(&p, "b").val().unwrap()),
+        Some("a")
+    );
 }
 
 #[test]
@@ -955,8 +951,14 @@ x: T
 y: U = "v"
 "#,
     );
-    assert_eq!(val_as_path_name(&p, get_item(&p, "x").ty.unwrap()), Some("T"));
-    assert_eq!(val_as_path_name(&p, get_item(&p, "y").ty.unwrap()), Some("U"));
+    assert_eq!(
+        val_as_path_name(&p, get_item(&p, "x").ty.unwrap()),
+        Some("T")
+    );
+    assert_eq!(
+        val_as_path_name(&p, get_item(&p, "y").ty.unwrap()),
+        Some("U")
+    );
     assert!(get_item(&p, "T").ty.is_none());
 }
 
@@ -1004,7 +1006,10 @@ x = g
 "#,
     );
     let x = get_item(&p, "x");
-    assert!(x.members().unwrap().get("g").is_none(), "where binding should not be a member");
+    assert!(
+        x.members().unwrap().get("g").is_none(),
+        "where binding should not be a member"
+    );
     assert_eq!(val_as_path_name(&p, x.val().unwrap()), Some("g"));
 }
 
@@ -1037,7 +1042,8 @@ T = "t"
 "#,
     );
     assert!(
-        errs.iter().any(|e| e.contains("decorator parameters require a functor application")),
+        errs.iter()
+            .any(|e| e.contains("decorator parameters require a functor application")),
         "{errs:?}"
     );
 }
@@ -1183,7 +1189,9 @@ fn functor_app_module_error() {
 
 #[test]
 fn functor_app_with_error() {
-    let errs = check_errs("A = \"a\"\nB = \"b\"\nf: A ~> B\na = \"y\"\nf(a) = \"z\" with {\n    w = \"v\"\n}");
+    let errs = check_errs(
+        "A = \"a\"\nB = \"b\"\nf: A ~> B\na = \"y\"\nf(a) = \"z\" with {\n    w = \"v\"\n}",
+    );
     assert!(
         errs.iter().any(|e| e.contains("functor application")),
         "expected functor application error: {errs:?}"
@@ -1201,7 +1209,9 @@ fn functor_app_not_a_functor() {
 
 #[test]
 fn functor_app_mappings_stored() {
-    let p = check_module("A = \"a\"\nB = \"b\"\na = \"x\"\nb = \"y\"\nf: A ~> B\nf(a) = \"x\"\nf(b) = \"y\"");
+    let p = check_module(
+        "A = \"a\"\nB = \"b\"\na = \"x\"\nb = \"y\"\nf: A ~> B\nf(a) = \"x\"\nf(b) = \"y\"",
+    );
     let f = get_item(&p, "f");
     match &f.body {
         ItemBody::Functor { mappings } => assert_eq!(mappings.len(), 2),
@@ -1256,7 +1266,8 @@ f: A ~> B
 "#,
     );
     assert!(
-        errs.iter().any(|e| e.contains("decorator parameter must appear in functor applicand")),
+        errs.iter()
+            .any(|e| e.contains("decorator parameter must appear in functor applicand")),
         "{errs:?}"
     );
 }
@@ -1296,11 +1307,13 @@ fn import_named() {
 
 #[test]
 fn import_sys_after_base() {
-    let p = check_module("\
+    let p = check_module(
+        "\
 import \"base\"
 sys = import \"sys\"
 x = sys.u32.lit[42]
-");
+",
+    );
     assert!(p.root.get("sys").is_some());
     assert!(p.root.get("x").is_some());
 }
@@ -1319,30 +1332,39 @@ fn import_unknown() {
 #[test]
 fn use_base_not_exported() {
     // `use "base"` makes entries available internally but not exported
-    let p = check_module("\
+    let p = check_module(
+        "\
 use \"base\"
 x = \"hello\"
-");
+",
+    );
     assert!(p.root.get("x").is_some());
-    assert!(p.root.get("nat").is_none(), "used entries should not be exported");
+    assert!(
+        p.root.get("nat").is_none(),
+        "used entries should not be exported"
+    );
 }
 
 #[test]
 fn use_base_available_for_resolution() {
     // `use "base"` entries are available for name resolution within the module
-    check_ok("\
+    check_ok(
+        "\
 use \"base\"
 f[n: nat] = \"x\"
-");
+",
+    );
 }
 
 #[test]
 fn use_conflicts_with_same_name() {
     // Defining a name that exists in a `use`d module is a duplicate error
-    let errs = check_errs("\
+    let errs = check_errs(
+        "\
 use \"base\"
 nat = \"user_nat\"
-");
+",
+    );
     assert!(
         errs.iter().any(|e| e.contains("duplicate definition")),
         "expected duplicate definition error: {errs:?}"
@@ -1352,20 +1374,24 @@ nat = \"user_nat\"
 #[test]
 fn import_ui_no_conflict_with_user_nat() {
     // `import "ui"` does not bring base entries, so user can define `nat`
-    check_ok("\
+    check_ok(
+        "\
 import \"ui\"
 nat = \"user_nat\"
-");
+",
+    );
 }
 
 #[test]
 fn import_does_not_reexport_used() {
     // `import "ui"` brings ui's exports but not base entries (ui uses `use "base"`)
-    let p = check_module("\
+    let p = check_module(
+        "\
 import \"ui\"
 C: *
 x: C → C
-");
+",
+    );
     assert!(p.root.get("C").is_some());
     // ui exports (e.g. style) should be present
     assert!(p.root.get("style").is_some());
@@ -1377,12 +1403,14 @@ x: C → C
 #[test]
 fn use_in_block_not_exported() {
     // `use` inside a block module does not leak to outer scope
-    let p = check_module("\
+    let p = check_module(
+        "\
 m = {
     use \"base\"
     f[n: nat] = \"x\"
 }
-");
+",
+    );
     assert!(p.root.get("m").is_some());
     assert!(p.root.get("nat").is_none());
 }

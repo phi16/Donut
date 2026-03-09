@@ -1,5 +1,5 @@
-use donut_lang::check::{EntryKind, Env};
-use donut_lang::types::item::*;
+use donut_lang::old_check::{EntryKind, Env};
+use donut_lang::types::old_item::*;
 use std::collections::HashMap;
 
 use super::{build_entry_info, build_module_info, EntryInfo, HoverInfo, TokenType};
@@ -41,30 +41,35 @@ impl<'a> HoverBuilder<'a> {
         let val_s = self.program.val(val_id);
         match &val_s.0 {
             Val::Path(path) => {
-                let parts: Vec<_> =
-                    path.segments.iter().map(|s| s.0.name.as_str()).collect();
+                let parts: Vec<_> = path.segments.iter().map(|s| s.0.name.as_str()).collect();
                 if parts.is_empty() {
                     return;
                 }
                 let path_name = parts.join(".");
                 if path_name == "*" {
-                    self.map.insert(path.segments[0].1.start, HoverInfo {
-                        name: "*".to_string(),
-                        entry: EntryInfo {
-                            kind: EntryKind::Meta,
-                            is_module: false,
-                            type_expr: Some("meta".to_string()),
-                            params: String::new(),
+                    self.map.insert(
+                        path.segments[0].1.start,
+                        HoverInfo {
+                            name: "*".to_string(),
+                            entry: EntryInfo {
+                                kind: EntryKind::Meta,
+                                is_module: false,
+                                type_expr: Some("meta".to_string()),
+                                params: String::new(),
+                            },
                         },
-                    });
+                    );
                 } else if let Some(resolved) = self.resolve_name(&path_name, prefixes) {
                     if let Some(entry) = build_entry_info(&resolved, self.env) {
                         // 最後のセグメントにはエントリの hover info
                         let last = path.segments.len() - 1;
-                        self.map.insert(path.segments[last].1.start, HoverInfo {
-                            name: resolved.clone(),
-                            entry,
-                        });
+                        self.map.insert(
+                            path.segments[last].1.start,
+                            HoverInfo {
+                                name: resolved.clone(),
+                                entry,
+                            },
+                        );
                         // 中間セグメントにはモジュールプレフィックスの hover info
                         for i in 0..last {
                             let prefix = parts[..=i].join(".");
@@ -73,7 +78,8 @@ impl<'a> HoverBuilder<'a> {
                     }
                     // . の左側のセグメントを Namespace として色付け
                     for i in 0..parts.len().saturating_sub(1) {
-                        self.styles.insert(path.segments[i].1.start, TokenType::Namespace);
+                        self.styles
+                            .insert(path.segments[i].1.start, TokenType::Namespace);
                     }
                 } else {
                     // エントリとしては解決できなかったが、モジュール名かもしれない
@@ -85,7 +91,8 @@ impl<'a> HoverBuilder<'a> {
                                 self.insert_module_hover(path.segments[j].1.start, &seg_prefix);
                             }
                             for j in 0..i {
-                                self.styles.insert(path.segments[j].1.start, TokenType::Namespace);
+                                self.styles
+                                    .insert(path.segments[j].1.start, TokenType::Namespace);
                             }
                             break;
                         }
@@ -119,10 +126,13 @@ impl<'a> HoverBuilder<'a> {
     }
 
     fn insert_module_hover(&mut self, token_index: usize, qname: &str) {
-        self.map.insert(token_index, HoverInfo {
-            name: qname.to_string(),
-            entry: build_module_info(qname, self.env),
-        });
+        self.map.insert(
+            token_index,
+            HoverInfo {
+                name: qname.to_string(),
+                entry: build_module_info(qname, self.env),
+            },
+        );
     }
 
     fn walk_item(&mut self, qname: &str, item: &Item, prefixes: &[&str]) {
@@ -133,10 +143,13 @@ impl<'a> HoverBuilder<'a> {
         if is_module_def {
             self.insert_module_hover(item.span.start, qname);
         } else if let Some(entry) = build_entry_info(qname, self.env) {
-            self.map.insert(item.span.start, HoverInfo {
-                name: qname.to_string(),
-                entry,
-            });
+            self.map.insert(
+                item.span.start,
+                HoverInfo {
+                    name: qname.to_string(),
+                    entry,
+                },
+            );
         }
 
         // Walk type expression

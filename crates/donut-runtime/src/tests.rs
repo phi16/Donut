@@ -4,7 +4,7 @@ use donut_core::cell::Globular;
 use donut_core::common::PrimId;
 use std::collections::HashMap;
 
-fn setup(user_code: &str) -> (Runtime, donut_lang::check::Env) {
+fn setup(user_code: &str) -> (Runtime, donut_lang::old_check::Env) {
     let prelude = "import \"base\"\nimport \"ui\"\nsys = import \"sys\"\n";
     let code = format!("{}{}", prelude, user_code);
     let (env, errors) = donut_lang::load::load(&code);
@@ -13,7 +13,9 @@ fn setup(user_code: &str) -> (Runtime, donut_lang::check::Env) {
     }
 
     // Build name → PrimId lookup from prim_decls (canonical names)
-    let lookup: HashMap<String, PrimId> = env.prim_decls.iter()
+    let lookup: HashMap<String, PrimId> = env
+        .prim_decls
+        .iter()
         .map(|(&id, decl)| (decl.name.clone(), id))
         .collect();
 
@@ -22,10 +24,15 @@ fn setup(user_code: &str) -> (Runtime, donut_lang::check::Env) {
     (rt, env)
 }
 
-fn eval_entry(rt: &Runtime, env: &donut_lang::check::Env, name: &str) -> Vec<Value> {
-    let idx = env.lookup.get(name).unwrap_or_else(|| panic!("entry '{}' not found", name));
+fn eval_entry(rt: &Runtime, env: &donut_lang::old_check::Env, name: &str) -> Vec<Value> {
+    let idx = env
+        .lookup
+        .get(name)
+        .unwrap_or_else(|| panic!("entry '{}' not found", name));
     let cell = env.entries[*idx].as_cell().unwrap();
-    let prim_names: HashMap<PrimId, String> = env.prim_decls.iter()
+    let prim_names: HashMap<PrimId, String> = env
+        .prim_decls
+        .iter()
         .map(|(&id, decl)| (id, decl.name.clone()))
         .collect();
     rt.eval(cell, &[], &prim_names).unwrap()
@@ -45,29 +52,35 @@ fn test_constant_42() {
 
 #[test]
 fn test_successor() {
-    let (rt, env) = setup("\
+    let (rt, env) = setup(
+        "\
 one = sys.u32.lit[1]
 two = sys.u32.lit[1] sys.u32.lit[1]; sys.u32.add
-");
+",
+    );
     assert_eq!(eval_entry(&rt, &env, "one"), vec![Value::U32(1)]);
     assert_eq!(eval_entry(&rt, &env, "two"), vec![Value::U32(2)]);
 }
 
 #[test]
 fn test_add() {
-    let (rt, env) = setup("\
+    let (rt, env) = setup(
+        "\
 sum = sys.u32.lit[1] sys.u32.lit[1]; sys.u32.add
-");
+",
+    );
     assert_eq!(eval_entry(&rt, &env, "sum"), vec![Value::U32(2)]);
 }
 
 #[test]
 fn test_mul() {
-    let (rt, env) = setup("\
+    let (rt, env) = setup(
+        "\
 two = sys.u32.lit[1] sys.u32.lit[1]; sys.u32.add
 three = two sys.u32.lit[1]; sys.u32.add
 nine = three; sys.val.dup[sys.u32]; sys.u32.mul
-");
+",
+    );
     assert_eq!(eval_entry(&rt, &env, "three"), vec![Value::U32(3)]);
     assert_eq!(eval_entry(&rt, &env, "nine"), vec![Value::U32(9)]);
 }
@@ -75,23 +88,27 @@ nine = three; sys.val.dup[sys.u32]; sys.u32.mul
 #[test]
 fn test_parallel_and_sequential() {
     // (1 + 1) * (1 + 1 + 1) = 2 * 3 = 6
-    let (rt, env) = setup("\
+    let (rt, env) = setup(
+        "\
 two = sys.u32.lit[1] sys.u32.lit[1]; sys.u32.add
 three = two sys.u32.lit[1]; sys.u32.add
 result = two three; sys.u32.mul
-");
+",
+    );
     assert_eq!(eval_entry(&rt, &env, "result"), vec![Value::U32(6)]);
 }
 
 #[test]
 fn test_bool() {
-    let (rt, env) = setup("\
+    let (rt, env) = setup(
+        "\
 t = sys.bool.lit[1]
 f = sys.bool.lit[0]
 notf = sys.bool.lit[0]; sys.bool.not
 and_tf = sys.bool.lit[1] sys.bool.lit[0]; sys.bool.and
 or_tf = sys.bool.lit[1] sys.bool.lit[0]; sys.bool.or
-");
+",
+    );
     assert_eq!(eval_entry(&rt, &env, "t"), vec![Value::Bool(true)]);
     assert_eq!(eval_entry(&rt, &env, "f"), vec![Value::Bool(false)]);
     assert_eq!(eval_entry(&rt, &env, "notf"), vec![Value::Bool(true)]);
@@ -101,13 +118,15 @@ or_tf = sys.bool.lit[1] sys.bool.lit[0]; sys.bool.or
 
 #[test]
 fn test_comparison() {
-    let (rt, env) = setup("\
+    let (rt, env) = setup(
+        "\
 one = sys.u32.lit[1]
 two = sys.u32.lit[1] sys.u32.lit[1]; sys.u32.add
 eq_11 = one; sys.val.dup[sys.u32]; sys.u32.eq
 lt_12 = one two; sys.u32.lt
 lt_21 = two one; sys.u32.lt
-");
+",
+    );
     assert_eq!(eval_entry(&rt, &env, "eq_11"), vec![Value::Bool(true)]);
     assert_eq!(eval_entry(&rt, &env, "lt_12"), vec![Value::Bool(true)]);
     assert_eq!(eval_entry(&rt, &env, "lt_21"), vec![Value::Bool(false)]);
@@ -115,25 +134,31 @@ lt_21 = two one; sys.u32.lt
 
 #[test]
 fn test_f32() {
-    let (rt, env) = setup("\
+    let (rt, env) = setup(
+        "\
 x = sys.f32.lit[1] sys.f32.lit[1]; sys.f32.add
-");
+",
+    );
     assert_eq!(eval_entry(&rt, &env, "x"), vec![Value::F32(2.0)]);
 }
 
 #[test]
 fn test_conversion() {
-    let (rt, env) = setup("\
+    let (rt, env) = setup(
+        "\
 x = sys.u32.lit[1] sys.u32.lit[1]; sys.u32.add; sys.u32.to_f32
-");
+",
+    );
     assert_eq!(eval_entry(&rt, &env, "x"), vec![Value::F32(2.0)]);
 }
 
 #[test]
 fn test_dup() {
-    let (rt, env) = setup("\
+    let (rt, env) = setup(
+        "\
 x = sys.u32.lit[1]; sys.val.dup[sys.u32]; sys.u32.add
-");
+",
+    );
     assert_eq!(eval_entry(&rt, &env, "x"), vec![Value::U32(2)]);
 }
 
@@ -158,16 +183,29 @@ result2 = F(add)
 ";
     let (rt, env) = setup(code);
 
-    assert!(rt.is_evaluable(&env.entries[*env.lookup.get("result").unwrap()].as_cell().unwrap()), "result should be evaluable");
+    assert!(
+        rt.is_evaluable(
+            &env.entries[*env.lookup.get("result").unwrap()]
+                .as_cell()
+                .unwrap()
+        ),
+        "result should be evaluable"
+    );
     assert_eq!(eval_entry(&rt, &env, "result"), vec![Value::U32(6)]);
 
-    let result2_cell = &env.entries[*env.lookup.get("result2").unwrap()].as_cell().unwrap();
-    assert!(!rt.is_evaluable(result2_cell), "result2 needs 2 inputs, should not be evaluable with no input");
+    let result2_cell = &env.entries[*env.lookup.get("result2").unwrap()]
+        .as_cell()
+        .unwrap();
+    assert!(
+        !rt.is_evaluable(result2_cell),
+        "result2 needs 2 inputs, should not be evaluable with no input"
+    );
 }
 
 #[test]
 fn test_functor_application() {
-    let (rt, env) = setup("\
+    let (rt, env) = setup(
+        "\
 mycat = {
     C: *
     [hsv[0.6]]
@@ -186,7 +224,8 @@ F(mycat.dup) = sys.val.dup[sys.u32]
 one = F(mycat.zero; mycat.succ)
 two = F(mycat.zero; mycat.succ; mycat.succ)
 sum = F(mycat.zero; mycat.succ) F(mycat.zero; mycat.succ); F(mycat.add)
-");
+",
+    );
     assert_eq!(eval_entry(&rt, &env, "one"), vec![Value::U32(1)]);
     assert_eq!(eval_entry(&rt, &env, "two"), vec![Value::U32(2)]);
     assert_eq!(eval_entry(&rt, &env, "sum"), vec![Value::U32(2)]);
@@ -194,7 +233,8 @@ sum = F(mycat.zero; mycat.succ) F(mycat.zero; mycat.succ); F(mycat.add)
 
 #[test]
 fn test_parametric_functor_mapping() {
-    let (rt, env) = setup("\
+    let (rt, env) = setup(
+        "\
 C: *
 K: C → C
 x[n: nat]: C → K
@@ -204,14 +244,23 @@ F(K) = sys.u32
 [n: nat] F(x[n]) = sys.u32.lit[n]
 
 result = F(x[32])
-");
-    assert!(rt.is_evaluable(&env.entries[*env.lookup.get("result").unwrap()].as_cell().unwrap()), "result should be evaluable");
+",
+    );
+    assert!(
+        rt.is_evaluable(
+            &env.entries[*env.lookup.get("result").unwrap()]
+                .as_cell()
+                .unwrap()
+        ),
+        "result should be evaluable"
+    );
     assert_eq!(eval_entry(&rt, &env, "result"), vec![Value::U32(32)]);
 }
 
 #[test]
 fn test_functor_2cell() {
-    let (_rt, env) = setup("\
+    let (_rt, env) = setup(
+        "\
 C: *
 x: C → C
 th: x → x
@@ -221,7 +270,8 @@ F(x) = sys.u32
 F(th) = sys.u32
 
 result = F(th)
-");
+",
+    );
     let result_idx = *env.lookup.get("result").expect("result not found");
     let result_cell = &env.entries[result_idx].as_cell().unwrap();
     assert_eq!(result_cell.pure.dim().in_space, 2);
@@ -229,7 +279,7 @@ result = F(th)
 
 // --- import "sys" (without named binding) ---
 
-fn setup_bare(user_code: &str) -> (Runtime, donut_lang::check::Env) {
+fn setup_bare(user_code: &str) -> (Runtime, donut_lang::old_check::Env) {
     let prelude = "import \"base\"\nimport \"ui\"\nimport \"sys\"\n";
     let code = format!("{}{}", prelude, user_code);
     let (env, errors) = donut_lang::load::load(&code);
@@ -237,7 +287,9 @@ fn setup_bare(user_code: &str) -> (Runtime, donut_lang::check::Env) {
         eprintln!("  warning: {}", msg);
     }
 
-    let lookup: HashMap<String, PrimId> = env.prim_decls.iter()
+    let lookup: HashMap<String, PrimId> = env
+        .prim_decls
+        .iter()
         .map(|(&id, decl)| (decl.name.clone(), id))
         .collect();
 
@@ -254,33 +306,40 @@ fn test_bare_import() {
 
 #[test]
 fn test_bare_add() {
-    let (rt, env) = setup_bare("\
+    let (rt, env) = setup_bare(
+        "\
 sum = u32.lit[1] u32.lit[1]; u32.add
-");
+",
+    );
     assert_eq!(eval_entry(&rt, &env, "sum"), vec![Value::U32(2)]);
 }
 
 #[test]
 fn test_bare_bool() {
-    let (rt, env) = setup_bare("\
+    let (rt, env) = setup_bare(
+        "\
 t = bool.lit[1]
 notf = bool.lit[0]; bool.not
-");
+",
+    );
     assert_eq!(eval_entry(&rt, &env, "t"), vec![Value::Bool(true)]);
     assert_eq!(eval_entry(&rt, &env, "notf"), vec![Value::Bool(true)]);
 }
 
 #[test]
 fn test_bare_f32() {
-    let (rt, env) = setup_bare("\
+    let (rt, env) = setup_bare(
+        "\
 x = f32.lit[1] f32.lit[1]; f32.add
-");
+",
+    );
     assert_eq!(eval_entry(&rt, &env, "x"), vec![Value::F32(2.0)]);
 }
 
 #[test]
 fn test_bare_functor() {
-    let (rt, env) = setup_bare("\
+    let (rt, env) = setup_bare(
+        "\
 mycat = {
     K: *
     [hsv[0.6]]
@@ -296,7 +355,8 @@ F(mycat.succ) = u32.lit[1] u32; u32.add
 F(mycat.add) = u32.add
 one = F(mycat.zero; mycat.succ)
 sum = F(mycat.zero; mycat.succ) F(mycat.zero; mycat.succ); F(mycat.add)
-");
+",
+    );
     assert_eq!(eval_entry(&rt, &env, "one"), vec![Value::U32(1)]);
     assert_eq!(eval_entry(&rt, &env, "sum"), vec![Value::U32(2)]);
 }
@@ -312,26 +372,39 @@ fn test_canonical_names_match() {
     let (named_env, _) = donut_lang::load::load(named_code);
     let (bare_env, _) = donut_lang::load::load(bare_code);
 
-    let mut named_names: Vec<String> = named_env.prim_decls.values()
-        .map(|d| d.name.clone()).collect();
-    let mut bare_names: Vec<String> = bare_env.prim_decls.values()
-        .map(|d| d.name.clone()).collect();
+    let mut named_names: Vec<String> = named_env
+        .prim_decls
+        .values()
+        .map(|d| d.name.clone())
+        .collect();
+    let mut bare_names: Vec<String> = bare_env
+        .prim_decls
+        .values()
+        .map(|d| d.name.clone())
+        .collect();
     named_names.sort();
     bare_names.sort();
 
-    assert_eq!(named_names, bare_names,
-        "canonical names should be identical regardless of import style");
+    assert_eq!(
+        named_names, bare_names,
+        "canonical names should be identical regardless of import style"
+    );
 }
 
 // --- cross-import (module that imports another module) ---
 
-fn setup_with_sources(user_code: &str, sources: HashMap<String, String>) -> (Runtime, donut_lang::check::Env) {
+fn setup_with_sources(
+    user_code: &str,
+    sources: HashMap<String, String>,
+) -> (Runtime, donut_lang::old_check::Env) {
     let (env, errors) = donut_lang::load::load_with_sources(user_code, sources);
     for (_, msg) in &errors {
         eprintln!("  warning: {}", msg);
     }
 
-    let lookup: HashMap<String, PrimId> = env.prim_decls.iter()
+    let lookup: HashMap<String, PrimId> = env
+        .prim_decls
+        .iter()
         .map(|(&id, decl)| (decl.name.clone(), id))
         .collect();
 
@@ -344,13 +417,17 @@ fn setup_with_sources(user_code: &str, sources: HashMap<String, String>) -> (Run
 fn test_cross_import_named() {
     // "mylib" imports "sys" and re-exports operations
     let mut sources = HashMap::new();
-    sources.insert("mylib".to_string(), "\
+    sources.insert(
+        "mylib".to_string(),
+        "\
 import \"base\"
 import \"ui\"
 import \"sys\"
 inc: u32 → u32
 inc = u32.lit[1] u32; u32.add
-".to_string());
+"
+        .to_string(),
+    );
 
     let code = "import \"base\"\nimport \"ui\"\nmylib = import \"mylib\"\nx = mylib.u32.lit[0]; mylib.inc; mylib.inc\n";
     let (rt, env) = setup_with_sources(code, sources);
@@ -360,13 +437,17 @@ inc = u32.lit[1] u32; u32.add
 #[test]
 fn test_cross_import_bare() {
     let mut sources = HashMap::new();
-    sources.insert("mylib".to_string(), "\
+    sources.insert(
+        "mylib".to_string(),
+        "\
 import \"base\"
 import \"ui\"
 import \"sys\"
 inc: u32 → u32
 inc = u32.lit[1] u32; u32.add
-".to_string());
+"
+        .to_string(),
+    );
 
     let code = "import \"base\"\nimport \"ui\"\nimport \"mylib\"\nx = u32.lit[0]; inc; inc; inc\n";
     let (rt, env) = setup_with_sources(code, sources);
@@ -377,11 +458,15 @@ inc = u32.lit[1] u32; u32.add
 fn test_cross_import_canonical_names() {
     // sys items accessed through mylib should still have sys:: canonical names
     let mut sources = HashMap::new();
-    sources.insert("mylib".to_string(), "\
+    sources.insert(
+        "mylib".to_string(),
+        "\
 import \"base\"
 import \"ui\"
 import \"sys\"
-".to_string());
+"
+        .to_string(),
+    );
 
     let named_code = "import \"base\"\nimport \"ui\"\nmylib = import \"mylib\"\n";
     let bare_code = "import \"base\"\nimport \"ui\"\nimport \"mylib\"\n";
@@ -389,21 +474,35 @@ import \"sys\"
     let (named_env, _) = donut_lang::load::load_with_sources(named_code, sources.clone());
     let (bare_env, _) = donut_lang::load::load_with_sources(bare_code, sources);
 
-    let mut named_names: Vec<String> = named_env.prim_decls.values()
-        .map(|d| d.name.clone()).collect();
-    let mut bare_names: Vec<String> = bare_env.prim_decls.values()
-        .map(|d| d.name.clone()).collect();
+    let mut named_names: Vec<String> = named_env
+        .prim_decls
+        .values()
+        .map(|d| d.name.clone())
+        .collect();
+    let mut bare_names: Vec<String> = bare_env
+        .prim_decls
+        .values()
+        .map(|d| d.name.clone())
+        .collect();
     named_names.sort();
     bare_names.sort();
 
-    assert_eq!(named_names, bare_names,
-        "canonical names should match across import styles for cross-imports");
+    assert_eq!(
+        named_names, bare_names,
+        "canonical names should match across import styles for cross-imports"
+    );
 
     // sys items accessed through mylib should retain sys:: prefix
-    assert!(bare_names.iter().any(|n| n == "sys::u32.lit"),
-        "expected sys::u32.lit, got: {:?}", bare_names);
-    assert!(bare_names.iter().any(|n| n == "sys::C"),
-        "expected sys::C, got: {:?}", bare_names);
+    assert!(
+        bare_names.iter().any(|n| n == "sys::u32.lit"),
+        "expected sys::u32.lit, got: {:?}",
+        bare_names
+    );
+    assert!(
+        bare_names.iter().any(|n| n == "sys::C"),
+        "expected sys::C, got: {:?}",
+        bare_names
+    );
 }
 
 // --- mixed import styles ---
@@ -418,7 +517,9 @@ fn test_mixed_import() {
         eprintln!("  warning: {}", msg);
     }
 
-    let lookup: HashMap<String, PrimId> = env.prim_decls.iter()
+    let lookup: HashMap<String, PrimId> = env
+        .prim_decls
+        .iter()
         .map(|(&id, decl)| (decl.name.clone(), id))
         .collect();
     let mut rt = Runtime::new();
@@ -429,20 +530,26 @@ fn test_mixed_import() {
 
 // --- GLSL compilation ---
 
-fn prim_names(env: &donut_lang::check::Env) -> HashMap<PrimId, String> {
+fn prim_names(env: &donut_lang::old_check::Env) -> HashMap<PrimId, String> {
     env.prim_decls
         .iter()
         .map(|(&id, decl)| (id, decl.name.clone()))
         .collect()
 }
 
-fn compile_entry(env: &donut_lang::check::Env, name: &str) -> Result<crate::glsl::GlslFunction, String> {
-    let idx = env.lookup.get(name).unwrap_or_else(|| panic!("entry '{}' not found", name));
+fn compile_entry(
+    env: &donut_lang::old_check::Env,
+    name: &str,
+) -> Result<crate::glsl::GlslFunction, String> {
+    let idx = env
+        .lookup
+        .get(name)
+        .unwrap_or_else(|| panic!("entry '{}' not found", name));
     let cell = env.entries[*idx].as_cell().unwrap();
     crate::glsl::compile_to_glsl(cell, &prim_names(env))
 }
 
-fn compile_shader(env: &donut_lang::check::Env, name: &str) -> Result<String, String> {
+fn compile_shader(env: &donut_lang::old_check::Env, name: &str) -> Result<String, String> {
     compile_entry(env, name)?.to_fragment_shader()
 }
 
@@ -460,9 +567,11 @@ fn test_glsl_constant_color() {
 #[test]
 fn test_glsl_unpack_repack() {
     // f32x2 → unpack → f32 f32, parallel with lit[0] → f32, then pack → f32x3
-    let (_, env) = setup("\
+    let (_, env) = setup(
+        "\
 shader = sys.f32x2.unpack sys.f32.lit[0]; sys.f32x3.pack
-");
+",
+    );
     let glsl = compile_shader(&env, "shader").unwrap();
 
     assert!(glsl.contains("precision mediump float;"));
@@ -472,9 +581,11 @@ shader = sys.f32x2.unpack sys.f32.lit[0]; sys.f32x3.pack
 
 #[test]
 fn test_glsl_identity_style() {
-    let (_, env) = setup("\
+    let (_, env) = setup(
+        "\
 shader = sys.f32x2.unpack sys.f32.lit[0]; sys.f32x3.pack
-");
+",
+    );
     let glsl = compile_shader(&env, "shader").unwrap();
     assert!(glsl.contains(".x;"));
     assert!(glsl.contains(".y;"));
@@ -497,9 +608,11 @@ shader = sys.f32x2.unpack sys.f32.lit[0.5] sys.f32.lit[0.5]; sys.f32.mul sys.f32
 #[test]
 fn test_glsl_dup() {
     // unpack → dup x, drop y → (x, x, 0.0)
-    let (_, env) = setup("\
+    let (_, env) = setup(
+        "\
 shader = sys.f32x2.unpack; sys.val.dup[sys.f32] sys.val.drop[sys.f32] sys.f32.lit[0]; sys.f32x3.pack
-");
+",
+    );
     let glsl = compile_shader(&env, "shader").unwrap();
 
     assert!(glsl.contains("gl_FragColor"));
@@ -508,9 +621,11 @@ shader = sys.f32x2.unpack; sys.val.dup[sys.f32] sys.val.drop[sys.f32] sys.f32.li
 #[test]
 fn test_glsl_function_output() {
     // Test that compile_to_glsl produces a proper function
-    let (_, env) = setup("\
+    let (_, env) = setup(
+        "\
 shader = sys.f32x2.unpack sys.f32.lit[0]; sys.f32x3.pack
-");
+",
+    );
     let func = compile_entry(&env, "shader").unwrap();
     let fn_str = func.to_function("my_shader");
     assert!(fn_str.contains("void my_shader(in vec2 i0, out vec3 o0)"));
@@ -527,9 +642,11 @@ fn test_glsl_wrong_dimension() {
 #[test]
 fn test_glsl_wrong_source_for_shader() {
     // → f32x3 (no input), compiles as function but fails as fragment shader
-    let (_, env) = setup("\
+    let (_, env) = setup(
+        "\
 my_cell = sys.f32.lit[1] sys.f32.lit[0] sys.f32.lit[0]; sys.f32x3.pack
-");
+",
+    );
     let func = compile_entry(&env, "my_cell").unwrap();
     assert!(func.to_fragment_shader().is_err());
 }

@@ -1,6 +1,6 @@
 use donut_core::common::{Prim, PrimId};
-use donut_lang::check::{display_cell_type, display_prim, PrimDecl};
 use donut_core::pure_cell::PureCell;
+use donut_lang::old_check::{display_cell_type, display_prim, PrimDecl};
 use std::collections::HashMap;
 
 pub struct PrimTable {
