@@ -286,8 +286,6 @@ impl<'a> Server<'a> {
             }
         });
 
-        eprintln!("[completion] trigger={:?}, cursor={}:{}", trigger, cursor_pos.line, cursor_pos.character);
-
         match trigger.as_deref() {
             Some("\\") => self.completion_unicode(cursor_pos, &params),
             Some("\\continue") => {
@@ -391,43 +389,18 @@ impl<'a> Server<'a> {
         // Ensure analysis is current (tokens/hover_map/completion may be stale)
         let _ = run_analysis(&mut doc);
 
-        // Debug: dump all tokens around cursor line
-        eprintln!("[dot] cursor={}:{}", cursor_pos.line, cursor_pos.character);
-        for (i, t) in doc.tokens.iter().enumerate() {
-            if t.line == cursor_pos.line {
-                eprintln!("  token[{}] col={} len={} idx={:?} type={:?}",
-                    i, t.column, t.length, t.token_index, t.token_type);
-            }
-        }
-
         // Find the dot token at cursor - 1 (cursor is after the dot)
         let dot_col = cursor_pos.character.saturating_sub(1);
         let dot_token = doc.token_index_at(cursor_pos.line, dot_col);
-        eprintln!("[dot] dot_col={}, dot_token={:?}", dot_col, dot_token);
 
         // Look up the prefix from the syntax tree (dot_prefixes)
         let prefix = dot_token
             .and_then(|idx| doc.completion.dot_prefixes.get(&idx));
-        eprintln!("[dot] prefix={:?}", prefix);
-
-        // Debug: dump all dot_prefixes
-        eprintln!("[dot] all dot_prefixes:");
-        for (k, v) in &doc.completion.dot_prefixes {
-            eprintln!("  token_idx={} -> {:?}", k, v);
-        }
-
-        // Debug: dump all scope keys
-        eprintln!("[dot] all scope keys: {:?}", doc.completion.scopes.keys().collect::<Vec<_>>());
 
         let candidates = match prefix.and_then(|p| doc.completion.scopes.get(p)) {
             Some(c) => c,
-            None => {
-                eprintln!("[dot] no candidates found, returning None");
-                return Ok(None);
-            }
+            None => return Ok(None),
         };
-
-        eprintln!("[dot] found {} candidates", candidates.len());
         let items = candidates
             .iter()
             .map(|c| candidate_to_item(c, cursor_pos.line))
