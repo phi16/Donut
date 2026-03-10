@@ -32,7 +32,11 @@ fn check_ok(code: &str) -> env::Env {
 }
 
 fn get_def<'a>(env: &'a env::Env, name: &str) -> &'a env::Def {
-    let module = env.root.lookup.get(name).unwrap_or_else(|| panic!("def `{}` not found", name));
+    let module = env
+        .root
+        .lookup
+        .get(name)
+        .unwrap_or_else(|| panic!("def `{}` not found", name));
     let def_id = module.this.unwrap();
     &env.defs[def_id.0]
 }

@@ -6,8 +6,13 @@ use crate::types::env::{self, ArrowTy, Meta, Ty};
 use crate::types::item::*;
 use donut_core::cell::Diagram;
 use donut_core::cell::Globular;
-use donut_core::common::{Axis, ExtId, Level, PrimId, PureVal};
+use donut_core::common::{Axis, ExtId, Level, Prim, PrimId, PureVal};
 use donut_core::pure_cell::PureCell;
+
+struct FunctorEntry {
+    param_ext_ids: Vec<ExtId>,
+    cell: PureCell,
+}
 
 struct Checker<'a> {
     program: &'a Program,
@@ -23,6 +28,8 @@ struct Checker<'a> {
     prefixes: Vec<String>,
     // Ref → PureVal for checked items/defs
     checked: HashMap<Ref, PureVal>,
+    // DefId → (PrimId → FunctorEntry)
+    functor_maps: HashMap<DefId, HashMap<PrimId, FunctorEntry>>,
 
     errors: Vec<Error>,
 }
@@ -40,6 +47,7 @@ impl<'a> Checker<'a> {
             next_prim: 1, // 0 reserved for meta
             prefixes: Vec::new(),
             checked: HashMap::new(),
+            functor_maps: HashMap::new(),
             errors: Vec::new(),
         };
         checker.register_builtins();
@@ -160,18 +168,7 @@ impl<'a> Checker<'a> {
                 (None, pv)
             }
             DefBody::Functor { mappings } => {
-                let checked_mappings: Vec<(PureVal, PureVal)> = mappings.iter().map(|m| {
-                    // Check mapping params
-                    for param in &m.params {
-                        let ty = self.eval_ty(param.ty);
-                        self.check_item(param.item, &ty);
-                    }
-                    let applicand = self.eval_val(m.applicand);
-                    let val = self.eval_val(m.val);
-                    (applicand, val)
-                }).collect();
-                // Functor value: store as opaque for now
-                let _ = checked_mappings;
+                self.check_functor(def_id, &ty, mappings);
                 (None, PureVal::App(ExtId(0), vec![]))
             }
             DefBody::None => {
@@ -291,9 +288,38 @@ impl<'a> Checker<'a> {
 
         // Functor application: f(x)
         if let Some(app_val_id) = path.applicand {
-            let _applicand = self.eval_val(app_val_id);
-            // TODO: look up functor mapping and apply
-            result
+            let applicand = self.eval_val(app_val_id);
+            let app_cell = match &applicand {
+                PureVal::Cell(pc) => pc,
+                _ => {
+                    let span = self.program.val_span(val_id);
+                    self.error_at(span, "functor applicand must be a cell value");
+                    return result;
+                }
+            };
+            // Find functor map for this def
+            let functor_def_id = match path.target {
+                Ref::Def(did) => did,
+                Ref::Item(_) => {
+                    let span = self.program.val_span(val_id);
+                    self.error_at(span, "functor application target must be a definition");
+                    return result;
+                }
+            };
+            if let Some(fmap) = self.functor_maps.get(&functor_def_id) {
+                match apply_functor(app_cell, fmap) {
+                    Ok(pc) => PureVal::Cell(pc),
+                    Err(e) => {
+                        let span = self.program.val_span(val_id);
+                        self.error_at(span, format_functor_error(&e));
+                        result
+                    }
+                }
+            } else {
+                let span = self.program.val_span(val_id);
+                self.error_at(span, "not a functor");
+                result
+            }
         } else {
             result
         }
@@ -376,6 +402,137 @@ impl<'a> Checker<'a> {
         }
     }
 
+    // --- Functor checking ---
+
+    fn check_functor(&mut self, def_id: DefId, ty: &Ty, mappings: &[FunctorMapping]) {
+        // Type must be Functor(src, tgt)
+        let (src_val, tgt_val) = match ty {
+            Ty::Functor(s, t) => (s.clone(), t.clone()),
+            _ => {
+                let span = self.program.def(def_id).span.clone();
+                self.error_at(&span, "functor must have type `A ~> B`");
+                return;
+            }
+        };
+
+        // Extract PureCells from src/tgt
+        let (src_cell, tgt_cell) = match (&src_val, &tgt_val) {
+            (PureVal::Cell(s), PureVal::Cell(t)) => (s.clone(), t.clone()),
+            _ => {
+                let span = self.program.def(def_id).span.clone();
+                self.error_at(&span, "functor source and target must be cell values");
+                return;
+            }
+        };
+
+        // Extract source PrimId for base case
+        let src_prim_id = match src_cell.extract_prim_id() {
+            Some(id) => id,
+            None => {
+                let span = self.program.def(def_id).span.clone();
+                self.error_at(&span, "functor source must be a primitive cell");
+                return;
+            }
+        };
+
+        // Base case: source → target
+        let mut functor_map: HashMap<PrimId, FunctorEntry> = HashMap::new();
+        functor_map.insert(src_prim_id, FunctorEntry {
+            param_ext_ids: vec![],
+            cell: tgt_cell.clone(),
+        });
+
+        // Process each mapping
+        for mapping in mappings {
+            // Check mapping params
+            let param_ext_ids: Vec<ExtId> = mapping.params.iter().map(|param| {
+                let ty = self.eval_ty(param.ty);
+                self.check_item(param.item, &ty);
+                ExtId(param.item.0 as u64)
+            }).collect();
+
+            // Eval applicand
+            let app_val = self.eval_val(mapping.applicand);
+            let app_cell = match &app_val {
+                PureVal::Cell(pc) => pc.clone(),
+                _ => {
+                    let span = self.program.val_span(mapping.applicand);
+                    self.error_at(span, "functor mapping applicand must be a cell value");
+                    continue;
+                }
+            };
+
+            let app_prim_id = match app_cell.extract_prim_id() {
+                Some(id) => id,
+                None => {
+                    let span = self.program.val_span(mapping.applicand);
+                    self.error_at(span, "functor mapping applicand must be a primitive cell");
+                    continue;
+                }
+            };
+
+            // Eval val (right-hand side)
+            let val_val = self.eval_val(mapping.val);
+            let mut val_cell = match &val_val {
+                PureVal::Cell(pc) => pc.clone(),
+                _ => {
+                    let span = self.program.val_span(mapping.val);
+                    self.error_at(span, "functor mapping value must be a cell value");
+                    continue;
+                }
+            };
+
+            let app_dim = app_cell.dim().in_space;
+
+            // 0-cell: check consistency with base case
+            if app_dim == 0 {
+                if app_prim_id == src_prim_id {
+                    if !val_cell.is_convertible(&tgt_cell) {
+                        let span = self.program.val_span(mapping.val);
+                        self.error_at(span, "functor 0-cell mapping contradicts base case");
+                    }
+                }
+                continue;
+            }
+
+            // Lift val to app dimension if needed
+            while val_cell.dim().in_space < app_dim {
+                val_cell = PureCell::id(val_cell);
+            }
+
+            // Functoriality check: apply_functor(app.s) == val.s, apply_functor(app.t) == val.t
+            let expected_s = apply_functor(&app_cell.s(), &functor_map);
+            let expected_t = apply_functor(&app_cell.t(), &functor_map);
+
+            match (expected_s, expected_t) {
+                (Ok(es), Ok(et)) => {
+                    if !es.is_convertible(&val_cell.s()) {
+                        let span = self.program.val_span(mapping.val);
+                        self.error_at(span, "functor mapping source mismatch");
+                        continue;
+                    }
+                    if !et.is_convertible(&val_cell.t()) {
+                        let span = self.program.val_span(mapping.val);
+                        self.error_at(span, "functor mapping target mismatch");
+                        continue;
+                    }
+                }
+                (Err(e), _) | (_, Err(e)) => {
+                    let span = self.program.val_span(mapping.applicand);
+                    self.error_at(span, format_functor_error(&e));
+                    continue;
+                }
+            }
+
+            functor_map.insert(app_prim_id, FunctorEntry {
+                param_ext_ids,
+                cell: val_cell,
+            });
+        }
+
+        self.functor_maps.insert(def_id, functor_map);
+    }
+
     // --- Path resolution ---
 
     fn resolve_ref(&self, target: Ref) -> Option<PureVal> {
@@ -455,6 +612,53 @@ impl<'a> Checker<'a> {
             root,
         };
         (env, self.errors)
+    }
+}
+
+// --- Functor application ---
+
+enum FunctorError {
+    NoMapping(Prim),
+    CompError(donut_core::common::Error),
+}
+
+fn apply_functor(cell: &PureCell, map: &HashMap<PrimId, FunctorEntry>) -> Result<PureCell, FunctorError> {
+    match cell {
+        PureCell::Prim(prim, _, dim) => {
+            match map.get(&prim.id) {
+                Some(entry) => {
+                    let mut result = entry.cell.clone();
+                    // Substitute params with actual args
+                    if !entry.param_ext_ids.is_empty() && !prim.args.is_empty() {
+                        let subst_map: HashMap<ExtId, PureVal> = entry.param_ext_ids.iter()
+                            .zip(prim.args.iter())
+                            .map(|(&eid, arg)| (eid, arg.clone()))
+                            .collect();
+                        result = result.subst(&subst_map);
+                    }
+                    // Lift to target dimension
+                    while result.dim().in_space < dim.in_space {
+                        result = PureCell::id(result);
+                    }
+                    Ok(result)
+                }
+                None => Err(FunctorError::NoMapping(prim.clone())),
+            }
+        }
+        PureCell::Comp(axis, children, _) => {
+            let mapped: Vec<PureCell> = children
+                .iter()
+                .map(|c| apply_functor(c, map))
+                .collect::<Result<_, _>>()?;
+            PureCell::comp(*axis, mapped).map_err(FunctorError::CompError)
+        }
+    }
+}
+
+fn format_functor_error(e: &FunctorError) -> String {
+    match e {
+        FunctorError::NoMapping(prim) => format!("functor: no mapping for prim {:?}", prim.id),
+        FunctorError::CompError(e) => format!("functor composition error: {}", e),
     }
 }
 
