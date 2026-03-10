@@ -1,4 +1,4 @@
-pub use crate::types::common::TokenSpan;
+pub use crate::types::common::{S, TokenSpan};
 use donut_core::common::Axis;
 use std::collections::HashMap;
 
@@ -7,12 +7,18 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ValId(pub usize);
 
-/// Generator ID. Structurally equivalent to PrimId but kept as a separate type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct GenId(pub usize);
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ItemId(pub usize);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct DefId(pub usize);
+
+/// A scope entry: either a direct Item (e.g. parameter) or a Def (named definition).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Ref {
+    Item(ItemId),
+    Def(DefId),
+}
 
 // --- Val types ---
 
@@ -73,27 +79,27 @@ pub struct Param {
     pub ty: ValId,
 }
 
-// --- Gen (Generator) ---
-// Creates a new prim. Identified by cname. GenId ≈ PrimId.
+// --- Item ---
+// The actual entity. Identified by cname. ItemId ≈ ExtId.
 
 #[derive(Debug, Clone, Copy)]
-pub enum GenKind {
+pub enum ItemKind {
     Decl,
     Def,
     Param,
 }
 
 #[derive(Debug)]
-pub struct Gen {
+pub struct Item {
     pub cname: String,
     pub lname: String,
-    pub kind: GenKind,
+    pub kind: ItemKind,
     pub ty: ValId,
     pub params: Vec<Param>,
 }
 
-// --- Item ---
-// Named reference. Body references Gens via Val expressions.
+// --- Def ---
+// Named definition. Has body, members, decorators.
 
 #[derive(Debug)]
 pub struct FunctorMapping {
@@ -103,7 +109,7 @@ pub struct FunctorMapping {
 }
 
 #[derive(Debug)]
-pub enum ItemBody {
+pub enum DefBody {
     Value {
         val: Option<ValId>,
         members: Module,
@@ -114,13 +120,14 @@ pub enum ItemBody {
 }
 
 #[derive(Debug)]
-pub struct Item {
+pub struct Def {
     pub qname: String,
     pub lname: String,
     pub span: TokenSpan,
+    pub item: Option<ItemId>,
     pub ty: Option<ValId>,
     pub params: Vec<Param>,
-    pub body: ItemBody,
+    pub body: DefBody,
     pub decos: Vec<ValId>,
     pub origin: Option<String>,
     pub param_counts: Vec<usize>,
@@ -130,7 +137,7 @@ pub struct Item {
 
 #[derive(Debug, Clone)]
 pub struct Module {
-    pub entries: Vec<ItemId>,
+    pub entries: Vec<DefId>,
     index: HashMap<String, usize>,
 }
 
@@ -138,24 +145,23 @@ pub struct Module {
 
 pub struct Program {
     pub root: Module,
-    pub gens: Vec<Gen>,
     pub items: Vec<Item>,
-    pub vals: Vec<Val>,
-    pub val_spans: Vec<Option<TokenSpan>>,
+    pub defs: Vec<Def>,
+    pub vals: Vec<S<Val>>,
 }
 
 impl Program {
     pub fn val(&self, id: ValId) -> &Val {
-        &self.vals[id.0]
+        &self.vals[id.0].0
     }
-    pub fn val_span(&self, id: ValId) -> Option<&TokenSpan> {
-        self.val_spans[id.0].as_ref()
-    }
-    pub fn generator(&self, id: GenId) -> &Gen {
-        &self.gens[id.0]
+    pub fn val_span(&self, id: ValId) -> &TokenSpan {
+        &self.vals[id.0].1
     }
     pub fn item(&self, id: ItemId) -> &Item {
         &self.items[id.0]
+    }
+    pub fn def(&self, id: DefId) -> &Def {
+        &self.defs[id.0]
     }
 }
 
@@ -167,18 +173,18 @@ impl Module {
         }
     }
 
-    pub fn define(&mut self, name: String, item: ItemId) -> Option<ItemId> {
+    pub fn define(&mut self, name: String, def: DefId) -> Option<DefId> {
         if let Some(&idx) = self.index.get(&name) {
             Some(self.entries[idx])
         } else {
             let idx = self.entries.len();
             self.index.insert(name, idx);
-            self.entries.push(item);
+            self.entries.push(def);
             None
         }
     }
 
-    pub fn get(&self, name: &str) -> Option<ItemId> {
+    pub fn get(&self, name: &str) -> Option<DefId> {
         let &idx = self.index.get(name)?;
         Some(self.entries[idx])
     }
@@ -188,12 +194,11 @@ impl Module {
     }
 
     /// Merge entries from another Module. Returns conflicting lnames.
-    /// Requires access to items array to get lnames from ItemIds.
-    pub fn merge_from(&mut self, source: &Module, items: &[Item]) -> Vec<String> {
+    pub fn merge_from(&mut self, source: &Module, defs: &[Def]) -> Vec<String> {
         let mut conflicts = Vec::new();
-        for &item_id in &source.entries {
-            let lname = items[item_id.0].lname.clone();
-            if self.define(lname.clone(), item_id).is_some() {
+        for &def_id in &source.entries {
+            let lname = defs[def_id.0].lname.clone();
+            if self.define(lname.clone(), def_id).is_some() {
                 conflicts.push(lname);
             }
         }
@@ -201,24 +206,24 @@ impl Module {
     }
 }
 
-impl Item {
+impl Def {
     pub fn members(&self) -> Option<&Module> {
         match &self.body {
-            ItemBody::Value { members, .. } => Some(members),
+            DefBody::Value { members, .. } => Some(members),
             _ => None,
         }
     }
 
     pub fn members_mut(&mut self) -> Option<&mut Module> {
         match &mut self.body {
-            ItemBody::Value { members, .. } => Some(members),
+            DefBody::Value { members, .. } => Some(members),
             _ => None,
         }
     }
 
     pub fn val(&self) -> Option<ValId> {
         match &self.body {
-            ItemBody::Value { val, .. } => *val,
+            DefBody::Value { val, .. } => *val,
             _ => None,
         }
     }

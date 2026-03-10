@@ -33,15 +33,15 @@ fn check_module(code: &str) -> Program {
     program
 }
 
-fn get_item<'a>(p: &'a Program, name: &str) -> &'a Item {
-    p.item(p.root.get(name).unwrap())
+fn get_def<'a>(p: &'a Program, name: &str) -> &'a Def {
+    p.def(p.root.get(name).unwrap())
 }
 
 /// Get the lnames of a module's entries.
 fn names<'a>(p: &'a Program, m: &Module) -> Vec<&'a str> {
     m.entries
         .iter()
-        .map(|&id| p.item(id).lname.as_str())
+        .map(|&id| p.def(id).lname.as_str())
         .collect()
 }
 
@@ -901,11 +901,11 @@ y = "world"
 "#,
     );
     assert_eq!(
-        val_as_string(&p, get_item(&p, "x").val().unwrap()),
+        val_as_string(&p, get_def(&p, "x").val().unwrap()),
         Some("\"hello\"")
     );
     assert_eq!(
-        val_as_string(&p, get_item(&p, "y").val().unwrap()),
+        val_as_string(&p, get_def(&p, "y").val().unwrap()),
         Some("\"world\"")
     );
 }
@@ -919,7 +919,7 @@ b = a
 "#,
     );
     assert_eq!(
-        val_as_path_name(&p, get_item(&p, "b").val().unwrap()),
+        val_as_path_name(&p, get_def(&p, "b").val().unwrap()),
         Some("a")
     );
 }
@@ -935,14 +935,14 @@ y: U = "v"
 "#,
     );
     assert_eq!(
-        val_as_path_name(&p, get_item(&p, "x").ty.unwrap()),
+        val_as_path_name(&p, get_def(&p, "x").ty.unwrap()),
         Some("T")
     );
     assert_eq!(
-        val_as_path_name(&p, get_item(&p, "y").ty.unwrap()),
+        val_as_path_name(&p, get_def(&p, "y").ty.unwrap()),
         Some("U")
     );
-    assert!(get_item(&p, "T").ty.is_none());
+    assert!(get_def(&p, "T").ty.is_none());
 }
 
 #[test]
@@ -954,7 +954,7 @@ U = "u"
 f[x: T, y: U] = "v"
 "#,
     );
-    let f = get_item(&p, "f");
+    let f = get_def(&p, "f");
     assert_eq!(f.params.len(), 2);
     assert_eq!(f.params[0].name, "x");
     assert_eq!(val_as_path_name(&p, f.params[0].ty), Some("T"));
@@ -971,10 +971,10 @@ m = {
 }
 "#,
     );
-    let m_item = get_item(&p, "m");
-    let x_id = m_item.members().unwrap().get("x").unwrap();
-    let x_item = p.item(x_id);
-    assert_eq!(val_as_string(&p, x_item.val().unwrap()), Some("\"inner\""));
+    let m_def = get_def(&p, "m");
+    let x_id = m_def.members().unwrap().get("x").unwrap();
+    let x_def = p.def(x_id);
+    assert_eq!(val_as_string(&p, x_def.val().unwrap()), Some("\"inner\""));
 }
 
 #[test]
@@ -987,7 +987,7 @@ x = g
   }
 "#,
     );
-    let x = get_item(&p, "x");
+    let x = get_def(&p, "x");
     assert!(
         x.members().unwrap().get("g").is_none(),
         "where binding should not be a member"
@@ -1006,11 +1006,11 @@ x = "base"
   }
 "#,
     );
-    let x = get_item(&p, "x");
+    let x = get_def(&p, "x");
     assert_eq!(val_as_string(&p, x.val().unwrap()), Some("\"base\""));
-    let a = p.item(x.members().unwrap().get("a").unwrap());
+    let a = p.def(x.members().unwrap().get("a").unwrap());
     assert_eq!(val_as_string(&p, a.val().unwrap()), Some("\"m1\""));
-    let b = p.item(x.members().unwrap().get("b").unwrap());
+    let b = p.def(x.members().unwrap().get("b").unwrap());
     assert_eq!(val_as_string(&p, b.val().unwrap()), Some("\"m2\""));
 }
 
@@ -1039,12 +1039,12 @@ m[x: T] = {
 }
 "#,
     );
-    let item = get_item(&p, "m");
-    assert_eq!(item.params.len(), 1);
-    assert_eq!(item.params[0].name, "x");
-    assert_eq!(val_as_path_name(&p, item.params[0].ty), Some("T"));
-    assert!(item.val().is_none(), "module body should not produce val");
-    assert_eq!(names(&p, item.members().unwrap()), vec!["inner"]);
+    let def = get_def(&p, "m");
+    assert_eq!(def.params.len(), 1);
+    assert_eq!(def.params[0].name, "x");
+    assert_eq!(val_as_path_name(&p, def.params[0].ty), Some("T"));
+    assert!(def.val().is_none(), "module body should not produce val");
+    assert_eq!(names(&p, def.members().unwrap()), vec!["inner"]);
 }
 
 #[test]
@@ -1058,7 +1058,7 @@ m = {
 }
 "#,
     );
-    let members = get_item(&p, "m").members().unwrap();
+    let members = get_def(&p, "m").members().unwrap();
     assert_eq!(names(&p, members), vec!["x", "y", "z"]);
 }
 
@@ -1073,7 +1073,7 @@ x = "v"
   }
 "#,
     );
-    let members = get_item(&p, "x").members().unwrap();
+    let members = get_def(&p, "x").members().unwrap();
     assert_eq!(names(&p, members), vec!["a", "b"]);
 }
 
@@ -1088,7 +1088,7 @@ m.b = "2"
 m.c = "3"
 "#,
     );
-    let members = get_item(&p, "m").members().unwrap();
+    let members = get_def(&p, "m").members().unwrap();
     assert_eq!(names(&p, members), vec!["a", "b", "c"]);
 }
 
@@ -1105,7 +1105,7 @@ x += {
 }
 "#,
     );
-    let members = get_item(&p, "x").members().unwrap();
+    let members = get_def(&p, "x").members().unwrap();
     assert_eq!(names(&p, members), vec!["a", "b", "c"]);
 }
 
@@ -1136,9 +1136,9 @@ a = {
 }
 "#,
     );
-    let a = get_item(&p, "a");
+    let a = get_def(&p, "a");
     let b_id = a.members().unwrap().get("b").unwrap();
-    let b = p.item(b_id);
+    let b = p.def(b_id);
     assert_eq!(names(&p, b.members().unwrap()), vec!["c", "d"]);
 }
 
@@ -1194,9 +1194,9 @@ fn functor_app_mappings_stored() {
     let p = check_module(
         "A = \"a\"\nB = \"b\"\na = \"x\"\nb = \"y\"\nf: A ~> B\nf(a) = \"x\"\nf(b) = \"y\"",
     );
-    let f = get_item(&p, "f");
+    let f = get_def(&p, "f");
     match &f.body {
-        ItemBody::Functor { mappings } => assert_eq!(mappings.len(), 2),
+        DefBody::Functor { mappings } => assert_eq!(mappings.len(), 2),
         _ => panic!("expected Functor body"),
     }
 }
@@ -1222,9 +1222,9 @@ f: A ~> B
 [n: T] f(a[n]) = "y"
 "#,
     );
-    let f = get_item(&p, "f");
+    let f = get_def(&p, "f");
     match &f.body {
-        ItemBody::Functor { mappings } => {
+        DefBody::Functor { mappings } => {
             assert_eq!(mappings.len(), 1);
             assert_eq!(mappings[0].params.len(), 1);
             assert_eq!(mappings[0].params[0].name, "n");
@@ -1375,73 +1375,117 @@ x: C → C
     assert!(p.root.get("decorator").is_none());
 }
 
+#[test]
+fn import_ui_no_conflict_with_user_nat() {
+    // `import "ui"` does not bring base entries, so user can define `nat`
+    check_ok(
+        "\
+import \"ui\"
+nat = \"user_nat\"
+",
+    );
+}
+
+#[test]
+fn use_conflicts_with_same_name() {
+    let errs = check_errs(
+        "\
+use \"base\"
+nat = \"user_nat\"
+",
+    );
+    assert!(
+        errs.iter().any(|e| e.contains("duplicate definition")),
+        "expected duplicate definition error: {errs:?}"
+    );
+}
+
 // ============================================================
-// Gen/Item structure tests (NEW)
+// Item/Def structure tests
 // ============================================================
 
 #[test]
-fn gen_created_for_declaration() {
+fn def_item_link() {
+    let p = check_module(
+        r#"
+T = "t"
+x: T
+y = "v"
+z: T := "w"
+"#,
+    );
+    // alias (T, y) → no Item
+    assert!(get_def(&p, "T").item.is_none());
+    assert!(get_def(&p, "y").item.is_none());
+    // declaration (x) → Item(Decl)
+    let x_item_id = get_def(&p, "x").item.unwrap();
+    assert!(matches!(p.item(x_item_id).kind, ItemKind::Decl));
+    // definition (z) → Item(Def)
+    let z_item_id = get_def(&p, "z").item.unwrap();
+    assert!(matches!(p.item(z_item_id).kind, ItemKind::Def));
+}
+
+#[test]
+fn item_created_for_declaration() {
     let p = check_module("T = \"t\"\nx: T");
-    // x: T should create a Gen (Decl)
-    let decl_gens: Vec<_> = p
-        .gens
+    let decl_items: Vec<_> = p
+        .items
         .iter()
-        .filter(|g| matches!(g.kind, GenKind::Decl))
+        .filter(|i| matches!(i.kind, ItemKind::Decl))
         .collect();
     assert!(
-        decl_gens.iter().any(|g| g.lname == "x"),
-        "expected Gen(Decl) for x, got: {:?}",
-        decl_gens.iter().map(|g| &g.lname).collect::<Vec<_>>()
+        decl_items.iter().any(|i| i.lname == "x"),
+        "expected Item(Decl) for x, got: {:?}",
+        decl_items.iter().map(|i| &i.lname).collect::<Vec<_>>()
     );
 }
 
 #[test]
-fn gen_not_created_for_alias() {
+fn item_not_created_for_alias() {
     let p = check_module("a = \"v\"\nb = a");
-    // b = a is an alias, no Gen should be created for b
-    let b_gens: Vec<_> = p.gens.iter().filter(|g| g.lname == "b").collect();
+    let b_items: Vec<_> = p.items.iter().filter(|i| i.lname == "b").collect();
     assert!(
-        b_gens.is_empty(),
-        "alias should not create a Gen, got: {:?}",
-        b_gens
+        b_items.is_empty(),
+        "alias should not create an Item, got: {:?}",
+        b_items
     );
 }
 
 #[test]
-fn gen_created_for_def() {
+fn item_created_for_def() {
     let p = check_module("T = \"t\"\ng: T := \"v\"");
-    let def_gens: Vec<_> = p
-        .gens
+    let def_items: Vec<_> = p
+        .items
         .iter()
-        .filter(|g| matches!(g.kind, GenKind::Def) && g.lname == "g")
+        .filter(|i| matches!(i.kind, ItemKind::Def) && i.lname == "g")
         .collect();
-    assert_eq!(def_gens.len(), 1, "expected Gen(Def) for g");
+    assert_eq!(def_items.len(), 1, "expected Item(Def) for g");
 }
 
 #[test]
-fn gen_created_for_param() {
+fn item_created_for_param() {
     let p = check_module("T = \"t\"\nf[x: T] = \"v\"");
-    let param_gens: Vec<_> = p
-        .gens
+    let param_items: Vec<_> = p
+        .items
         .iter()
-        .filter(|g| matches!(g.kind, GenKind::Param))
+        .filter(|i| matches!(i.kind, ItemKind::Param))
         .collect();
     assert!(
-        param_gens.iter().any(|g| g.lname == "x"),
-        "expected Gen(Param) for x, got: {:?}",
-        param_gens.iter().map(|g| &g.lname).collect::<Vec<_>>()
+        param_items.iter().any(|i| i.lname == "x"),
+        "expected Item(Param) for x, got: {:?}",
+        param_items.iter().map(|i| &i.lname).collect::<Vec<_>>()
     );
 }
 
 #[test]
-fn gen_cname_basic() {
+fn item_cname_basic() {
     let p = check_module("T = \"t\"\na: T");
-    let g = p.gens.iter().find(|g| g.lname == "a").unwrap();
-    assert_eq!(g.cname, "a");
+    let i = p.items.iter().find(|i| i.lname == "a").unwrap();
+    assert_eq!(i.cname, "a");
 }
 
 #[test]
-fn gen_cname_in_module() {
+fn item_cname_in_module() {
     let p = check_module(
         r#"
 T = "t"
@@ -1450,44 +1494,44 @@ m = {
 }
 "#,
     );
-    let g = p.gens.iter().find(|g| g.lname == "a").unwrap();
-    assert_eq!(g.cname, "m.a");
+    let i = p.items.iter().find(|i| i.lname == "a").unwrap();
+    assert_eq!(i.cname, "m.a");
 }
 
 #[test]
-fn gen_cname_with_origin() {
+fn item_cname_with_origin() {
     let p = check_module("import \"base\"");
     // base.donut defines "nat: meta" etc.
-    let nat_gen = p.gens.iter().find(|g| g.lname == "nat");
-    assert!(nat_gen.is_some(), "expected Gen for nat from base import");
+    let nat_item = p.items.iter().find(|i| i.lname == "nat");
+    assert!(nat_item.is_some(), "expected Item for nat from base import");
     assert!(
-        nat_gen.unwrap().cname.starts_with("base::"),
+        nat_item.unwrap().cname.starts_with("base::"),
         "expected cname with base:: prefix, got: {}",
-        nat_gen.unwrap().cname
+        nat_item.unwrap().cname
     );
 }
 
 #[test]
-fn gen_param_cname() {
+fn item_param_cname() {
     let p = check_module("T = \"t\"\nf[x: T] = \"v\"");
-    let param_gen = p
-        .gens
+    let param_item = p
+        .items
         .iter()
-        .find(|g| g.lname == "x" && matches!(g.kind, GenKind::Param))
+        .find(|i| i.lname == "x" && matches!(i.kind, ItemKind::Param))
         .unwrap();
-    assert_eq!(param_gen.cname, "f#x");
+    assert_eq!(param_item.cname, "f#x");
 }
 
 #[test]
-fn item_qname_basic() {
+fn def_qname_basic() {
     let p = check_module("a = \"v\"");
-    let item = get_item(&p, "a");
-    assert_eq!(item.qname, "a");
-    assert_eq!(item.lname, "a");
+    let def = get_def(&p, "a");
+    assert_eq!(def.qname, "a");
+    assert_eq!(def.lname, "a");
 }
 
 #[test]
-fn item_qname_in_module() {
+fn def_qname_in_module() {
     let p = check_module(
         r#"
 m = {
@@ -1495,15 +1539,15 @@ m = {
 }
 "#,
     );
-    let m = get_item(&p, "m");
+    let m = get_def(&p, "m");
     let a_id = m.members().unwrap().get("a").unwrap();
-    let a = p.item(a_id);
+    let a = p.def(a_id);
     assert_eq!(a.qname, "m.a");
     assert_eq!(a.lname, "a");
 }
 
 #[test]
-fn item_qname_nested_module() {
+fn def_qname_nested_module() {
     let p = check_module(
         r#"
 a = {
@@ -1513,79 +1557,77 @@ a = {
 }
 "#,
     );
-    let a = get_item(&p, "a");
+    let a = get_def(&p, "a");
     let b_id = a.members().unwrap().get("b").unwrap();
-    let b = p.item(b_id);
+    let b = p.def(b_id);
     assert_eq!(b.qname, "a.b");
     let c_id = b.members().unwrap().get("c").unwrap();
-    let c = p.item(c_id);
+    let c = p.def(c_id);
     assert_eq!(c.qname, "a.b.c");
 }
 
 #[test]
-fn gen_dedup_across_imports() {
-    // Importing the same module twice should reuse Gens
+fn item_dedup_across_imports() {
+    // Importing the same module twice should reuse Items
     let p = check_module(
         "\
 import \"base\"
 b = import \"base\"
 ",
     );
-    let nat_gens: Vec<_> = p.gens.iter().filter(|g| g.cname == "base::nat").collect();
+    let nat_items: Vec<_> = p.items.iter().filter(|i| i.cname == "base::nat").collect();
     assert_eq!(
-        nat_gens.len(),
+        nat_items.len(),
         1,
-        "expected exactly one Gen for base::nat (dedup), got {}",
-        nat_gens.len()
+        "expected exactly one Item for base::nat (dedup), got {}",
+        nat_items.len()
     );
 }
 
 #[test]
-fn gen_decl_has_type() {
+fn item_decl_has_type() {
     let p = check_module("T = \"t\"\na: T");
-    let g = p.gens.iter().find(|g| g.lname == "a").unwrap();
-    // Gen.ty should point to a Val::Path with name "T"
-    assert_eq!(val_as_path_name(&p, g.ty), Some("T"));
+    let i = p.items.iter().find(|i| i.lname == "a").unwrap();
+    assert_eq!(val_as_path_name(&p, i.ty), Some("T"));
 }
 
 #[test]
-fn gen_decl_has_params() {
+fn item_decl_has_params() {
     let p = check_module("T = \"t\"\nU = \"u\"\nf[x: T, y: U]: T");
-    let g = p.gens.iter().find(|g| g.lname == "f").unwrap();
-    assert_eq!(g.params.len(), 2);
-    assert_eq!(g.params[0].name, "x");
-    assert_eq!(g.params[1].name, "y");
+    let i = p.items.iter().find(|i| i.lname == "f").unwrap();
+    assert_eq!(i.params.len(), 2);
+    assert_eq!(i.params[0].name, "x");
+    assert_eq!(i.params[1].name, "y");
 }
 
 #[test]
-fn multiple_decls_multiple_gens() {
+fn multiple_decls_multiple_items() {
     let p = check_module("T = \"t\"\na: T\nb: T\nc: T");
-    let decl_gens: Vec<_> = p
-        .gens
+    let decl_items: Vec<_> = p
+        .items
         .iter()
-        .filter(|g| matches!(g.kind, GenKind::Decl))
-        .map(|g| g.lname.as_str())
+        .filter(|i| matches!(i.kind, ItemKind::Decl))
+        .map(|i| i.lname.as_str())
         .collect();
-    assert!(decl_gens.contains(&"a"));
-    assert!(decl_gens.contains(&"b"));
-    assert!(decl_gens.contains(&"c"));
+    assert!(decl_items.contains(&"a"));
+    assert!(decl_items.contains(&"b"));
+    assert!(decl_items.contains(&"c"));
 }
 
 #[test]
-fn gen_not_created_for_composition() {
+fn item_not_created_for_composition() {
     let p = check_module("a = \"x\"\nb = \"y\"\nf = a ; b");
-    let f_gens: Vec<_> = p.gens.iter().filter(|g| g.lname == "f").collect();
+    let f_items: Vec<_> = p.items.iter().filter(|i| i.lname == "f").collect();
     assert!(
-        f_gens.is_empty(),
-        "composition should not create a Gen: {:?}",
-        f_gens
+        f_items.is_empty(),
+        "composition should not create an Item: {:?}",
+        f_items
     );
 }
 
 #[test]
-fn item_origin_set_for_import() {
+fn def_origin_set_for_import() {
     let p = check_module("import \"base\"");
-    // Items from import should have origin set
-    let nat_item = get_item(&p, "nat");
-    assert_eq!(nat_item.origin.as_deref(), Some("base"));
+    let nat_def = get_def(&p, "nat");
+    assert_eq!(nat_def.origin.as_deref(), Some("base"));
 }
