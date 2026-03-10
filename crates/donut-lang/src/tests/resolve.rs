@@ -45,10 +45,13 @@ fn names<'a>(p: &'a Program, m: &Module) -> Vec<&'a str> {
         .collect()
 }
 
-/// Extract a single-segment path name from a Val.
+/// Extract the lname of a path's target Def.
 fn val_as_path_name<'a>(p: &'a Program, val_id: ValId) -> Option<&'a str> {
     match p.val(val_id) {
-        Val::Path(path) if path.segments.len() == 1 => Some(&path.segments[0].name),
+        Val::Path(path) => match path.target {
+            Ref::Def(def_id) => Some(&p.def(def_id).lname),
+            Ref::Item(item_id) => Some(&p.item(item_id).lname),
+        },
         _ => None,
     }
 }

@@ -30,20 +30,9 @@ pub enum ArrowKind {
 }
 
 #[derive(Debug)]
-pub struct ParamVal {
-    pub name: Option<String>,
-    pub val: ValId,
-}
-
-#[derive(Debug)]
-pub struct Segment {
-    pub name: String,
-    pub params: Vec<ParamVal>,
-}
-
-#[derive(Debug)]
 pub struct Path {
-    pub segments: Vec<Segment>,
+    pub target: Ref,
+    pub args: Vec<ValId>,
     pub applicand: Option<ValId>,
 }
 

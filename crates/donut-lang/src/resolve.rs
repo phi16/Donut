@@ -4,6 +4,30 @@ use crate::types::semtree;
 use crate::types::token::Token;
 use std::collections::{HashMap, HashSet};
 
+// --- Number path detection ---
+
+fn try_path_as_number(path: &semtree::Path<semtree::ParamVal>) -> Option<String> {
+    if path.1.is_some() {
+        return None; // has applicand
+    }
+    let mut parts = Vec::new();
+    for seg_s in &path.0 {
+        let S(seg, _) = seg_s;
+        if !seg.1.0.is_empty() {
+            return None; // has params
+        }
+        let name = &seg.0.0;
+        if !crate::convert::is_number_str(name) {
+            return None;
+        }
+        parts.push(name.as_str());
+    }
+    if parts.len() <= 1 {
+        return None; // single segment already handled by convert
+    }
+    Some(parts.join("."))
+}
+
 // --- Resolve trait ---
 
 trait Resolve {
@@ -48,6 +72,9 @@ impl Resolve for semtree::Val {
     fn resolve(self, ctx: &mut Checker) -> Val {
         match self {
             semtree::Val::Path(path_s) => {
+                if let Some(num) = try_path_as_number(&path_s.0) {
+                    return Val::Lit(Lit::Number(num));
+                }
                 let path = (*path_s).resolve(ctx);
                 Val::Path(path)
             }
@@ -88,7 +115,7 @@ impl Resolve for S<semtree::Path<semtree::ParamVal>> {
     fn resolve(self, ctx: &mut Checker) -> Path {
         let S(path, _) = self;
 
-        // Name resolution (validate names exist)
+        // Name resolution
         let name_spans: Vec<(&str, &TokenSpan)> = path
             .0
             .iter()
@@ -97,38 +124,27 @@ impl Resolve for S<semtree::Path<semtree::ParamVal>> {
                 (seg.0.0.as_str(), span)
             })
             .collect();
-        ctx.resolve_segments(&name_spans);
+        let resolved = ctx.resolve_segments(&name_spans);
 
-        // Convert segments (drop spans — not needed for check)
-        let segments: Vec<Segment> = path.0.into_iter().map(|seg_s| seg_s.resolve(ctx)).collect();
+        // Flatten param args from all segments
+        let mut args: Vec<ValId> = Vec::new();
+        for seg_s in path.0 {
+            let S(seg, _) = seg_s;
+            for pv in seg.1.0 {
+                args.push(pv.val.resolve(ctx));
+            }
+        }
 
         let applicand = path.1.map(|v| v.resolve(ctx));
 
+        // Use a dummy Ref if unresolved (error already reported)
+        let target = resolved.unwrap_or(Ref::Def(DefId(0)));
+
         Path {
-            segments,
+            target,
+            args,
             applicand,
         }
-    }
-}
-
-impl Resolve for S<semtree::Segment<semtree::ParamVal>> {
-    type Output = Segment;
-    fn resolve(self, ctx: &mut Checker) -> Segment {
-        let S(seg, _) = self;
-        let params: Vec<ParamVal> = seg.1.0.into_iter().map(|pv| pv.resolve(ctx)).collect();
-        Segment {
-            name: seg.0.0,
-            params,
-        }
-    }
-}
-
-impl Resolve for semtree::ParamVal {
-    type Output = ParamVal;
-    fn resolve(self, ctx: &mut Checker) -> ParamVal {
-        let name = self.name.map(|n| n.0);
-        let val = self.val.resolve(ctx);
-        ParamVal { name, val }
     }
 }
 
@@ -320,7 +336,7 @@ struct Checker<'a> {
 
 impl<'a> Checker<'a> {
     fn new(tokens: &'a [Token<'a>]) -> Self {
-        Checker {
+        let mut checker = Checker {
             tokens,
             items: Vec::new(),
             defs: Vec::new(),
@@ -336,7 +352,52 @@ impl<'a> Checker<'a> {
             current_origin: None,
             extra_sources: HashMap::new(),
             def_order_stack: Vec::new(),
-        }
+        };
+        checker.register_builtins();
+        checker
+    }
+
+    fn register_builtins(&mut self) {
+        // meta: meta (self-referential type)
+        // We know meta will be ItemId(0), so we can create the self-referencing Val
+        let meta_ty_val = self.alloc_val(
+            Val::Path(Path {
+                target: Ref::Item(ItemId(0)),
+                args: vec![],
+                applicand: None,
+            }),
+            TokenSpan { start: 0, end: 0 },
+        );
+        let meta_id = self.alloc_item(Item {
+            cname: "meta".into(),
+            lname: "meta".into(),
+            kind: ItemKind::Decl,
+            ty: meta_ty_val,
+            params: vec![],
+        });
+        debug_assert_eq!(meta_id, ItemId(0));
+
+        // *: meta
+        let star_ty_val = self.alloc_val(
+            Val::Path(Path {
+                target: Ref::Item(meta_id),
+                args: vec![],
+                applicand: None,
+            }),
+            TokenSpan { start: 0, end: 0 },
+        );
+        let star_id = self.alloc_item(Item {
+            cname: "*".into(),
+            lname: "*".into(),
+            kind: ItemKind::Decl,
+            ty: star_ty_val,
+            params: vec![],
+        });
+
+        // Register in initial scope
+        self.push_scope();
+        self.define("meta".into(), Ref::Item(meta_id));
+        self.define("*".into(), Ref::Item(star_id));
     }
 
     // --- Arena allocators ---
@@ -524,18 +585,15 @@ impl<'a> Checker<'a> {
 
     // --- Name resolution ---
 
-    fn resolve_segments(&mut self, segments: &[(&str, &TokenSpan)]) {
+    fn resolve_segments(&mut self, segments: &[(&str, &TokenSpan)]) -> Option<Ref> {
         let Some((&(first_name, first_span), rest)) = segments.split_first() else {
-            return;
+            return None;
         };
         let Some(first_ref) = self.lookup(first_name) else {
-            if first_name != "*"
-                && first_name != "meta"
-                && !crate::convert::is_number_str(first_name)
-            {
+            if !crate::convert::is_number_str(first_name) {
                 self.error_at(first_span, format!("undefined name `{}`", first_name));
             }
-            return;
+            return None;
         };
         // Track deco param usage in applicand context
         if let Ref::Item(item_id) = first_ref {
@@ -546,21 +604,23 @@ impl<'a> Checker<'a> {
             }
         }
         // Follow member path
-        let mut current_def = match first_ref {
-            Ref::Def(id) => Some(id),
-            Ref::Item(_) => None,
-        };
+        let mut current_ref = first_ref;
         for &(name, span) in rest {
+            let current_def = match current_ref {
+                Ref::Def(id) => Some(id),
+                Ref::Item(_) => None,
+            };
             let next = current_def
                 .and_then(|id| self.def(id).members.get(name));
             match next {
-                Some(id) => current_def = Some(id),
+                Some(id) => current_ref = Ref::Def(id),
                 None => {
                     self.error_at(span, format!("undefined member `{}`", name));
-                    return;
+                    return None;
                 }
             }
         }
+        Some(current_ref)
     }
 
     fn lookup_path(&self, names: &[impl AsRef<str>]) -> Option<DefId> {
@@ -962,9 +1022,7 @@ impl<'a> Checker<'a> {
         if body_members.entries.is_empty() {
             if let Some(val_id) = body_val_resolved {
                 if let Val::Path(path) = &self.vals[val_id.0].0 {
-                    let path_names: Vec<String> =
-                        path.segments.iter().map(|s| s.name.clone()).collect();
-                    if let Some(id) = self.lookup_path(&path_names) {
+                    if let Ref::Def(id) = path.target {
                         let m = &self.def(id).members;
                         if !m.entries.is_empty() {
                             body_members = m.clone();
@@ -1207,11 +1265,11 @@ impl<'a> Checker<'a> {
                 let span = self.vals[val_id.0].1.clone();
                 match &self.vals[val_id.0].0 {
                     Val::Path(path) => {
-                        let path_names: Vec<String> =
-                            path.segments.iter().map(|s| s.name.clone()).collect();
-                        self.lookup_path(&path_names)
-                            .map(|id| self.def(id).members.clone())
-                            .unwrap_or_else(Module::new)
+                        if let Ref::Def(id) = path.target {
+                            self.def(id).members.clone()
+                        } else {
+                            Module::new()
+                        }
                     }
                     _ => {
                         self.error_at(&span, "`+=` requires a path or module body");
