@@ -11,7 +11,7 @@ fn check_errs(code: &str) -> Vec<String> {
         conv_errors.is_empty(),
         "unexpected convert errors: {conv_errors:?}"
     );
-    let (_program, errors) = crate::check::resolve(sem_prog, &tokens);
+    let (_program, errors) = crate::resolve::resolve(sem_prog, &tokens);
     errors.into_iter().map(|(_, msg)| msg).collect()
 }
 
@@ -28,7 +28,7 @@ fn check_module(code: &str) -> Program {
         conv_errors.is_empty(),
         "unexpected convert errors: {conv_errors:?}"
     );
-    let (program, errors) = crate::check::resolve(sem_prog, &tokens);
+    let (program, errors) = crate::resolve::resolve(sem_prog, &tokens);
     assert!(errors.is_empty(), "unexpected errors: {errors:?}");
     program
 }

@@ -5,6 +5,7 @@ pub mod convert;
 pub mod check;
 pub mod parse;
 pub mod pretty;
+pub mod resolve;
 pub mod tokenize;
 pub mod types;
 
