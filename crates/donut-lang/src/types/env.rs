@@ -91,6 +91,11 @@ pub struct Item {
 }
 
 #[derive(Debug)]
+pub struct DefStyle {
+    pub color: Color,
+}
+
+#[derive(Debug)]
 pub struct Def {
     pub qname: String,
     pub lname: String,
@@ -100,6 +105,7 @@ pub struct Def {
     pub params: Vec<ItemId>,
     pub val: PureVal,
     pub decos: Vec<PureVal>,
+    pub style: DefStyle,
     pub origin: Option<String>,
     pub param_counts: Vec<usize>,
 }
@@ -230,12 +236,7 @@ impl Env {
         format!("[{}]", params.join(", "))
     }
 
-    pub fn def_color<'a>(&self, def: &'a Def) -> Option<&'a Color> {
-        for deco in &def.decos {
-            if let Some(Meta::Deco(Decorator::Style(Style::Color(c)))) = as_meta(deco) {
-                return Some(c);
-            }
-        }
-        None
+    pub fn def_color<'a>(&self, def: &'a Def) -> &'a Color {
+        &def.style.color
     }
 }

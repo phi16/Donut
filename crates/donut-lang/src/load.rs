@@ -22,8 +22,10 @@ pub fn load_with_sources(code: &str, extra_sources: HashMap<String, String>) -> 
         crate::resolve::resolve_with_sources(sem_prog, &tokens, extra_sources);
     errors.extend(resolve_errors);
 
-    let (env, check_errors) = crate::check::check(&resolved, &tokens);
+    let (mut env, check_errors) = crate::check::check(&resolved, &tokens);
     errors.extend(check_errors);
+
+    crate::deco::decorate(&mut env);
 
     (env, errors)
 }

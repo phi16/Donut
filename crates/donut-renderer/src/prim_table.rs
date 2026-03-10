@@ -18,12 +18,9 @@ impl PrimTable {
     pub fn prim_color(&self, prim: &Prim) -> Color {
         let prim_id = prim.id;
         if let Some(&item_id) = self.env.prim_item.get(&prim_id) {
-            // Find the def that owns this item and check its decorators
             for def in &self.env.defs {
                 if def.item == Some(item_id) {
-                    if let Some(c) = self.env.def_color(def) {
-                        return c.clone();
-                    }
+                    return *self.env.def_color(def);
                 }
             }
         }

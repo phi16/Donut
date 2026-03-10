@@ -324,6 +324,7 @@ impl<'a> Checker<'a> {
             params,
             val,
             decos,
+            style: env::DefStyle { color: env::Color::gray() },
             origin,
             param_counts,
         };
@@ -478,17 +479,32 @@ impl<'a> Checker<'a> {
             base
         } else {
             let args: Vec<PureVal> = path.args.iter().map(|&a| self.eval_val(a)).collect();
-            match base {
-                PureVal::App(id, mut existing) => {
-                    existing.extend(args);
-                    PureVal::App(id, existing)
-                }
-                _ => {
-                    // Substitute param ExtIds with actual args (Cell, Any/Meta, etc.)
-                    let param_ids = self.param_ext_ids(path.target);
-                    let subst_map: HashMap<ExtId, PureVal> =
-                        param_ids.into_iter().zip(args.into_iter()).collect();
-                    subst_pv(&base, &subst_map, &self.prim_item)
+            // Decl defs (with item) and bare Items accumulate args into App;
+            // Alias defs substitute param placeholders with actual args.
+            let is_alias = match path.target {
+                Ref::Item(_) => false,
+                Ref::Def(def_id) => matches!(
+                    self.program.def(def_id).body,
+                    DefBody::Alias { .. }
+                ),
+            };
+            if is_alias {
+                let param_ids = self.param_ext_ids(path.target);
+                let subst_map: HashMap<ExtId, PureVal> =
+                    param_ids.into_iter().zip(args.into_iter()).collect();
+                subst_pv(&base, &subst_map, &self.prim_item)
+            } else {
+                match base {
+                    PureVal::App(id, mut existing) => {
+                        existing.extend(args);
+                        PureVal::App(id, existing)
+                    }
+                    _ => {
+                        let param_ids = self.param_ext_ids(path.target);
+                        let subst_map: HashMap<ExtId, PureVal> =
+                            param_ids.into_iter().zip(args.into_iter()).collect();
+                        subst_pv(&base, &subst_map, &self.prim_item)
+                    }
                 }
             }
         };
@@ -1030,6 +1046,7 @@ impl<'a> Checker<'a> {
                         params: vec![],
                         val: Meta::Error.into(),
                         decos: vec![],
+                        style: env::DefStyle { color: env::Color::gray() },
                         origin: def.origin.clone(),
                         param_counts: def.param_counts.clone(),
                     }

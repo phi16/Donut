@@ -24,9 +24,11 @@ version = "0.3.82"
 features = [
     "console",
     "CanvasRenderingContext2d",
+    "CssStyleDeclaration",
     "Document",
     "Window",
     "HtmlCanvasElement",
+    "HtmlElement",
     "HtmlSelectElement",
     "HtmlOptionElement",
     "MouseEvent",

@@ -6,7 +6,7 @@ use crate::shader_view::ShaderView;
 use donut_core::cell::*;
 use donut_core::common::*;
 use donut_core::free_cell::FreeCell;
-use donut_lang::types::env::Env;
+use donut_lang::types::env::{Color, Env};
 use donut_lang::types::item::DefId;
 use donut_layout::layout_solver::LayoutSolver;
 use donut_renderer::geometry::{Geometry, R};
@@ -34,6 +34,10 @@ pub struct App {
     cell: Option<Geometry>,
     slice_pos: Vec<R>,
     diagnostics: Vec<String>,
+}
+
+fn format_css_color(c: &Color) -> String {
+    format!("rgb({}, {}, {})", c.r(), c.g(), c.b())
 }
 
 fn def_cell(env: &Env, def_id: DefId) -> Option<FreeCell> {
@@ -185,6 +189,11 @@ impl App {
             let label = format!("{} ({}d)", def.lname, dim);
             option.set_text_content(Some(&label));
             option.set_value(&def_id.0.to_string());
+            let color = env.def_color(def);
+            let el: &web_sys::HtmlElement = option.unchecked_ref();
+            el.style()
+                .set_property("color", &format_css_color(color))
+                .unwrap();
             if self.selected == Some(def_id) {
                 option.set_selected(true);
             }
@@ -462,12 +471,15 @@ impl App {
         let Some(selected) = self.selected else {
             return;
         };
-        let def = &self.env().defs[selected.0];
-        let text = self.env().display_params(def);
+        let env = self.env();
+        let def = &env.defs[selected.0];
+        let color = env.def_color(def);
+        let text = env.display_params(def);
         if text.is_empty() {
             return;
         }
-        self.context.set_fill_style_str("rgba(255, 255, 255, 0.6)");
+        self.context
+            .set_fill_style_str(&format!("rgba({}, {}, {}, 0.8)", color.r(), color.g(), color.b()));
         self.context.set_font("20px monospace");
         let _ = self.context.fill_text(&text, x, y);
     }
