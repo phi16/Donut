@@ -1,4 +1,4 @@
-use crate::old_check::Env;
+use crate::types::env::Env;
 use crate::types::common::Error;
 use std::collections::HashMap;
 
@@ -19,10 +19,10 @@ pub fn load_with_sources(code: &str, extra_sources: HashMap<String, String>) -> 
     errors.extend(conv_errors);
 
     let (resolved, resolve_errors) =
-        crate::old_resolve::resolve_with_sources(sem_prog, &tokens, extra_sources);
+        crate::resolve::resolve_with_sources(sem_prog, &tokens, extra_sources);
     errors.extend(resolve_errors);
 
-    let (env, check_errors) = crate::old_check::check(&resolved, &tokens);
+    let (env, check_errors) = crate::check::check(&resolved, &tokens);
     errors.extend(check_errors);
 
     (env, errors)

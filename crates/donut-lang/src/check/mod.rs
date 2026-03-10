@@ -89,6 +89,109 @@ impl<'a> Checker<'a> {
         self.prefixes.join(".")
     }
 
+    // --- Display helpers ---
+
+    fn prim_name(&self, id: PrimId) -> String {
+        if let Some(&item_id) = self.prim_item.get(&id) {
+            self.program.item(item_id).cname.clone()
+        } else {
+            format!("P{}", id.0)
+        }
+    }
+
+    fn item_name(&self, id: ItemId) -> String {
+        self.program.item(id).cname.clone()
+    }
+
+    fn display_pure_val(&self, pv: &PureVal) -> String {
+        match pv {
+            PureVal::Cell(cell) => self.display_cell(cell),
+            PureVal::App(ext_id, args) => {
+                let name = self.item_name(ItemId(ext_id.0 as usize));
+                if args.is_empty() {
+                    name
+                } else {
+                    let args_str: Vec<String> =
+                        args.iter().map(|a| self.display_pure_val(a)).collect();
+                    format!("{}[{}]", name, args_str.join(", "))
+                }
+            }
+            PureVal::Any(any) => self.display_meta(any.inner::<Meta>()),
+        }
+    }
+
+    fn display_cell(&self, cell: &PureCell) -> String {
+        match cell {
+            PureCell::Prim(prim, _, dim) => {
+                let name = self.prim_name(prim.id);
+                if !prim.args.is_empty() {
+                    let args_str: Vec<String> =
+                        prim.args.iter().map(|a| self.display_pure_val(a)).collect();
+                    format!("{}[{}]", name, args_str.join(", "))
+                } else if dim.in_space == 0 {
+                    name
+                } else {
+                    name
+                }
+            }
+            PureCell::Comp(axis, children, _) => {
+                let sep = match axis {
+                    0 => " ",
+                    1 => "; ",
+                    _ => ", ",
+                };
+                let parts: Vec<String> = children.iter().map(|c| self.display_cell(c)).collect();
+                if *axis >= 2 {
+                    format!("[{}: {}]", axis, parts.join(sep))
+                } else {
+                    parts.join(sep)
+                }
+            }
+        }
+    }
+
+    fn display_meta(&self, meta: &Meta) -> String {
+        match meta {
+            Meta::Ty(ty) => self.display_ty(ty),
+            Meta::Nat(n) => format!("{}", n),
+            Meta::Rat(r) => format!("{}", r),
+            Meta::Color(c) => format!("rgb({}, {}, {})", c.0, c.1, c.2),
+            Meta::Deco(d) => format!("{:?}", d),
+            Meta::Error => "<error>".to_string(),
+        }
+    }
+
+    fn display_ty(&self, ty: &Ty) -> String {
+        match ty {
+            Ty::Meta => "meta".to_string(),
+            Ty::Star => "*".to_string(),
+            Ty::Arrow(_, arrow_ty, src, tgt) => {
+                let op = match arrow_ty {
+                    ArrowTy::To => "→",
+                    ArrowTy::Eq => "~",
+                };
+                format!(
+                    "{} {} {}",
+                    self.display_pure_val(src),
+                    op,
+                    self.display_pure_val(tgt)
+                )
+            }
+            Ty::Functor(src, tgt) => {
+                format!(
+                    "{} ~> {}",
+                    self.display_pure_val(src),
+                    self.display_pure_val(tgt)
+                )
+            }
+            Ty::Nat => "nat".to_string(),
+            Ty::Rat => "rat".to_string(),
+            Ty::Color => "color".to_string(),
+            Ty::Deco => "decorator".to_string(),
+            Ty::Hole => "_".to_string(),
+        }
+    }
+
     // --- DefTree traversal ---
 
     fn process_trees(&mut self, trees: &[DefTree]) -> HashMap<String, env::Module> {
@@ -112,7 +215,6 @@ impl<'a> Checker<'a> {
         let def = self.program.def(def_id);
         let lname = def.lname.clone();
         let params = def.params.clone();
-
         self.prefixes.push(lname);
 
         // Check param Items
@@ -182,11 +284,11 @@ impl<'a> Checker<'a> {
             DefBody::Functor { mappings } => {
                 let ty = declared_ty.unwrap_or(Ty::Hole);
                 self.check_functor(def_id, &ty, mappings);
-                (None, PureVal::App(ExtId(0), vec![]), ty)
+                (None, Meta::Error.into(), ty)
             }
             DefBody::None => {
                 let ty = declared_ty.unwrap_or(Ty::Star);
-                (None, PureVal::App(ExtId(0), vec![]), ty)
+                (None, Meta::Error.into(), ty)
             }
         };
 
@@ -278,6 +380,7 @@ impl<'a> Checker<'a> {
                 Some(Meta::Rat(_)) => Ty::Rat,
                 Some(Meta::Color(_)) => Ty::Color,
                 Some(Meta::Deco(_)) => Ty::Deco,
+                Some(Meta::Error) => Ty::Hole,
                 None => Ty::Hole,
             },
         }
@@ -288,7 +391,13 @@ impl<'a> Checker<'a> {
             ty.clone()
         } else {
             let span = self.program.val_span(val_id);
-            self.error_at(span, format!("expected type expression, got {:?}", pv));
+            self.error_at(
+                span,
+                format!(
+                    "expected type expression, got `{}`",
+                    self.display_pure_val(pv)
+                ),
+            );
             Ty::Star
         }
     }
@@ -354,7 +463,7 @@ impl<'a> Checker<'a> {
                 Ref::Item(item_id) => format!("`{}` (item)", self.program.item(item_id).cname),
             };
             self.error_at(span, format!("unresolved path: {}", target_name));
-            return PureVal::App(ExtId(0), vec![]);
+            return Meta::Error.into();
         };
 
         // Apply args
@@ -432,11 +541,11 @@ impl<'a> Checker<'a> {
             }
             Lit::String(_s) => {
                 // String literals → used for import paths etc.
-                PureVal::App(ExtId(0), vec![])
+                Meta::Error.into()
             }
             Lit::Array(_) | Lit::Object(_) => {
                 // TODO
-                PureVal::App(ExtId(0), vec![])
+                Meta::Error.into()
             }
         }
     }
@@ -453,7 +562,7 @@ impl<'a> Checker<'a> {
         if cells.len() != children.len() {
             let span = self.program.val_span(val_id);
             self.error_at(span, "composition requires cell values");
-            return PureVal::App(ExtId(0), vec![]);
+            return Meta::Error.into();
         }
         // Lift all cells to the max dimension
         let max_dim = cells.iter().map(|c| c.dim().in_space).max().unwrap_or(0);
@@ -471,21 +580,22 @@ impl<'a> Checker<'a> {
             Err(e) => {
                 let span = self.program.val_span(val_id);
                 self.error_at(span, format!("{}", e));
-                PureVal::App(ExtId(0), vec![])
+                Meta::Error.into()
             }
         }
     }
 
     fn eval_comp_star(&mut self, _children: &[ValId], _val_id: ValId) -> PureVal {
-        PureVal::App(ExtId(0), vec![])
+        Meta::Error.into()
     }
 
     // --- Level inference ---
 
     fn level_of_ty(&self, ty: &Ty) -> Option<Level> {
         match ty {
-            Ty::Star | Ty::Meta | Ty::Nat | Ty::Rat | Ty::Color | Ty::Deco => Some(0),
+            Ty::Star => Some(0),
             Ty::Arrow(level, _, _, _) => Some(*level),
+            Ty::Meta | Ty::Nat | Ty::Rat | Ty::Color | Ty::Deco => None,
             Ty::Functor(_, _) | Ty::Hole => None,
         }
     }
@@ -502,7 +612,7 @@ impl<'a> Checker<'a> {
             }
             _ => match env::as_meta(pv)? {
                 Meta::Ty(ty) => self.level_of_ty(ty),
-                _ => Some(0),
+                _ => None,
             },
         }
     }
@@ -704,13 +814,13 @@ impl<'a> Checker<'a> {
                             Ok(pc) => (PureVal::Cell(pc), Some(prim_id)),
                             Err(e) => {
                                 self.error_at(span, format!("cell construction error: {}", e));
-                                (PureVal::App(ExtId(item_id.0 as u64), vec![]), Some(prim_id))
+                                (Meta::Error.into(), Some(prim_id))
                             }
                         }
                     }
                     _ => {
                         self.error_at(span, "arrow source/target must be cell values");
-                        (PureVal::App(ExtId(item_id.0 as u64), vec![]), Some(prim_id))
+                        (Meta::Error.into(), Some(prim_id))
                     }
                 }
             }
@@ -726,7 +836,7 @@ impl<'a> Checker<'a> {
                     Some(ty) => Meta::Ty(ty).into(),
                     None => {
                         self.error_at(span, format!("unknown meta type `{}`", item.cname));
-                        PureVal::App(ExtId(0), vec![])
+                        Meta::Error.into()
                     }
                 };
                 (pv, None)
@@ -739,7 +849,7 @@ impl<'a> Checker<'a> {
             }
             Ty::Hole => {
                 // error has already been reported
-                (PureVal::App(ExtId(0), vec![]), None)
+                (Meta::Error.into(), None)
             }
         };
 
@@ -904,7 +1014,7 @@ impl<'a> Checker<'a> {
                         item: None,
                         ty: Ty::Star,
                         params: vec![],
-                        val: PureVal::App(ExtId(0), vec![]),
+                        val: Meta::Error.into(),
                         decos: vec![],
                         origin: def.origin.clone(),
                         param_counts: def.param_counts.clone(),

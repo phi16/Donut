@@ -1304,3 +1304,25 @@ fn use_base_passes() {
 fn use_ui_passes() {
     check_ok("use \"ui\"");
 }
+
+#[test]
+fn style_color_decorator() {
+    check_ok("import \"ui\"\n[style.color[hue[0.5]]]\nu: *");
+}
+
+#[test]
+fn style_color_in_module() {
+    check_ok("import \"ui\"\ncat = {\n  [style.color[hue[0.5]]]\n  u: *\n}");
+}
+
+#[test]
+fn nat_example_bisect() {
+    check_ok("import \"ui\"\nnat = {\n  [style.color[hue[0.33]]]\n  C: *\n  [style.color[hue[0.55]]]\n  Nat: C → C\n  [style.color[hue[0.08]]]\n  Bool: C → C\n  zero: C → Nat\n  succ: Nat → Nat\n  add: Nat Nat → Nat\n  foo: Nat → Nat\n}");
+}
+
+#[test]
+fn self_referential_param() {
+    let (_, errors) = run_check("X[x: X] = x");
+    eprintln!("errors: {:?}", errors);
+}
+

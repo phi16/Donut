@@ -45,6 +45,7 @@ pub enum Meta {
     Rat(f64),
     Color(Color),
     Deco(Decorator),
+    Error,
 }
 
 impl From<Meta> for PureVal {
