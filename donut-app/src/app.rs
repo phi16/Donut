@@ -34,6 +34,8 @@ pub struct App {
     cell: Option<Geometry>,
     slice_pos: Vec<R>,
     diagnostics: Vec<String>,
+    show_glsl_code: bool,
+    show_shader: bool,
 }
 
 fn format_css_color(c: &Color) -> String {
@@ -48,13 +50,12 @@ fn def_cell(env: &Env, def_id: DefId) -> Option<FreeCell> {
 }
 
 fn root_entries(env: &Env) -> Vec<DefId> {
-    let mut entries = Vec::new();
-    for (_, child) in &env.root.lookup {
-        if let Some(def_id) = child.this {
-            entries.push(def_id);
-        }
-    }
-    entries
+    env.defs
+        .iter()
+        .enumerate()
+        .filter(|(_, def)| def.origin.is_none())
+        .map(|(i, _)| DefId(i))
+        .collect()
 }
 
 fn prim_lookup(env: &Env) -> HashMap<String, PrimId> {
@@ -110,6 +111,8 @@ impl App {
             cell,
             slice_pos,
             diagnostics,
+            show_glsl_code: false,
+            show_shader: false,
         };
         app.populate_select();
         app.update_eval_result();
@@ -143,10 +146,12 @@ impl App {
             .collect();
 
         let lookup = prim_lookup(&env);
+        let def_subs = env.def_subs.clone();
         let table = PrimTable::new(env);
 
         let mut runtime = Runtime::new();
         donut_runtime::env::register_sys(&mut runtime, &lookup);
+        runtime.set_def_subs(def_subs);
 
         (table, runtime, diagnostics)
     }
@@ -174,9 +179,6 @@ impl App {
         let document = web_sys::window().unwrap().document().unwrap();
         for &def_id in &self.root_entries {
             let def = &env.defs[def_id.0];
-            if def.origin.is_some() {
-                continue;
-            }
             let Some(free) = def_cell(env, def_id) else {
                 continue;
             };
@@ -186,7 +188,7 @@ impl App {
                 .dyn_into::<web_sys::HtmlOptionElement>()
                 .unwrap();
             let dim = free.pure.dim().in_space;
-            let label = format!("{} ({}d)", def.lname, dim);
+            let label = format!("{} ({}d)", def.qname, dim);
             option.set_text_content(Some(&label));
             option.set_value(&def_id.0.to_string());
             let color = env.def_color(def);
@@ -217,6 +219,16 @@ impl App {
             .map(|c| Self::init_slice_pos(&c.size))
             .unwrap_or_default();
         self.populate_select();
+        self.update_eval_result();
+    }
+
+    pub fn toggle_glsl_code(&mut self) {
+        self.show_glsl_code = !self.show_glsl_code;
+        self.update_eval_result();
+    }
+
+    pub fn toggle_shader(&mut self) {
+        self.show_shader = !self.show_shader;
         self.update_eval_result();
     }
 
@@ -405,13 +417,15 @@ impl App {
             self.hide_shader();
             return;
         };
-        let type_str = self.table.format_cell_type(&free.pure);
+        let type_str = self.table.env().display_ty(&def.ty);
 
-        let evaluable = self.runtime.is_evaluable(&free);
+        // Expand DeclDef substitutions for evaluation
+        let expanded = self.runtime.expand(&free.pure);
+        let evaluable = self.runtime.is_evaluable(&expanded);
         let names = prim_names(env);
-        let eval_str = match self.runtime.eval_check(&free, &names) {
+        let eval_str = match self.runtime.eval_check(&expanded, &names) {
             Some(reason) => reason,
-            None => match self.runtime.eval(&free, &[], &names) {
+            None => match self.runtime.eval(&expanded, &[], &names) {
                 Ok(values) => format!("= {}", donut_runtime::format_values(&values)),
                 Err(e) => format!("BUG: {}", e),
             },
@@ -424,29 +438,35 @@ impl App {
         }
         let mut text = format!("{}: {}\n{}", def.lname, type_str, eval_str);
 
-        // GLSL compilation + shader preview
+        // GLSL compilation + shader preview (use expanded cell)
         let mut shader_shown = false;
-        match donut_runtime::glsl::compile_to_glsl(&free, &names) {
-            Ok(func) => {
-                text.push_str("\n\n--- GLSL ---\n");
-                text.push_str(&func.to_function(&def.lname));
+        if self.show_glsl_code || self.show_shader {
+            match donut_runtime::glsl::compile_to_glsl(&expanded, &names) {
+                Ok(func) => {
+                    if self.show_glsl_code {
+                        text.push_str("\n\n--- GLSL ---\n");
+                        text.push_str(&func.to_function(&def.lname));
+                    }
 
-                if let Some(ref mut sv) = self.shader_view {
-                    if let Ok(frag) = func.to_fragment_shader() {
-                        match sv.set_shader(&frag) {
-                            Ok(()) => {
-                                sv.render();
-                                sv.show();
-                                shader_shown = true;
-                            }
-                            Err(e) => {
-                                text.push_str(&format!("\nshader error: {}", e));
+                    if self.show_shader {
+                        if let Some(ref mut sv) = self.shader_view {
+                            if let Ok(frag) = func.to_fragment_shader() {
+                                match sv.set_shader(&frag) {
+                                    Ok(()) => {
+                                        sv.render();
+                                        sv.show();
+                                        shader_shown = true;
+                                    }
+                                    Err(e) => {
+                                        text.push_str(&format!("\nshader error: {}", e));
+                                    }
+                                }
                             }
                         }
                     }
                 }
+                Err(_) => {}
             }
-            Err(_) => {}
         }
         if !shader_shown {
             self.hide_shader();

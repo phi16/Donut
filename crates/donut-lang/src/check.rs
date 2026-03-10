@@ -30,6 +30,8 @@ struct Checker<'a> {
     checked: HashMap<Ref, PureVal>,
     // DefId → (PrimId → FunctorEntry)
     functor_maps: HashMap<DefId, HashMap<PrimId, FunctorEntry>>,
+    // DeclDef expansion: PrimId of `x` → PureCell of `y`
+    def_subs: HashMap<PrimId, PureCell>,
 
     errors: Vec<Error>,
 }
@@ -62,6 +64,7 @@ impl<'a> Checker<'a> {
             prefixes: Vec::new(),
             checked: HashMap::new(),
             functor_maps: HashMap::new(),
+            def_subs: HashMap::new(),
             errors: Vec::new(),
         };
         checker.register_builtins();
@@ -177,19 +180,27 @@ impl<'a> Checker<'a> {
             DefBody::Decl { item: item_id, def_val } => {
                 let item_id = *item_id;
                 let def_val = *def_val;
-                let ty = if let Some(def_val_id) = def_val {
+                let def_pv = def_val.map(|id| self.eval_val(id));
+                let ty = if let Some(ref pv) = def_pv {
                     // DeclDef: infer type from body if not explicitly declared
                     match declared_ty {
-                        Some(Ty::Hole) | None => {
-                            let val_pv = self.eval_val(def_val_id);
-                            self.infer_ty(&val_pv)
-                        }
+                        Some(Ty::Hole) | None => self.infer_ty(pv),
                         Some(ty) => ty,
                     }
                 } else {
                     declared_ty.unwrap_or(Ty::Star)
                 };
                 self.check_item(item_id, &ty, &span);
+                // Record DeclDef substitution: x's PrimId → y's cell
+                if let Some(PureVal::Cell(target_cell)) = &def_pv {
+                    if let Some(Some(env_item)) = self.env_items.get(item_id.0) {
+                        if let Some(prim_id) = env_item.prim_id {
+                            // Transitively resolve through existing subs
+                            let resolved = env::expand_defs(target_cell, &self.def_subs);
+                            self.def_subs.insert(prim_id, resolved);
+                        }
+                    }
+                }
                 let pv = self.checked[&Ref::Item(item_id)].clone();
                 (Some(item_id), pv, ty)
             }
@@ -982,6 +993,7 @@ impl<'a> Checker<'a> {
             defs,
             prim_item: self.prim_item,
             root,
+            def_subs: self.def_subs,
         };
         (env, self.errors)
     }

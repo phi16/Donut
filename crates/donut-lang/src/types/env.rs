@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::types::common::TokenSpan;
 use crate::types::item::{DefId, ItemId, ItemKind};
 use donut_core::common::{AnyBox, ExtId, Level, PrimId, PureVal};
-use donut_core::pure_cell::PureCell;
+use donut_core::pure_cell::{PureCell, Shape};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Color(pub u8, pub u8, pub u8);
@@ -124,6 +124,8 @@ pub struct Env {
     pub defs: Vec<Def>,
     pub prim_item: HashMap<PrimId, ItemId>,
     pub root: Module,
+    /// DeclDef expansion: PrimId of `x` → PureCell of `y` for `x := y`.
+    pub def_subs: HashMap<PrimId, PureCell>,
 }
 
 // --- Display ---
@@ -264,5 +266,44 @@ impl Env {
 
     pub fn def_color<'a>(&self, def: &'a Def) -> &'a Color {
         &def.style.color
+    }
+
+    /// Expand DeclDef substitutions in a PureCell.
+    pub fn expand_defs(&self, pc: &PureCell) -> PureCell {
+        expand_defs(pc, &self.def_subs)
+    }
+}
+
+// --- DeclDef expansion ---
+
+/// Recursively replace PrimIds in `pc` using the substitution map.
+pub fn expand_defs(pc: &PureCell, subs: &HashMap<PrimId, PureCell>) -> PureCell {
+    if subs.is_empty() {
+        return pc.clone();
+    }
+    match pc {
+        PureCell::Prim(prim, shape, dim) => {
+            if prim.args.is_empty() && dim.effective == dim.in_space {
+                if let Some(replacement) = subs.get(&prim.id) {
+                    return replacement.clone();
+                }
+            }
+            let new_shape = expand_defs_shape(shape, subs);
+            PureCell::Prim(prim.clone(), new_shape, *dim)
+        }
+        PureCell::Comp(axis, children, dim) => {
+            let new_children = children.iter().map(|c| expand_defs(c, subs)).collect();
+            PureCell::Comp(*axis, new_children, *dim)
+        }
+    }
+}
+
+fn expand_defs_shape(shape: &Shape, subs: &HashMap<PrimId, PureCell>) -> Shape {
+    match shape {
+        Shape::Zero => Shape::Zero,
+        Shape::Succ { source, target } => Shape::Succ {
+            source: Box::new(expand_defs(source, subs)),
+            target: Box::new(expand_defs(target, subs)),
+        },
     }
 }

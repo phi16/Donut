@@ -161,6 +161,30 @@ pub fn start() -> Option<()> {
         on_change.forget();
     }
 
+    // Set up GLSL code toggle
+    if let Some(glsl_toggle) = document.get_element_by_id("glsl-toggle") {
+        let app_clone = Rc::clone(&app);
+        let on_change: Closure<dyn FnMut()> = Closure::new(move || {
+            app_clone.borrow_mut().toggle_glsl_code();
+        });
+        glsl_toggle
+            .add_event_listener_with_callback("change", on_change.as_ref().unchecked_ref())
+            .ok()?;
+        on_change.forget();
+    }
+
+    // Set up shader preview toggle
+    if let Some(shader_toggle) = document.get_element_by_id("shader-toggle") {
+        let app_clone = Rc::clone(&app);
+        let on_change: Closure<dyn FnMut()> = Closure::new(move || {
+            app_clone.borrow_mut().toggle_shader();
+        });
+        shader_toggle
+            .add_event_listener_with_callback("change", on_change.as_ref().unchecked_ref())
+            .ok()?;
+        on_change.forget();
+    }
+
     // Set up Ctrl+Enter shortcut
     let app_clone = Rc::clone(&app);
     let textarea_clone = textarea.clone();

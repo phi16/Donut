@@ -53,7 +53,7 @@
       }
       #shader-canvas {
         display: none;
-        margin: 0 10px 5px 10px;
+        margin: 0 10px 10px 10px;
         width: 380px;
         height: 380px;
         border: 1px solid #444;
@@ -85,6 +85,14 @@
     <div id="code-editor">
       <textarea id="code-input" placeholder="Ctrl+Enter to update"></textarea>
       <select id="entry-select"></select>
+      <div style="margin: 0 10px 5px 10px; display: flex; align-items: center; gap: 10px;">
+        <label style="color: #888; font-family: 'Consolas', 'Monaco', monospace; font-size: 12px; cursor: pointer;">
+          <input type="checkbox" id="glsl-toggle"> GLSL
+        </label>
+        <label style="color: #888; font-family: 'Consolas', 'Monaco', monospace; font-size: 12px; cursor: pointer;">
+          <input type="checkbox" id="shader-toggle"> Shader
+        </label>
+      </div>
       <div id="eval-result"></div>
       <canvas id="shader-canvas"></canvas>
       <div id="diagnostics"></div>

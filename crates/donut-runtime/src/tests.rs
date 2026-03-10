@@ -40,6 +40,7 @@ fn setup(user_code: &str) -> (Runtime, Env) {
     let lookup = prim_lookup(&env);
     let mut rt = Runtime::new();
     register_sys(&mut rt, &lookup);
+    rt.set_def_subs(env.def_subs.clone());
     (rt, env)
 }
 
@@ -47,6 +48,19 @@ fn eval_entry(rt: &Runtime, env: &Env, name: &str) -> Vec<Value> {
     let cell = find_def_cell(env, name);
     let pn = prim_names(env);
     rt.eval(&cell, &[], &pn).unwrap()
+}
+
+/// Evaluate with DeclDef expansion applied.
+fn eval_entry_expanded(rt: &Runtime, env: &Env, name: &str) -> Vec<Value> {
+    let module = env.root.lookup.get(name).unwrap_or_else(|| panic!("def '{}' not found", name));
+    let def_id = module.this.unwrap();
+    let pc = match &env.defs[def_id.0].val {
+        PureVal::Cell(pc) => pc,
+        other => panic!("expected Cell for '{}', got {:?}", name, other),
+    };
+    let expanded = rt.expand(pc);
+    let pn = prim_names(env);
+    rt.eval(&expanded, &[], &pn).unwrap()
 }
 
 #[test]
@@ -611,4 +625,44 @@ my_cell = sys.f32.lit[1] sys.f32.lit[0] sys.f32.lit[0]; sys.f32x3.pack
     );
     let func = compile_entry(&env, "my_cell").unwrap();
     assert!(func.to_fragment_shader().is_err());
+}
+
+// --- DeclDef expansion ---
+
+#[test]
+fn test_decldef_0cell() {
+    // u32 := sys.u32 means u32 expands to sys.u32 at runtime
+    // result uses sys.u32.lit directly (parametric DeclDef not yet supported)
+    let (rt, env) = setup(
+        "u32 := sys.u32\nresult = sys.u32.lit[42]",
+    );
+    let expanded = rt.expand(match &env.defs[env.root.lookup.get("result").unwrap().this.unwrap().0].val {
+        PureVal::Cell(pc) => pc,
+        _ => panic!(),
+    });
+    // After expansion, the cell's 0-cell boundaries should use sys.u32's PrimId
+    assert!(rt.is_evaluable(&expanded));
+    let pn = prim_names(&env);
+    let result = rt.eval(&expanded, &[], &pn).unwrap();
+    assert_eq!(result, vec![Value::U32(42)]);
+}
+
+#[test]
+fn test_decldef_op() {
+    // DeclDef for operations: add := sys.u32.add
+    let (rt, env) = setup(
+        "C := sys.C\nu32 := sys.u32\nadd := sys.u32.add\nresult: u32 u32 → u32 = sys.u32.lit[3] sys.u32.lit[4]; add",
+    );
+    let result = eval_entry_expanded(&rt, &env, "result");
+    assert_eq!(result, vec![Value::U32(7)]);
+}
+
+#[test]
+fn test_decldef_transitive() {
+    // x := sys.u32, y := x — transitive expansion
+    let (rt, env) = setup(
+        "C := sys.C\nx := sys.u32\ny := x\nresult: y → y = sys.u32.lit[10]",
+    );
+    let result = eval_entry_expanded(&rt, &env, "result");
+    assert_eq!(result, vec![Value::U32(10)]);
 }

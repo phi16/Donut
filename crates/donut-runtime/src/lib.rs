@@ -44,6 +44,7 @@ type EvalFn = Box<dyn Fn(&[PureVal], &[Value]) -> Result<Vec<Value>, String>>;
 pub struct Runtime {
     ops: HashMap<PrimId, EvalFn>,
     base: Option<PrimId>,
+    def_subs: HashMap<PrimId, PureCell>,
 }
 
 impl Runtime {
@@ -51,6 +52,7 @@ impl Runtime {
         Runtime {
             ops: HashMap::new(),
             base: None,
+            def_subs: HashMap::new(),
         }
     }
 
@@ -58,8 +60,22 @@ impl Runtime {
         self.base = Some(id);
     }
 
+    pub fn set_def_subs(&mut self, subs: HashMap<PrimId, PureCell>) {
+        self.def_subs = subs;
+    }
+
     pub fn register(&mut self, id: PrimId, f: impl Fn(&[PureVal], &[Value]) -> Result<Vec<Value>, String> + 'static) {
         self.ops.insert(id, Box::new(f));
+    }
+
+    /// Expand DeclDef substitutions and convert to FreeCell.
+    pub fn expand(&self, pc: &PureCell) -> FreeCell {
+        if self.def_subs.is_empty() {
+            FreeCell::from_pure(pc)
+        } else {
+            let expanded = donut_lang::types::env::expand_defs(pc, &self.def_subs);
+            FreeCell::from_pure(&expanded)
+        }
     }
 
     /// Check if a cell can be evaluated with no input.
