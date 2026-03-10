@@ -116,9 +116,10 @@ impl<'a> Checker<'a> {
         self.prefixes.push(lname);
 
         // Check param Items
+        let def_span = self.program.def(def_id).span.clone();
         for param in &params {
             let ty = self.eval_ty(param.ty);
-            self.check_item(param.item, &ty);
+            self.check_item(param.item, &ty, &def_span);
         }
 
         // Process this def
@@ -147,32 +148,37 @@ impl<'a> Checker<'a> {
         let origin = def.origin.clone();
         let param_counts = def.param_counts.clone();
 
-        // Evaluate type
-        let ty = if let Some(ty_val) = def.ty {
-            self.eval_ty(ty_val)
-        } else {
-            Ty::Star // default; will be refined
-        };
+        // Evaluate declared type (if any)
+        let declared_ty = def.ty.map(|ty_val| self.eval_ty(ty_val));
 
         // Evaluate body
-        let (item, val) = match &self.program.def(def_id).body {
+        let (item, val, ty) = match &self.program.def(def_id).body {
             DefBody::Decl { item: item_id } => {
                 let item_id = *item_id;
-                self.check_item(item_id, &ty);
+                let ty = declared_ty.unwrap_or(Ty::Star);
+                self.check_item(item_id, &ty, &span);
                 let pv = self.checked[&Ref::Item(item_id)].clone();
-                (Some(item_id), pv)
+                (Some(item_id), pv, ty)
             }
             DefBody::Alias { val: val_id } => {
                 let val_id = *val_id;
-                let pv = self.eval_val(val_id);
-                (None, pv)
+                let mut pv = self.eval_val(val_id);
+                let ty = if let Some(declared) = declared_ty {
+                    pv = self.coerce_val_to_ty(pv, &declared, &span);
+                    declared
+                } else {
+                    self.infer_ty(&pv)
+                };
+                (None, pv, ty)
             }
             DefBody::Functor { mappings } => {
+                let ty = declared_ty.unwrap_or(Ty::Hole);
                 self.check_functor(def_id, &ty, mappings);
-                (None, PureVal::App(ExtId(0), vec![]))
+                (None, PureVal::App(ExtId(0), vec![]), ty)
             }
             DefBody::None => {
-                (None, PureVal::App(ExtId(0), vec![]))
+                let ty = declared_ty.unwrap_or(Ty::Star);
+                (None, PureVal::App(ExtId(0), vec![]), ty)
             }
         };
 
@@ -209,6 +215,44 @@ impl<'a> Checker<'a> {
     fn eval_ty(&mut self, val_id: ValId) -> Ty {
         let pv = self.eval_val(val_id);
         self.extract_ty(&pv, val_id)
+    }
+
+    fn infer_ty(&self, pv: &PureVal) -> Ty {
+        match pv {
+            PureVal::Cell(pc) => {
+                let dim = pc.dim().in_space;
+                if dim == 0 {
+                    Ty::Star
+                } else {
+                    Ty::Arrow(dim, ArrowTy::To, PureVal::Cell(pc.s()), PureVal::Cell(pc.t()))
+                }
+            }
+            PureVal::App(ext_id, args) => {
+                let idx = ext_id.0 as usize;
+                if let Some(Some(item)) = self.env_items.get(idx) {
+                    if args.is_empty() {
+                        item.ty.clone()
+                    } else {
+                        // Substitute param ExtIds with actual args
+                        let subst_map: HashMap<ExtId, PureVal> = item.params.iter()
+                            .zip(args.iter())
+                            .map(|(param_item_id, arg)| (ExtId(param_item_id.0 as u64), arg.clone()))
+                            .collect();
+                        subst_ty(&item.ty, &subst_map, &self.prim_item)
+                    }
+                } else {
+                    Ty::Hole
+                }
+            }
+            _ => match env::as_meta(pv) {
+                Some(Meta::Ty(_)) => Ty::Meta,
+                Some(Meta::Nat(_)) => Ty::Nat,
+                Some(Meta::Rat(_)) => Ty::Rat,
+                Some(Meta::Color(_)) => Ty::Color,
+                Some(Meta::Deco(_)) => Ty::Deco,
+                None => Ty::Hole,
+            }
+        }
     }
 
     fn extract_ty(&mut self, pv: &PureVal, val_id: ValId) -> Ty {
@@ -279,9 +323,12 @@ impl<'a> Checker<'a> {
                     PureVal::App(id, existing)
                 }
                 _ => {
-                    let span = self.program.val_span(val_id);
-                    self.error_at(span, "cannot apply arguments to this value");
-                    base
+                    // Substitute param ExtIds with actual args (Cell, Any/Meta, etc.)
+                    let param_ids = self.param_ext_ids(path.target);
+                    let subst_map: HashMap<ExtId, PureVal> = param_ids.into_iter()
+                        .zip(args.into_iter())
+                        .collect();
+                    subst_pv(&base, &subst_map, &self.prim_item)
                 }
             }
         };
@@ -307,7 +354,7 @@ impl<'a> Checker<'a> {
                 }
             };
             if let Some(fmap) = self.functor_maps.get(&functor_def_id) {
-                match apply_functor(app_cell, fmap) {
+                match apply_functor(app_cell, fmap, &self.prim_item) {
                     Ok(pc) => PureVal::Cell(pc),
                     Err(e) => {
                         let span = self.program.val_span(val_id);
@@ -445,9 +492,10 @@ impl<'a> Checker<'a> {
         // Process each mapping
         for mapping in mappings {
             // Check mapping params
+            let mapping_span = self.program.val_span(mapping.applicand).clone();
             let param_ext_ids: Vec<ExtId> = mapping.params.iter().map(|param| {
                 let ty = self.eval_ty(param.ty);
-                self.check_item(param.item, &ty);
+                self.check_item(param.item, &ty, &mapping_span);
                 ExtId(param.item.0 as u64)
             }).collect();
 
@@ -501,8 +549,8 @@ impl<'a> Checker<'a> {
             }
 
             // Functoriality check: apply_functor(app.s) == val.s, apply_functor(app.t) == val.t
-            let expected_s = apply_functor(&app_cell.s(), &functor_map);
-            let expected_t = apply_functor(&app_cell.t(), &functor_map);
+            let expected_s = apply_functor(&app_cell.s(), &functor_map, &self.prim_item);
+            let expected_t = apply_functor(&app_cell.t(), &functor_map, &self.prim_item);
 
             match (expected_s, expected_t) {
                 (Ok(es), Ok(et)) => {
@@ -539,17 +587,64 @@ impl<'a> Checker<'a> {
         self.checked.get(&target).cloned()
     }
 
+    fn param_ext_ids(&self, target: Ref) -> Vec<ExtId> {
+        match target {
+            Ref::Item(item_id) => {
+                self.program.item(item_id).params.iter()
+                    .map(|p| ExtId(p.item.0 as u64))
+                    .collect()
+            }
+            Ref::Def(def_id) => {
+                self.program.def(def_id).params.iter()
+                    .map(|p| ExtId(p.item.0 as u64))
+                    .collect()
+            }
+        }
+    }
+
     // --- Item checking ---
 
-    fn check_item(&mut self, item_id: ItemId, ty: &Ty) {
+    fn check_item(&mut self, item_id: ItemId, ty: &Ty, span: &TokenSpan) {
         if self.checked.contains_key(&Ref::Item(item_id)) {
             return;
         }
         let item = self.program.item(item_id);
         let prim_id = self.fresh_prim_id();
-        let ext_id = ExtId(item_id.0 as u64);
+        let prim = Prim::new(prim_id.0);
 
-        let pv = PureVal::App(ext_id, vec![]);
+        let pv = match ty {
+            Ty::Star => {
+                PureVal::Cell(PureCell::zero(prim))
+            }
+            Ty::Arrow(level, _, src_val, tgt_val) => {
+                match (Self::extract_cell(src_val), Self::extract_cell(tgt_val)) {
+                    (Some(mut src), Some(mut tgt)) => {
+                        let target_dim = *level - 1;
+                        while src.dim().in_space < target_dim {
+                            src = PureCell::id(src);
+                        }
+                        while tgt.dim().in_space < target_dim {
+                            tgt = PureCell::id(tgt);
+                        }
+                        match PureCell::prim(prim, src, tgt) {
+                            Ok(pc) => PureVal::Cell(pc),
+                            Err(e) => {
+                                self.error_at(span, format!("cell construction error: {}", e));
+                                PureVal::App(ExtId(item_id.0 as u64), vec![])
+                            }
+                        }
+                    }
+                    _ => {
+                        self.error_at(span, "arrow source/target must be cell values");
+                        PureVal::App(ExtId(item_id.0 as u64), vec![])
+                    }
+                }
+            }
+            _ => {
+                // Meta, Nat, Rat, Color, Deco, Functor, Hole
+                PureVal::App(ExtId(item_id.0 as u64), vec![])
+            }
+        };
 
         self.checked.insert(Ref::Item(item_id), pv);
         self.prim_item.insert(prim_id, item_id);
@@ -563,6 +658,94 @@ impl<'a> Checker<'a> {
             params: item.params.iter().map(|p| p.item).collect(),
         };
         self.env_items[item_id.0] = Some(env_item);
+    }
+
+    fn extract_cell(pv: &PureVal) -> Option<PureCell> {
+        match pv {
+            PureVal::Cell(pc) => Some(pc.clone()),
+            _ => None,
+        }
+    }
+
+    fn coerce_val_to_ty(&mut self, pv: PureVal, ty: &Ty, span: &TokenSpan) -> PureVal {
+        match ty {
+            Ty::Star => {
+                if let PureVal::Cell(pc) = &pv {
+                    if pc.dim().in_space != 0 {
+                        self.error_at(span, format!("expected 0-cell, got {}-cell", pc.dim().in_space));
+                    }
+                } else if !matches!(env::as_meta(&pv), Some(Meta::Ty(Ty::Star))) {
+                    self.error_at(span, "expected a 0-cell value");
+                }
+                pv
+            }
+            Ty::Arrow(level, _, src_val, tgt_val) => {
+                if let PureVal::Cell(mut pc) = pv {
+                    // Dim lift if needed
+                    while pc.dim().in_space < *level {
+                        pc = PureCell::id(pc);
+                    }
+                    if pc.dim().in_space != *level {
+                        self.error_at(span, format!("expected {}-cell, got {}-cell", level, pc.dim().in_space));
+                    } else {
+                        // Check source/target compatibility
+                        if let Some(src) = Self::extract_cell(src_val) {
+                            let mut expected_src = src;
+                            while expected_src.dim().in_space < *level - 1 {
+                                expected_src = PureCell::id(expected_src);
+                            }
+                            if !pc.s().is_convertible(&expected_src) {
+                                self.error_at(span, "value source does not match declared type source");
+                            }
+                        }
+                        if let Some(tgt) = Self::extract_cell(tgt_val) {
+                            let mut expected_tgt = tgt;
+                            while expected_tgt.dim().in_space < *level - 1 {
+                                expected_tgt = PureCell::id(expected_tgt);
+                            }
+                            if !pc.t().is_convertible(&expected_tgt) {
+                                self.error_at(span, "value target does not match declared type target");
+                            }
+                        }
+                    }
+                    PureVal::Cell(pc)
+                } else {
+                    self.error_at(span, format!("expected a {}-cell value", level));
+                    pv
+                }
+            }
+            Ty::Meta => {
+                if env::as_meta(&pv).is_none() {
+                    self.error_at(span, "expected a meta value");
+                }
+                pv
+            }
+            Ty::Nat => {
+                if !matches!(env::as_meta(&pv), Some(Meta::Nat(_))) {
+                    self.error_at(span, "expected a nat value");
+                }
+                pv
+            }
+            Ty::Rat => {
+                if !matches!(env::as_meta(&pv), Some(Meta::Rat(_))) {
+                    self.error_at(span, "expected a rat value");
+                }
+                pv
+            }
+            Ty::Color => {
+                if !matches!(env::as_meta(&pv), Some(Meta::Color(_))) {
+                    self.error_at(span, "expected a color value");
+                }
+                pv
+            }
+            Ty::Deco => {
+                if !matches!(env::as_meta(&pv), Some(Meta::Deco(_))) {
+                    self.error_at(span, "expected a decorator value");
+                }
+                pv
+            }
+            Ty::Functor(_, _) | Ty::Hole => pv,
+        }
     }
 
     // --- Finalize ---
@@ -615,6 +798,63 @@ impl<'a> Checker<'a> {
     }
 }
 
+// --- Substitution with Meta/Ty awareness ---
+
+fn subst_any_handler(pv: &PureVal, map: &HashMap<ExtId, PureVal>, prim_item: &HashMap<PrimId, ItemId>) -> PureVal {
+    if let Some(meta) = env::as_meta(pv) {
+        let new_meta = match meta {
+            Meta::Ty(ty) => Meta::Ty(subst_ty(ty, map, prim_item)),
+            _ => return pv.clone(),
+        };
+        new_meta.into()
+    } else {
+        pv.clone()
+    }
+}
+
+fn subst_pv(pv: &PureVal, map: &HashMap<ExtId, PureVal>, prim_item: &HashMap<PrimId, ItemId>) -> PureVal {
+    match pv {
+        PureVal::Cell(pc) => PureVal::Cell(subst_cell(pc, map, prim_item)),
+        _ => pv.subst_with(map, &|v, m| subst_any_handler(v, m, prim_item)),
+    }
+}
+
+fn subst_cell(
+    pc: &PureCell,
+    map: &HashMap<ExtId, PureVal>,
+    prim_item: &HashMap<PrimId, ItemId>,
+) -> PureCell {
+    let prim_handler = |prim_id: PrimId, mapping: &HashMap<ExtId, PureVal>| -> Option<PureCell> {
+        let item_id = prim_item.get(&prim_id)?;
+        let ext_id = ExtId(item_id.0 as u64);
+        let replacement = mapping.get(&ext_id)?;
+        match replacement {
+            PureVal::Cell(cell) => Some(cell.clone()),
+            _ => None,
+        }
+    };
+    pc.subst_with_prim(
+        map,
+        &|v, m| subst_any_handler(v, m, prim_item),
+        &prim_handler,
+    )
+}
+
+fn subst_ty(ty: &Ty, map: &HashMap<ExtId, PureVal>, prim_item: &HashMap<PrimId, ItemId>) -> Ty {
+    if map.is_empty() {
+        return ty.clone();
+    }
+    match ty {
+        Ty::Arrow(level, arrow_ty, src, tgt) => {
+            Ty::Arrow(*level, arrow_ty.clone(), subst_pv(src, map, prim_item), subst_pv(tgt, map, prim_item))
+        }
+        Ty::Functor(src, tgt) => {
+            Ty::Functor(subst_pv(src, map, prim_item), subst_pv(tgt, map, prim_item))
+        }
+        _ => ty.clone(),
+    }
+}
+
 // --- Functor application ---
 
 enum FunctorError {
@@ -622,7 +862,11 @@ enum FunctorError {
     CompError(donut_core::common::Error),
 }
 
-fn apply_functor(cell: &PureCell, map: &HashMap<PrimId, FunctorEntry>) -> Result<PureCell, FunctorError> {
+fn apply_functor(
+    cell: &PureCell,
+    map: &HashMap<PrimId, FunctorEntry>,
+    prim_item: &HashMap<PrimId, ItemId>,
+) -> Result<PureCell, FunctorError> {
     match cell {
         PureCell::Prim(prim, _, dim) => {
             match map.get(&prim.id) {
@@ -634,7 +878,7 @@ fn apply_functor(cell: &PureCell, map: &HashMap<PrimId, FunctorEntry>) -> Result
                             .zip(prim.args.iter())
                             .map(|(&eid, arg)| (eid, arg.clone()))
                             .collect();
-                        result = result.subst(&subst_map);
+                        result = subst_cell(&result, &subst_map, prim_item);
                     }
                     // Lift to target dimension
                     while result.dim().in_space < dim.in_space {
@@ -648,7 +892,7 @@ fn apply_functor(cell: &PureCell, map: &HashMap<PrimId, FunctorEntry>) -> Result
         PureCell::Comp(axis, children, _) => {
             let mapped: Vec<PureCell> = children
                 .iter()
-                .map(|c| apply_functor(c, map))
+                .map(|c| apply_functor(c, map, prim_item))
                 .collect::<Result<_, _>>()?;
             PureCell::comp(*axis, mapped).map_err(FunctorError::CompError)
         }
