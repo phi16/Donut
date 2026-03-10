@@ -544,19 +544,32 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn generate_def_trees(&self, module: &Module) -> Vec<DefTree> {
+    fn emit_def_with_scope(&mut self, def_id: DefId, children: Vec<DefTree>) {
+        self.emit_def_tree(DefTree { def_id, children });
+    }
+
+    fn emit_module_as_trees(&mut self, module: &Module) {
+        for &def_id in &module.entries {
+            let children_module = self.def(def_id).members.clone();
+            let mut children = Vec::new();
+            for &child_id in &children_module.entries {
+                let grandchildren_module = self.def(child_id).members.clone();
+                children.push(DefTree {
+                    def_id: child_id,
+                    children: self.collect_module_trees(&grandchildren_module),
+                });
+            }
+            self.emit_def_tree(DefTree { def_id, children });
+        }
+    }
+
+    fn collect_module_trees(&self, module: &Module) -> Vec<DefTree> {
         let mut trees = Vec::new();
         for &def_id in &module.entries {
-            let children = self.generate_def_trees(&self.def(def_id).members);
+            let children = self.collect_module_trees(&self.def(def_id).members);
             trees.push(DefTree { def_id, children });
         }
         trees
-    }
-
-    fn emit_def_with_scope(&mut self, def_id: DefId) {
-        let members = self.def(def_id).members.clone();
-        let children = self.generate_def_trees(&members);
-        self.emit_def_tree(DefTree { def_id, children });
     }
 
     // --- Name building ---
@@ -747,6 +760,7 @@ impl<'a> Checker<'a> {
 
     fn enter_inner_scope(&mut self, first_lname: &str, deco_param_defs: &[(String, ValId)]) {
         self.push_scope();
+        self.def_order_stack.push(Vec::new());
         let mut param_items = HashSet::new();
         for (name, val_id) in deco_param_defs {
             // Create Item for deco param
@@ -765,9 +779,10 @@ impl<'a> Checker<'a> {
         self.deco_param_stack.push(param_items);
     }
 
-    fn exit_inner_scope(&mut self) {
+    fn exit_inner_scope(&mut self) -> Vec<DefTree> {
         self.pop_scope();
         self.deco_param_stack.pop();
+        self.def_order_stack.pop().unwrap_or_default()
     }
 
     fn has_deco_params(&self) -> bool {
@@ -815,11 +830,9 @@ impl<'a> Checker<'a> {
 
     fn resolve_decls(&mut self, decls: Vec<semtree::Decl>) -> Module {
         self.push_scope();
-        self.def_order_stack.push(Vec::new());
         for d in decls {
             self.resolve_decl(d);
         }
-        self.def_order_stack.pop(); // nested DefTrees discarded; captured via generate_def_trees
         self.pop_scope()
     }
 
@@ -904,11 +917,7 @@ impl<'a> Checker<'a> {
                 if matches!(&mod_s.0, semtree::Module::Use(_)) {
                     let span = mod_s.1.clone();
                     let result = self.resolve_module(mod_s);
-                    // Emit DefTree for used defs
-                    let trees = self.generate_def_trees(&result);
-                    for tree in trees {
-                        self.emit_def_tree(tree);
-                    }
+                    // DefTrees already emitted by resolve_decls during resolve_module
                     let scope = self.scopes.last_mut().unwrap();
                     let conflicts = scope.merge_used(&result, &self.defs);
                     for key in conflicts {
@@ -1126,6 +1135,8 @@ impl<'a> Checker<'a> {
                                 let m_clone = m.clone();
                                 body_members = self.deep_clone_module(&m_clone, &mapping);
                             }
+                            // Emit inherited members as DefTrees
+                            self.emit_module_as_trees(&body_members);
                         }
                     }
                 }
@@ -1184,13 +1195,13 @@ impl<'a> Checker<'a> {
             None
         };
 
-        self.exit_inner_scope();
+        let inner_children = self.exit_inner_scope();
 
         // --- Registration ---
         if let Some((resolved_apps, mapping_params)) = resolved_apps {
             self.register_functor_app(name_infos, body_val_resolved, mapping_params, resolved_apps);
         } else if is_add {
-            self.register_add(name_infos, body_val_resolved, result);
+            self.register_add(name_infos, body_val_resolved, result, inner_children);
         } else {
             let is_functor = ty_resolved.map_or(false, |id| is_functor_type(&self.vals[id.0].0));
             let item_id = if let Some(ik) = item_kind {
@@ -1256,7 +1267,7 @@ impl<'a> Checker<'a> {
             for ni in &name_infos {
                 self.register_path(&ni.seg_names, def_id);
             }
-            self.emit_def_with_scope(def_id);
+            self.emit_def_with_scope(def_id, inner_children);
         }
     }
 
@@ -1373,6 +1384,7 @@ impl<'a> Checker<'a> {
         name_infos: Vec<NameInfo>,
         body_val_resolved: Option<ValId>,
         result: Module,
+        inner_children: Vec<DefTree>,
     ) {
         let all_seg_names: Vec<&[(String, TokenSpan)]> = name_infos
             .iter()
@@ -1405,11 +1417,10 @@ impl<'a> Checker<'a> {
 
         // Emit DefTree for each += target (children only, def itself already emitted)
         if !members_to_merge.entries.is_empty() {
-            let children = self.generate_def_trees(&members_to_merge);
             for seg_names in &all_seg_names {
                 let names: Vec<&str> = seg_names.iter().map(|(n, _)| n.as_str()).collect();
                 if let Some(def_id) = self.lookup_path(&names) {
-                    self.emit_def_tree(DefTree { def_id, children: children.clone() });
+                    self.emit_def_tree(DefTree { def_id, children: inner_children.clone() });
                 }
             }
         }
@@ -1430,11 +1441,10 @@ impl<'a> Checker<'a> {
         let result = self.resolve_module(mod_s);
         let result = self.merge_with_clauses(result, with_clauses);
 
-        self.exit_inner_scope();
+        let inner_children = self.exit_inner_scope();
 
-        // Emit DefTree for promoted defs
-        let trees = self.generate_def_trees(&result);
-        for tree in trees {
+        // DefTrees already emitted to inner scope level; promote them to current level
+        for tree in inner_children {
             self.emit_def_tree(tree);
         }
 

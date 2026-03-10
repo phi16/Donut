@@ -22,7 +22,10 @@ fn run_check(code: &str) -> (env::Env, Vec<String>) {
         "unexpected resolve errors: {res_errors:?}"
     );
     let (env, errors) = check(&program, &tokens);
-    let error_msgs: Vec<String> = errors.into_iter().map(|(_, msg)| msg).collect();
+    let error_msgs: Vec<String> = errors
+        .into_iter()
+        .map(|(pos, msg)| format!("{}:{}: {}", pos.line, pos.col, msg))
+        .collect();
     (env, error_msgs)
 }
 
@@ -89,10 +92,9 @@ fn type_alias() {
 }
 
 #[test]
-fn meta_decl() {
-    let env = check_ok("x: meta");
-    let x = get_def(&env, "x");
-    assert_eq!(x.ty, Ty::Meta);
+fn meta_decl_error() {
+    let (_, errors) = run_check("x: meta");
+    assert!(!errors.is_empty(), "user-defined meta type should error");
 }
 
 #[test]
@@ -136,7 +138,7 @@ fn arrow_value_as_type() {
 
 #[test]
 fn root_module_has_all_defs() {
-    let env = check_ok("a: *\nb = 1\nc: meta");
+    let env = check_ok("a: *\nb = 1\nc = *");
     assert!(env.root.lookup.contains_key("a"));
     assert!(env.root.lookup.contains_key("b"));
     assert!(env.root.lookup.contains_key("c"));
@@ -207,9 +209,8 @@ fn arrow_eq_type() {
 
 #[test]
 fn nested_alias_to_meta() {
-    let env = check_ok("A = meta\nx: A");
-    let x = get_def(&env, "x");
-    assert_eq!(x.ty, Ty::Meta);
+    let (_, errors) = run_check("A = meta\nx: A");
+    assert!(!errors.is_empty(), "user-defined meta type via alias should error");
 }
 
 #[test]
@@ -353,9 +354,8 @@ fn composition_of_cells() {
 
 #[test]
 fn meta_decl_not_cell() {
-    let env = check_ok("x: meta");
-    let x = get_def(&env, "x");
-    assert!(!matches!(x.val, PureVal::Cell(_)));
+    let (_, errors) = run_check("x: meta");
+    assert!(!errors.is_empty(), "user-defined meta type should error");
 }
 
 // --- Type consistency tests ---
@@ -1232,4 +1232,75 @@ fn type_alias_in_parametric_module() {
         (PureVal::Cell(vc), PureVal::Cell(xc)) => assert_eq!(xc.s(), *vc),
         _ => panic!("expected Cell values"),
     }
+}
+
+// --- Import tests ---
+
+#[test]
+fn import_base_passes() {
+    check_ok("import \"base\"");
+}
+
+#[test]
+fn import_sys_passes() {
+    check_ok("import \"sys\"");
+}
+
+#[test]
+fn import_ui_passes() {
+    check_ok("import \"ui\"");
+}
+
+#[test]
+fn import_sys_named() {
+    let env = check_ok("sys = import \"sys\"");
+    let sys_mod = env.root.lookup.get("sys").unwrap();
+    assert!(sys_mod.lookup.contains_key("f32"));
+    assert!(sys_mod.lookup.contains_key("u32"));
+    assert!(sys_mod.lookup.contains_key("bool"));
+}
+
+#[test]
+fn import_sys_bare_members() {
+    // bare import: sys members promoted to root scope
+    let env = check_ok("import \"sys\"");
+    assert!(env.root.lookup.contains_key("f32"));
+    assert!(env.root.lookup.contains_key("u32"));
+}
+
+#[test]
+fn import_sys_named_composition() {
+    // named import: sys.u32.lit[1]; sys.u32.to_f32 = C → f32 (2-cell)
+    let env = check_ok("sys = import \"sys\"\nx = sys.u32.lit[1]; sys.u32.to_f32");
+    let x = get_def(&env, "x");
+    match &x.val {
+        PureVal::Cell(pc) => assert_eq!(pc.dim().in_space, 2),
+        _ => panic!("expected Cell"),
+    }
+}
+
+#[test]
+fn import_sys_bare_composition() {
+    // bare import: u32.lit[1]; u32.to_f32 = C → f32 (2-cell)
+    let env = check_ok("import \"sys\"\nx = u32.lit[1]; u32.to_f32");
+    let x = get_def(&env, "x");
+    match &x.val {
+        PureVal::Cell(pc) => assert_eq!(pc.dim().in_space, 2),
+        _ => panic!("expected Cell"),
+    }
+}
+
+#[test]
+fn use_sys_passes() {
+    check_ok("use \"sys\"");
+}
+
+#[test]
+fn use_base_passes() {
+    check_ok("use \"base\"");
+}
+
+#[test]
+fn use_ui_passes() {
+    check_ok("use \"ui\"");
 }
