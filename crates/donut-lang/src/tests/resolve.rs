@@ -1631,3 +1631,99 @@ fn def_origin_set_for_import() {
     let nat_def = get_def(&p, "nat");
     assert_eq!(nat_def.origin.as_deref(), Some("base"));
 }
+
+// ============================================================
+// DefTree (def_order)
+// ============================================================
+
+/// Format def_order as a compact string for assertion.
+/// Def(id) → "name", Scope { def_id, children } → "name { ... }"
+fn format_def_order(p: &Program, trees: &[DefTree]) -> String {
+    let parts: Vec<String> = trees
+        .iter()
+        .map(|t| match t {
+            DefTree::Def(id) => p.def(*id).lname.clone(),
+            DefTree::Scope { def_id, children } => {
+                let inner = format_def_order(p, children);
+                format!("{} {{ {} }}", p.def(*def_id).lname, inner)
+            }
+        })
+        .collect();
+    parts.join(", ")
+}
+
+#[test]
+fn def_order_simple() {
+    let p = check_module("a: *\nb = \"x\"");
+    assert_eq!(format_def_order(&p, &p.def_order), "a, b");
+}
+
+#[test]
+fn def_order_module() {
+    let p = check_module("cat = {\n  x: *\n  y: *\n}");
+    assert_eq!(
+        format_def_order(&p, &p.def_order),
+        "cat, cat { x, y }"
+    );
+}
+
+#[test]
+fn def_order_nested_module() {
+    let p = check_module("a = {\n  b = {\n    c: *\n  }\n}");
+    assert_eq!(
+        format_def_order(&p, &p.def_order),
+        "a, a { b, b { c } }"
+    );
+}
+
+#[test]
+fn def_order_alias_inherits_members() {
+    let p = check_module("a = {\n  b: *\n}\nc = a");
+    assert_eq!(
+        format_def_order(&p, &p.def_order),
+        "a, a { b }, c, c { b }"
+    );
+}
+
+#[test]
+fn def_order_add() {
+    let p = check_module("a = {\n  x: *\n}\na += {\n  y: *\n}");
+    assert_eq!(
+        format_def_order(&p, &p.def_order),
+        "a, a { x }, a { y }"
+    );
+}
+
+#[test]
+fn def_order_with_clause() {
+    let p = check_module("cat = {\n  x: *\n} with {\n  y: *\n}");
+    assert_eq!(
+        format_def_order(&p, &p.def_order),
+        "cat, cat { x, y }"
+    );
+}
+
+#[test]
+fn def_order_import() {
+    let p = check_module("import \"base\"");
+    let order = format_def_order(&p, &p.def_order);
+    // base has nat, rat, color, decorator at top level
+    assert!(order.contains("nat"), "expected nat in: {order}");
+    assert!(order.contains("color"), "expected color in: {order}");
+}
+
+#[test]
+fn def_order_named_import() {
+    let p = check_module("b = import \"base\"");
+    let order = format_def_order(&p, &p.def_order);
+    assert!(order.starts_with("b, b { "), "expected b with scope in: {order}");
+    assert!(order.contains("nat"), "expected nat in: {order}");
+}
+
+#[test]
+fn def_order_use() {
+    let p = check_module("use \"base\"\nx: nat");
+    let order = format_def_order(&p, &p.def_order);
+    assert!(order.contains("nat"), "expected nat in: {order}");
+    assert!(order.contains("x"), "expected x in: {order}");
+}

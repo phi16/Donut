@@ -141,6 +141,14 @@ pub struct Module {
     index: HashMap<String, usize>,
 }
 
+// --- DefTree ---
+
+#[derive(Debug, Clone)]
+pub enum DefTree {
+    Def(DefId),
+    Scope { def_id: DefId, children: Vec<DefTree> },
+}
+
 // --- Program ---
 
 pub struct Program {
@@ -148,6 +156,7 @@ pub struct Program {
     pub items: Vec<Item>,
     pub defs: Vec<Def>,
     pub vals: Vec<S<Val>>,
+    pub def_order: Vec<DefTree>,
 }
 
 impl Program {

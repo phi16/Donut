@@ -313,6 +313,9 @@ struct Checker<'a> {
 
     // Extra import sources (for testing).
     extra_sources: HashMap<String, String>,
+
+    // DefTree generation
+    def_order_stack: Vec<Vec<DefTree>>,
 }
 
 impl<'a> Checker<'a> {
@@ -332,6 +335,7 @@ impl<'a> Checker<'a> {
             param_count_stack: Vec::new(),
             current_origin: None,
             extra_sources: HashMap::new(),
+            def_order_stack: Vec::new(),
         }
     }
 
@@ -375,6 +379,39 @@ impl<'a> Checker<'a> {
 
     fn val_span(&self, id: ValId) -> &TokenSpan {
         &self.vals[id.0].1
+    }
+
+    // --- DefTree generation ---
+
+    fn emit_def_tree(&mut self, tree: DefTree) {
+        if let Some(top) = self.def_order_stack.last_mut() {
+            top.push(tree);
+        }
+    }
+
+    fn generate_def_trees(&self, module: &Module) -> Vec<DefTree> {
+        let mut trees = Vec::new();
+        for &def_id in &module.entries {
+            trees.push(DefTree::Def(def_id));
+            if let Some(members) = self.def(def_id).members() {
+                if !members.entries.is_empty() {
+                    let children = self.generate_def_trees(members);
+                    trees.push(DefTree::Scope { def_id, children });
+                }
+            }
+        }
+        trees
+    }
+
+    fn emit_def_with_scope(&mut self, def_id: DefId) {
+        self.emit_def_tree(DefTree::Def(def_id));
+        if let Some(members) = self.def(def_id).members() {
+            if !members.entries.is_empty() {
+                let members = members.clone();
+                let children = self.generate_def_trees(&members);
+                self.emit_def_tree(DefTree::Scope { def_id, children });
+            }
+        }
     }
 
     // --- Name building ---
@@ -635,10 +672,23 @@ impl<'a> Checker<'a> {
 
     fn resolve_decls(&mut self, decls: Vec<semtree::Decl>) -> Module {
         self.push_scope();
+        self.def_order_stack.push(Vec::new());
         for d in decls {
             self.resolve_decl(d);
         }
+        self.def_order_stack.pop(); // nested DefTrees discarded; captured via generate_def_trees
         self.pop_scope()
+    }
+
+    fn resolve_decls_root(&mut self, decls: Vec<semtree::Decl>) -> (Module, Vec<DefTree>) {
+        self.push_scope();
+        self.def_order_stack.push(Vec::new());
+        for d in decls {
+            self.resolve_decl(d);
+        }
+        let def_order = self.def_order_stack.pop().unwrap();
+        let module = self.pop_scope();
+        (module, def_order)
     }
 
     fn resolve_module(&mut self, mod_s: S<semtree::Module>) -> Module {
@@ -711,6 +761,11 @@ impl<'a> Checker<'a> {
                 if matches!(&mod_s.0, semtree::Module::Use(_)) {
                     let span = mod_s.1.clone();
                     let result = self.resolve_module(mod_s);
+                    // Emit DefTree for used defs
+                    let trees = self.generate_def_trees(&result);
+                    for tree in trees {
+                        self.emit_def_tree(tree);
+                    }
                     let scope = self.scopes.last_mut().unwrap();
                     let conflicts = scope.merge_used(&result, &self.defs);
                     for key in conflicts {
@@ -1033,6 +1088,7 @@ impl<'a> Checker<'a> {
             for ni in &name_infos {
                 self.register_path(&ni.seg_names, def_id);
             }
+            self.emit_def_with_scope(def_id);
         }
     }
 
@@ -1183,6 +1239,17 @@ impl<'a> Checker<'a> {
         for seg_names in &all_seg_names {
             self.merge_into_path(seg_names, members_to_merge.clone());
         }
+
+        // Emit DefTree::Scope for each += target
+        if !members_to_merge.entries.is_empty() {
+            let children = self.generate_def_trees(&members_to_merge);
+            for seg_names in &all_seg_names {
+                let names: Vec<&str> = seg_names.iter().map(|(n, _)| n.as_str()).collect();
+                if let Some(def_id) = self.lookup_path(&names) {
+                    self.emit_def_tree(DefTree::Scope { def_id, children: children.clone() });
+                }
+            }
+        }
     }
 
     fn process_mod_decl(
@@ -1201,6 +1268,12 @@ impl<'a> Checker<'a> {
         let result = self.merge_with_clauses(result, with_clauses);
 
         self.exit_inner_scope();
+
+        // Emit DefTree for promoted defs
+        let trees = self.generate_def_trees(&result);
+        for tree in trees {
+            self.emit_def_tree(tree);
+        }
 
         // Mod → promote to current scope
         let scope = self.scopes.last_mut().unwrap();
@@ -1235,12 +1308,13 @@ pub fn resolve_with_sources(
 ) -> (Program, Vec<Error>) {
     let mut checker = Checker::new(tokens);
     checker.extra_sources = extra_sources;
-    let root = checker.resolve_decls(program.0);
+    let (root, def_order) = checker.resolve_decls_root(program.0);
     let prog = Program {
         root,
         items: checker.items,
         defs: checker.defs,
         vals: checker.vals,
+        def_order,
     };
     (prog, checker.errors)
 }
