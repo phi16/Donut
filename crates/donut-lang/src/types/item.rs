@@ -76,7 +76,7 @@ pub struct Param {
 #[derive(Debug, Clone, Copy)]
 pub enum ItemKind {
     Decl,
-    Def, // TODO
+    DeclDef, // TODO
     Param,
 }
 
@@ -92,6 +92,9 @@ pub struct Item {
 // --- Def ---
 // Named definition. Has body, members, decorators.
 
+/// The name used for the auto-generated equivalence member of a DeclDef.
+pub const DEF_MEMBER_NAME: &str = "def";
+
 #[derive(Debug)]
 pub struct FunctorMapping {
     pub params: Vec<Param>,
@@ -102,7 +105,11 @@ pub struct FunctorMapping {
 #[derive(Debug)]
 pub enum DefBody {
     None,
-    Decl { item: ItemId },
+    Decl {
+        item: ItemId,
+        /// For DeclDef (`:=`): the body val `y` in `x: T := y`.
+        def_val: Option<ValId>,
+    },
     Alias { val: ValId },
     Functor { mappings: Vec<FunctorMapping> },
 }
@@ -233,13 +240,20 @@ impl Program {
                 item.lname,
                 item.kind,
                 item.ty.0,
-                item.params.iter().map(|p| format!("{}:Val({})=Item({})", p.name, p.ty.0, p.item.0)).collect::<Vec<_>>().join(", "),
+                item.params
+                    .iter()
+                    .map(|p| format!("{}:Val({})=Item({})", p.name, p.ty.0, p.item.0))
+                    .collect::<Vec<_>>()
+                    .join(", "),
             ));
         }
 
         s.push_str("\n=== Defs ===\n");
         for (i, def) in self.defs.iter().enumerate() {
-            s.push_str(&format!("  Def({}) qname={} lname={}", i, def.qname, def.lname));
+            s.push_str(&format!(
+                "  Def({}) qname={} lname={}",
+                i, def.qname, def.lname
+            ));
             if let Some(origin) = &def.origin {
                 s.push_str(&format!(" origin={}", origin));
             }
@@ -247,7 +261,11 @@ impl Program {
             if !def.params.is_empty() {
                 s.push_str(&format!(
                     "    params: [{}]\n",
-                    def.params.iter().map(|p| format!("{}:Val({})=Item({})", p.name, p.ty.0, p.item.0)).collect::<Vec<_>>().join(", "),
+                    def.params
+                        .iter()
+                        .map(|p| format!("{}:Val({})=Item({})", p.name, p.ty.0, p.item.0))
+                        .collect::<Vec<_>>()
+                        .join(", "),
                 ));
             }
             if let Some(ty) = def.ty {
@@ -255,8 +273,16 @@ impl Program {
             }
             match &def.body {
                 DefBody::None => s.push_str("    body: none\n"),
-                DefBody::Decl { item } => s.push_str(&format!("    body: decl Item({})\n", item.0)),
-                DefBody::Alias { val } => s.push_str(&format!("    body: alias {}\n", self.display_val(*val))),
+                DefBody::Decl { item, def_val } => {
+                    s.push_str(&format!("    body: decl Item({})", item.0));
+                    if let Some(dv) = def_val {
+                        s.push_str(&format!(" := {}", self.display_val(*dv)));
+                    }
+                    s.push('\n');
+                }
+                DefBody::Alias { val } => {
+                    s.push_str(&format!("    body: alias {}\n", self.display_val(*val)))
+                }
                 DefBody::Functor { mappings } => {
                     s.push_str("    body: functor\n");
                     for m in mappings {
@@ -271,13 +297,22 @@ impl Program {
             if !def.decos.is_empty() {
                 s.push_str(&format!(
                     "    decos: [{}]\n",
-                    def.decos.iter().map(|&d| self.display_val(d)).collect::<Vec<_>>().join(", "),
+                    def.decos
+                        .iter()
+                        .map(|&d| self.display_val(d))
+                        .collect::<Vec<_>>()
+                        .join(", "),
                 ));
             }
             if !def.members.entries.is_empty() {
                 s.push_str(&format!(
                     "    members: [{}]\n",
-                    def.members.entries.iter().map(|d| format!("Def({})", d.0)).collect::<Vec<_>>().join(", "),
+                    def.members
+                        .entries
+                        .iter()
+                        .map(|d| format!("Def({})", d.0))
+                        .collect::<Vec<_>>()
+                        .join(", "),
                 ));
             }
         }
@@ -305,7 +340,11 @@ impl Program {
                 if !path.args.is_empty() {
                     s.push_str(&format!(
                         "[{}]",
-                        path.args.iter().map(|&a| self.display_val(a)).collect::<Vec<_>>().join(", "),
+                        path.args
+                            .iter()
+                            .map(|&a| self.display_val(a))
+                            .collect::<Vec<_>>()
+                            .join(", "),
                     ));
                 }
                 if let Some(app) = path.applicand {
@@ -318,28 +357,48 @@ impl Program {
                 Lit::String(s) => format!("\"{}\"", s),
                 Lit::Array(vs) => format!(
                     "[{}]",
-                    vs.iter().map(|&v| self.display_val(v)).collect::<Vec<_>>().join(", "),
+                    vs.iter()
+                        .map(|&v| self.display_val(v))
+                        .collect::<Vec<_>>()
+                        .join(", "),
                 ),
                 Lit::Object(kvs) => format!(
                     "{{{}}}",
-                    kvs.iter().map(|(k, v)| format!("{}: {}", k, self.display_val(*v))).collect::<Vec<_>>().join(", "),
+                    kvs.iter()
+                        .map(|(k, v)| format!("{}: {}", k, self.display_val(*v)))
+                        .collect::<Vec<_>>()
+                        .join(", "),
                 ),
             },
             Val::Comp(axis, children) => {
                 let sep = match axis {
                     0 => " ",
                     1 => "; ",
-                    n => return format!(
-                        "comp({}, [{}])",
-                        n,
-                        children.iter().map(|&c| self.display_val(c)).collect::<Vec<_>>().join(", "),
-                    ),
+                    n => {
+                        return format!(
+                            "comp({}, [{}])",
+                            n,
+                            children
+                                .iter()
+                                .map(|&c| self.display_val(c))
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                        );
+                    }
                 };
-                children.iter().map(|&c| self.display_val(c)).collect::<Vec<_>>().join(sep)
+                children
+                    .iter()
+                    .map(|&c| self.display_val(c))
+                    .collect::<Vec<_>>()
+                    .join(sep)
             }
             Val::CompStar(children) => format!(
                 ";* [{}]",
-                children.iter().map(|&c| self.display_val(c)).collect::<Vec<_>>().join(", "),
+                children
+                    .iter()
+                    .map(|&c| self.display_val(c))
+                    .collect::<Vec<_>>()
+                    .join(", "),
             ),
             Val::Arrow(kind, l, r) => {
                 let op = match kind {
@@ -352,9 +411,12 @@ impl Program {
             Val::Hole(Hole::Any) => "_".to_string(),
             Val::Hole(Hole::Named(n)) => format!("?{}", n),
             Val::Subst(inner, mapping) => {
-                let substs: Vec<String> = mapping.iter().map(|(item_id, &val_id)| {
-                    format!("Item({})={}", item_id.0, self.display_val(val_id))
-                }).collect();
+                let substs: Vec<String> = mapping
+                    .iter()
+                    .map(|(item_id, &val_id)| {
+                        format!("Item({})={}", item_id.0, self.display_val(val_id))
+                    })
+                    .collect();
                 format!("{}[{}]", self.display_val(*inner), substs.join(", "))
             }
         }

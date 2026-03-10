@@ -1342,3 +1342,55 @@ fn lit_prim_args() {
     }
 }
 
+// --- DeclDef ---
+
+#[test]
+fn decldef_with_type() {
+    let env = check_ok("a: *\nb: *\nf: a ~ b\nx: * := a");
+    let x = get_def(&env, "x");
+    assert_eq!(x.ty, Ty::Star);
+    assert!(x.item.is_some());
+    // x.def should exist as a member
+    let x_module = env.root.lookup.get("x").unwrap();
+    let def_module = x_module.lookup.get("def").unwrap();
+    let def_id = def_module.this.unwrap();
+    let def_def = &env.defs[def_id.0];
+    assert!(matches!(def_def.ty, Ty::Arrow(_, ArrowTy::Eq, _, _)));
+}
+
+#[test]
+fn decldef_type_inferred() {
+    let env = check_ok("a: *\nx := a");
+    let x = get_def(&env, "x");
+    assert_eq!(x.ty, Ty::Star, "type should be inferred from body");
+    assert!(x.item.is_some());
+}
+
+#[test]
+fn decldef_arrow_inferred() {
+    let env = check_ok("a: *\nb: *\nf: a → b\nx := f");
+    let x = get_def(&env, "x");
+    assert!(
+        matches!(x.ty, Ty::Arrow(_, ArrowTy::To, _, _)),
+        "type should be inferred as arrow from body"
+    );
+}
+
+#[test]
+fn decldef_member_type() {
+    // x.def : x ~ a (equivalence cell)
+    let env = check_ok("a: *\nx: * := a");
+    let x_module = env.root.lookup.get("x").unwrap();
+    let def_module = x_module.lookup.get("def").unwrap();
+    let def_id = def_module.this.unwrap();
+    let def_def = &env.defs[def_id.0];
+    if let Ty::Arrow(level, arrow_ty, src, tgt) = &def_def.ty {
+        assert_eq!(*level, 1);
+        assert_eq!(*arrow_ty, ArrowTy::Eq);
+        // src should be x (a 0-cell), tgt should be a (a 0-cell)
+        assert!(matches!(src, PureVal::Cell(pc) if pc.dim().in_space == 0));
+        assert!(matches!(tgt, PureVal::Cell(pc) if pc.dim().in_space == 0));
+    } else {
+        panic!("expected Arrow(Eq) type, got {:?}", def_def.ty);
+    }
+}

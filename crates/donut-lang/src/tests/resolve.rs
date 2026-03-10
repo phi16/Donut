@@ -1422,16 +1422,19 @@ z: T := "w"
     assert!(!matches!(get_def(&p, "y").body, DefBody::Decl { .. }));
     // declaration (x) → Decl
     let x_item_id = match get_def(&p, "x").body {
-        DefBody::Decl { item } => item,
+        DefBody::Decl { item, .. } => item,
         _ => panic!("expected Decl"),
     };
     assert!(matches!(p.item(x_item_id).kind, ItemKind::Decl));
-    // definition (z) → Decl (with := syntax)
+    // definition (z) → DeclDef (with := syntax)
     let z_item_id = match get_def(&p, "z").body {
-        DefBody::Decl { item } => item,
+        DefBody::Decl { item, def_val, .. } => {
+            assert!(def_val.is_some(), "DeclDef should have def_val");
+            item
+        }
         _ => panic!("expected Decl"),
     };
-    assert!(matches!(p.item(z_item_id).kind, ItemKind::Def));
+    assert!(matches!(p.item(z_item_id).kind, ItemKind::DeclDef));
 }
 
 #[test]
@@ -1466,7 +1469,7 @@ fn item_created_for_def() {
     let def_items: Vec<_> = p
         .items
         .iter()
-        .filter(|i| matches!(i.kind, ItemKind::Def) && i.lname == "g")
+        .filter(|i| matches!(i.kind, ItemKind::DeclDef) && i.lname == "g")
         .collect();
     assert_eq!(def_items.len(), 1, "expected Item(Def) for g");
 }
@@ -1672,46 +1675,31 @@ fn def_order_simple() {
 #[test]
 fn def_order_module() {
     let p = check_module("cat = {\n  x: *\n  y: *\n}");
-    assert_eq!(
-        format_def_order(&p, &p.def_order),
-        "cat { x, y }"
-    );
+    assert_eq!(format_def_order(&p, &p.def_order), "cat { x, y }");
 }
 
 #[test]
 fn def_order_nested_module() {
     let p = check_module("a = {\n  b = {\n    c: *\n  }\n}");
-    assert_eq!(
-        format_def_order(&p, &p.def_order),
-        "a { b { c } }"
-    );
+    assert_eq!(format_def_order(&p, &p.def_order), "a { b { c } }");
 }
 
 #[test]
 fn def_order_alias_inherits_members() {
     let p = check_module("a = {\n  b: *\n}\nc = a");
-    assert_eq!(
-        format_def_order(&p, &p.def_order),
-        "a { b }, c { b }"
-    );
+    assert_eq!(format_def_order(&p, &p.def_order), "a { b }, c { b }");
 }
 
 #[test]
 fn def_order_add() {
     let p = check_module("a = {\n  x: *\n}\na += {\n  y: *\n}");
-    assert_eq!(
-        format_def_order(&p, &p.def_order),
-        "a { x }, a { y }"
-    );
+    assert_eq!(format_def_order(&p, &p.def_order), "a { x }, a { y }");
 }
 
 #[test]
 fn def_order_with_clause() {
     let p = check_module("cat = {\n  x: *\n} with {\n  y: *\n}");
-    assert_eq!(
-        format_def_order(&p, &p.def_order),
-        "cat { x, y }"
-    );
+    assert_eq!(format_def_order(&p, &p.def_order), "cat { x, y }");
 }
 
 #[test]
@@ -1727,7 +1715,10 @@ fn def_order_import() {
 fn def_order_named_import() {
     let p = check_module("b = import \"base\"");
     let order = format_def_order(&p, &p.def_order);
-    assert!(order.starts_with("b { "), "expected b with scope in: {order}");
+    assert!(
+        order.starts_with("b { "),
+        "expected b with scope in: {order}"
+    );
     assert!(order.contains("nat"), "expected nat in: {order}");
 }
 

@@ -174,9 +174,21 @@ impl<'a> Checker<'a> {
 
         // Evaluate body
         let (item, val, ty) = match &self.program.def(def_id).body {
-            DefBody::Decl { item: item_id } => {
+            DefBody::Decl { item: item_id, def_val } => {
                 let item_id = *item_id;
-                let ty = declared_ty.unwrap_or(Ty::Star);
+                let def_val = *def_val;
+                let ty = if let Some(def_val_id) = def_val {
+                    // DeclDef: infer type from body if not explicitly declared
+                    match declared_ty {
+                        Some(Ty::Hole) | None => {
+                            let val_pv = self.eval_val(def_val_id);
+                            self.infer_ty(&val_pv)
+                        }
+                        Some(ty) => ty,
+                    }
+                } else {
+                    declared_ty.unwrap_or(Ty::Star)
+                };
                 self.check_item(item_id, &ty, &span);
                 let pv = self.checked[&Ref::Item(item_id)].clone();
                 (Some(item_id), pv, ty)

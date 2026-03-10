@@ -283,8 +283,8 @@ impl Scope {
 fn item_kind_from_op(op: &semtree::AssignOp, has_body: bool) -> Option<ItemKind> {
     match op {
         semtree::AssignOp::Decl => Some(ItemKind::Decl),
-        semtree::AssignOp::Def if has_body => Some(ItemKind::Def),
-        semtree::AssignOp::Def => Some(ItemKind::Decl),
+        semtree::AssignOp::DeclDef if has_body => Some(ItemKind::DeclDef),
+        semtree::AssignOp::DeclDef => Some(ItemKind::Decl),
         semtree::AssignOp::Alias => None,
         semtree::AssignOp::Add => None,
     }
@@ -457,34 +457,47 @@ impl<'a> Checker<'a> {
         span: &TokenSpan,
     ) -> DefBody {
         match &self.def(def_id).body {
-            DefBody::Decl { item } => {
+            DefBody::Decl { item, .. } => {
                 let item = *item;
                 let s = span.clone();
                 let path_val = self.alloc_val(
-                    Val::Path(Path { target: Ref::Item(item), args: vec![], applicand: None }),
+                    Val::Path(Path {
+                        target: Ref::Item(item),
+                        args: vec![],
+                        applicand: None,
+                    }),
                     s.clone(),
                 );
-                DefBody::Alias { val: self.alloc_val(Val::Subst(path_val, mapping.clone()), s) }
+                DefBody::Alias {
+                    val: self.alloc_val(Val::Subst(path_val, mapping.clone()), s),
+                }
             }
             DefBody::Alias { val } => {
                 let val = *val;
                 let s = self.val_span(val).clone();
-                DefBody::Alias { val: self.alloc_val(Val::Subst(val, mapping.clone()), s) }
+                DefBody::Alias {
+                    val: self.alloc_val(Val::Subst(val, mapping.clone()), s),
+                }
             }
             DefBody::Functor { mappings } => {
-                let orig_mappings: Vec<_> = mappings.iter().map(|m| {
-                    (m.params.clone(), m.applicand, m.val)
-                }).collect();
+                let orig_mappings: Vec<_> = mappings
+                    .iter()
+                    .map(|m| (m.params.clone(), m.applicand, m.val))
+                    .collect();
                 DefBody::Functor {
-                    mappings: orig_mappings.into_iter().map(|(params, applicand, val)| {
-                        let app_s = self.val_span(applicand).clone();
-                        let val_s = self.val_span(val).clone();
-                        FunctorMapping {
-                            params,
-                            applicand: self.alloc_val(Val::Subst(applicand, mapping.clone()), app_s),
-                            val: self.alloc_val(Val::Subst(val, mapping.clone()), val_s),
-                        }
-                    }).collect(),
+                    mappings: orig_mappings
+                        .into_iter()
+                        .map(|(params, applicand, val)| {
+                            let app_s = self.val_span(applicand).clone();
+                            let val_s = self.val_span(val).clone();
+                            FunctorMapping {
+                                params,
+                                applicand: self
+                                    .alloc_val(Val::Subst(applicand, mapping.clone()), app_s),
+                                val: self.alloc_val(Val::Subst(val, mapping.clone()), val_s),
+                            }
+                        })
+                        .collect(),
                 }
             }
             DefBody::None => DefBody::None,
@@ -706,8 +719,7 @@ impl<'a> Checker<'a> {
                 Ref::Def(id) => Some(id),
                 Ref::Item(_) => None,
             };
-            let next = current_def
-                .and_then(|id| self.def(id).members.get(name));
+            let next = current_def.and_then(|id| self.def(id).members.get(name));
             match next {
                 Some(id) => current_ref = Ref::Def(id),
                 None => {
@@ -1199,9 +1211,23 @@ impl<'a> Checker<'a> {
         } else if is_add {
             self.register_add(name_infos, body_val_resolved, result, inner_children);
         } else {
+            let span = name_infos
+                .first()
+                .and_then(|ni| ni.seg_names.last())
+                .map(|(_, s)| s.clone())
+                .unwrap();
             let is_functor = ty_resolved.map_or(false, |id| is_functor_type(&self.vals[id.0].0));
+            let is_decldef = matches!(item_kind, Some(ItemKind::DeclDef));
             let item_id = if let Some(ik) = item_kind {
-                if let Some(ty_id) = ty_resolved {
+                let ty_id = if let Some(ty_id) = ty_resolved {
+                    Some(ty_id)
+                } else if is_decldef {
+                    // DeclDef without explicit type: use Hole (inferred from body in check)
+                    Some(self.alloc_val(Val::Hole(Hole::Any), span.clone()))
+                } else {
+                    None
+                };
+                if let Some(ty_id) = ty_id {
                     let cname = self.make_cname(&first_lname);
                     Some(self.alloc_item(Item {
                         cname,
@@ -1221,23 +1247,21 @@ impl<'a> Checker<'a> {
                     mappings: Vec::new(),
                 }
             } else if let Some(item) = item_id {
-                DefBody::Decl { item }
+                DefBody::Decl {
+                    item,
+                    def_val: if is_decldef { body_val_resolved } else { None },
+                }
             } else if let Some(val) = body_val_resolved {
                 DefBody::Alias { val }
             } else {
                 DefBody::None
             };
-            let span = name_infos
-                .first()
-                .and_then(|ni| ni.seg_names.last())
-                .map(|(_, s)| s.clone())
-                .unwrap();
             let qname = self.make_qname(&first_lname);
             let param_counts = self.current_param_counts(params.len());
             let def = Def {
                 qname,
                 lname: first_lname.clone(),
-                span,
+                span: span.clone(),
                 ty: ty_resolved,
                 params,
                 body,
@@ -1260,6 +1284,70 @@ impl<'a> Checker<'a> {
             } else {
                 self.alloc_def(def)
             };
+
+            // --- DeclDef: create member def `x.def : x ~ y` ---
+            let mut inner_children = inner_children;
+            if let DefBody::Decl { item: main_item_id, def_val: Some(body_val) } =
+                &self.defs[def_id.0].body
+            {
+                let main_item_id = *main_item_id;
+                let body_val = *body_val;
+                let x_val = self.alloc_val(
+                    Val::Path(Path {
+                        target: Ref::Item(main_item_id),
+                        args: vec![],
+                        applicand: None,
+                    }),
+                    span.clone(),
+                );
+                let eq_val = self.alloc_val(
+                    Val::Arrow(ArrowKind::Eq, x_val, body_val),
+                    span.clone(),
+                );
+                let def_cname = format!(
+                    "{}.{}",
+                    self.items[main_item_id.0].cname,
+                    DEF_MEMBER_NAME
+                );
+                let def_item_id = self.alloc_item(Item {
+                    cname: def_cname,
+                    lname: DEF_MEMBER_NAME.to_string(),
+                    kind: ItemKind::Decl,
+                    ty: eq_val,
+                    params: vec![],
+                });
+                let def_qname = format!(
+                    "{}.{}",
+                    self.defs[def_id.0].qname,
+                    DEF_MEMBER_NAME
+                );
+                let mut member_param_counts = self.defs[def_id.0].param_counts.clone();
+                member_param_counts.push(0);
+                let member_def = Def {
+                    qname: def_qname,
+                    lname: DEF_MEMBER_NAME.to_string(),
+                    span: span.clone(),
+                    ty: Some(eq_val),
+                    params: vec![],
+                    body: DefBody::Decl {
+                        item: def_item_id,
+                        def_val: None,
+                    },
+                    members: Module::new(),
+                    decos: vec![],
+                    origin: self.current_origin.clone(),
+                    param_counts: member_param_counts,
+                };
+                let member_def_id = self.alloc_def(member_def);
+                self.def_mut(def_id)
+                    .members
+                    .define(DEF_MEMBER_NAME.to_string(), member_def_id);
+                inner_children.push(DefTree {
+                    def_id: member_def_id,
+                    children: vec![],
+                });
+            }
+
             for ni in &name_infos {
                 self.register_path(&ni.seg_names, def_id);
             }
@@ -1416,7 +1504,10 @@ impl<'a> Checker<'a> {
             for seg_names in &all_seg_names {
                 let names: Vec<&str> = seg_names.iter().map(|(n, _)| n.as_str()).collect();
                 if let Some(def_id) = self.lookup_path(&names) {
-                    self.emit_def_tree(DefTree { def_id, children: inner_children.clone() });
+                    self.emit_def_tree(DefTree {
+                        def_id,
+                        children: inner_children.clone(),
+                    });
                 }
             }
         }

@@ -66,7 +66,7 @@ pub enum Module {
 pub enum AssignOp {
     Decl,
     Alias,
-    Def,
+    DeclDef,
     Add,
 }
 #[derive(Debug)]

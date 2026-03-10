@@ -115,7 +115,7 @@ impl Fmt for semtree::AssignOp {
         match self {
             semtree::AssignOp::Decl => p.s(": "),
             semtree::AssignOp::Alias => p.s(" = "),
-            semtree::AssignOp::Def => p.s(" := "),
+            semtree::AssignOp::DeclDef => p.s(" := "),
             semtree::AssignOp::Add => p.s(" += "),
         }
     }
