@@ -190,13 +190,18 @@ impl<'a> Checker<'a> {
             }
         };
 
-        // Evaluate decorators
-        let decos: Vec<PureVal> = self
-            .program
-            .def(def_id)
-            .decos
+        // Evaluate and validate decorators
+        let deco_ids: Vec<ValId> = self.program.def(def_id).decos.clone();
+        let decos: Vec<PureVal> = deco_ids
             .iter()
-            .map(|&d| self.eval_val(d))
+            .map(|&d| {
+                let pv = self.eval_val(d);
+                let deco_span = self.program.val_span(d);
+                if !self.check_meta_val(&pv, Ty::Deco) {
+                    self.error_at(deco_span, "decorator must be a decorator value");
+                }
+                pv
+            })
             .collect();
 
         // Params → ItemIds (already checked in process_tree)
@@ -827,31 +832,35 @@ impl<'a> Checker<'a> {
                 pv
             }
             Ty::Nat => {
-                if !matches!(env::as_meta(&pv), Some(Meta::Nat(_))) {
+                if !self.check_meta_val(&pv, Ty::Nat) {
                     self.error_at(span, "expected a nat value");
                 }
                 pv
             }
             Ty::Rat => {
-                if !matches!(env::as_meta(&pv), Some(Meta::Rat(_))) {
+                if !self.check_meta_val(&pv, Ty::Rat) && !self.check_meta_val(&pv, Ty::Nat) {
                     self.error_at(span, "expected a rat value");
                 }
                 pv
             }
             Ty::Color => {
-                if !matches!(env::as_meta(&pv), Some(Meta::Color(_))) {
+                if !self.check_meta_val(&pv, Ty::Color) {
                     self.error_at(span, "expected a color value");
                 }
                 pv
             }
             Ty::Deco => {
-                if !matches!(env::as_meta(&pv), Some(Meta::Deco(_))) {
+                if !self.check_meta_val(&pv, Ty::Deco) {
                     self.error_at(span, "expected a decorator value");
                 }
                 pv
             }
             Ty::Functor(_, _) | Ty::Hole => pv,
         }
+    }
+
+    fn check_meta_val(&self, pv: &PureVal, expected: Ty) -> bool {
+        self.infer_ty(pv) == expected
     }
 
     // --- Finalize ---
