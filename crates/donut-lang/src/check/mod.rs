@@ -94,17 +94,13 @@ impl Resolve for S<semtree::Path<semtree::ParamVal>> {
             .iter()
             .map(|seg_s| {
                 let S(seg, span) = seg_s;
-                (seg.0 .0.as_str(), span)
+                (seg.0.0.as_str(), span)
             })
             .collect();
         ctx.resolve_segments(&name_spans);
 
         // Convert segments (drop spans — not needed for check)
-        let segments: Vec<Segment> = path
-            .0
-            .into_iter()
-            .map(|seg_s| seg_s.resolve(ctx))
-            .collect();
+        let segments: Vec<Segment> = path.0.into_iter().map(|seg_s| seg_s.resolve(ctx)).collect();
 
         let applicand = path.1.map(|v| {
             assert!(!ctx.in_applicand);
@@ -125,9 +121,9 @@ impl Resolve for S<semtree::Segment<semtree::ParamVal>> {
     type Output = Segment;
     fn resolve(self, ctx: &mut Checker) -> Segment {
         let S(seg, _) = self;
-        let params: Vec<ParamVal> = seg.1 .0.into_iter().map(|pv| pv.resolve(ctx)).collect();
+        let params: Vec<ParamVal> = seg.1.0.into_iter().map(|pv| pv.resolve(ctx)).collect();
         Segment {
-            name: seg.0 .0,
+            name: seg.0.0,
             params,
         }
     }
@@ -471,8 +467,7 @@ impl<'a> Checker<'a> {
         out: &mut Vec<ValId>,
     ) {
         match val_s {
-            S(semtree::Val::Op(l, op_s, _, r), _)
-                if matches!(&op_s.0, semtree::Op::Comp(n) if *n == axis) =>
+            S(semtree::Val::Op(l, op_s, _, r), _) if matches!(&op_s.0, semtree::Op::Comp(n) if *n == axis) =>
             {
                 self.resolve_comp_flat(*l, axis, out);
                 self.resolve_comp_flat(*r, axis, out);
@@ -485,9 +480,7 @@ impl<'a> Checker<'a> {
 
     fn resolve_comp_star_flat(&mut self, val_s: S<semtree::Val>, out: &mut Vec<ValId>) {
         match val_s {
-            S(semtree::Val::Op(l, op_s, _, r), _)
-                if matches!(&op_s.0, semtree::Op::CompStar) =>
-            {
+            S(semtree::Val::Op(l, op_s, _, r), _) if matches!(&op_s.0, semtree::Op::CompStar) => {
                 self.resolve_comp_star_flat(*l, out);
                 self.resolve_comp_star_flat(*r, out);
             }
@@ -669,10 +662,8 @@ impl<'a> Checker<'a> {
                 match source {
                     Some(source) => {
                         let old_origin = self.current_origin.take();
-                        let old_cname_prefix =
-                            std::mem::take(&mut self.cname_prefix_stack);
-                        let old_param_counts =
-                            std::mem::take(&mut self.param_count_stack);
+                        let old_cname_prefix = std::mem::take(&mut self.cname_prefix_stack);
+                        let old_param_counts = std::mem::take(&mut self.param_count_stack);
                         // prefix_stack is NOT cleared — qnames include outer context
                         self.current_origin = Some(name.clone());
                         let module = self.resolve_import(&source);
@@ -769,7 +760,7 @@ impl<'a> Checker<'a> {
                 pd.0.iter()
                     .map(|seg_s| {
                         let S(seg, span) = seg_s;
-                        (seg.0 .0.clone(), span.clone())
+                        (seg.0.0.clone(), span.clone())
                     })
                     .collect()
             })
@@ -799,10 +790,7 @@ impl<'a> Checker<'a> {
                 if seg_names.len() == 1 {
                     let (name, span) = &seg_names[0];
                     if self.lookup(name).is_none() {
-                        self.error_at(
-                            span,
-                            format!("`{}` must be declared before `+=`", name),
-                        );
+                        self.error_at(span, format!("`{}` must be declared before `+=`", name));
                     }
                 }
             }
@@ -811,7 +799,7 @@ impl<'a> Checker<'a> {
         // --- Forward refs (outer scope, before inner scope) ---
         if !is_add {
             for (name_s, seg_names) in names.iter().zip(&seg_names_list) {
-                let has_applicand = name_s.0 .1.is_some();
+                let has_applicand = name_s.0.1.is_some();
                 if !has_applicand && seg_names.len() == 1 {
                     let (name, span) = &seg_names[0];
                     let qname = self.make_qname(name);
@@ -848,7 +836,7 @@ impl<'a> Checker<'a> {
             let semtree::Path(segs, applicand) = pd;
             for seg_s in segs {
                 let S(seg, _) = seg_s;
-                for param_decl in seg.1 .0 {
+                for param_decl in seg.1.0 {
                     let resolved_ty = param_decl.ty.resolve(self);
                     if i == 0 {
                         for name in param_decl.names {
@@ -857,8 +845,7 @@ impl<'a> Checker<'a> {
                                 ty: resolved_ty,
                             };
                             // Create Gen for parameter
-                            let param_cname =
-                                self.make_param_cname(&first_lname, &name.0);
+                            let param_cname = self.make_param_cname(&first_lname, &name.0);
                             let _gen_id = self.alloc_gen(Gen {
                                 cname: param_cname,
                                 lname: name.0.clone(),
@@ -1014,12 +1001,7 @@ impl<'a> Checker<'a> {
 
         // --- Registration ---
         if let Some((resolved_apps, mapping_params)) = resolved_apps {
-            self.register_functor_app(
-                name_infos,
-                body_val_resolved,
-                mapping_params,
-                resolved_apps,
-            );
+            self.register_functor_app(name_infos, body_val_resolved, mapping_params, resolved_apps);
         } else if is_add {
             self.register_add(name_infos, body_val_resolved, result);
         } else {
@@ -1037,8 +1019,7 @@ impl<'a> Checker<'a> {
                 }
             }
 
-            let is_functor =
-                ty_resolved.map_or(false, |id| is_functor_type(&self.vals[id.0]));
+            let is_functor = ty_resolved.map_or(false, |id| is_functor_type(&self.vals[id.0]));
             let body = if is_functor {
                 ItemBody::Functor {
                     mappings: Vec::new(),
@@ -1163,12 +1144,10 @@ impl<'a> Checker<'a> {
                 let lookup_result = self.lookup(fname);
                 match lookup_result {
                     Some(id) => {
-                        let is_functor =
-                            matches!(&self.item(id).body, ItemBody::Functor { .. });
+                        let is_functor = matches!(&self.item(id).body, ItemBody::Functor { .. });
                         if is_functor {
                             if let Some(v) = body_val_resolved {
-                                if let ItemBody::Functor { mappings } =
-                                    &mut self.item_mut(id).body
+                                if let ItemBody::Functor { mappings } = &mut self.item_mut(id).body
                                 {
                                     mappings.push(FunctorMapping {
                                         params: mapping_params.clone(),
@@ -1178,17 +1157,11 @@ impl<'a> Checker<'a> {
                                 }
                             }
                         } else {
-                            self.error_at(
-                                fspan,
-                                format!("`{}` is not a functor", fname),
-                            );
+                            self.error_at(fspan, format!("`{}` is not a functor", fname));
                         }
                     }
                     None => {
-                        self.error_at(
-                            fspan,
-                            format!("undefined functor `{}`", fname),
-                        );
+                        self.error_at(fspan, format!("undefined functor `{}`", fname));
                     }
                 }
             }
@@ -1264,9 +1237,9 @@ impl<'a> Checker<'a> {
 
 fn builtin_source(name: &str) -> Option<&'static str> {
     match name {
-        "base" => Some(include_str!("builtins/base.donut")),
-        "ui" => Some(include_str!("builtins/ui.donut")),
-        "sys" => Some(include_str!("builtins/sys.donut")),
+        "base" => Some(include_str!("../builtins/base.donut")),
+        "ui" => Some(include_str!("../builtins/ui.donut")),
+        "sys" => Some(include_str!("../builtins/sys.donut")),
         _ => None,
     }
 }

@@ -11,7 +11,7 @@ fn check_errs(code: &str) -> Vec<String> {
         conv_errors.is_empty(),
         "unexpected convert errors: {conv_errors:?}"
     );
-    let (_program, errors) = crate::resolve::resolve(sem_prog, &tokens);
+    let (_program, errors) = crate::check::resolve(sem_prog, &tokens);
     errors.into_iter().map(|(_, msg)| msg).collect()
 }
 
@@ -28,7 +28,7 @@ fn check_module(code: &str) -> Program {
         conv_errors.is_empty(),
         "unexpected convert errors: {conv_errors:?}"
     );
-    let (program, errors) = crate::resolve::resolve(sem_prog, &tokens);
+    let (program, errors) = crate::check::resolve(sem_prog, &tokens);
     assert!(errors.is_empty(), "unexpected errors: {errors:?}");
     program
 }
@@ -296,8 +296,7 @@ fn with_self_ref() {
 
 #[test]
 fn with_duplicate_key() {
-    let errs =
-        check_errs("x = \"a\"\n  with {\n    y = \"b\"\n  }\n  with {\n    y = \"c\"\n  }");
+    let errs = check_errs("x = \"a\"\n  with {\n    y = \"b\"\n  }\n  with {\n    y = \"c\"\n  }");
     assert!(
         errs.iter()
             .any(|e| e.contains("duplicate member") && e.contains("y")),
@@ -352,28 +351,19 @@ fn add_from_ref() {
 #[test]
 fn add_literal_error() {
     let errs = check_errs("x = \"a\"\nx += \"b\"");
-    assert!(
-        errs.iter().any(|e| e.contains("`+=` requires")),
-        "{errs:?}"
-    );
+    assert!(errs.iter().any(|e| e.contains("`+=` requires")), "{errs:?}");
 }
 
 #[test]
 fn add_comp_error() {
     let errs = check_errs("a = \"x\"\nb = \"y\"\nx = \"z\"\nx += a ; b");
-    assert!(
-        errs.iter().any(|e| e.contains("`+=` requires")),
-        "{errs:?}"
-    );
+    assert!(errs.iter().any(|e| e.contains("`+=` requires")), "{errs:?}");
 }
 
 #[test]
 fn add_arrow_error() {
     let errs = check_errs("a = \"x\"\nb = \"y\"\nx = \"z\"\nx += a → b");
-    assert!(
-        errs.iter().any(|e| e.contains("`+=` requires")),
-        "{errs:?}"
-    );
+    assert!(errs.iter().any(|e| e.contains("`+=` requires")), "{errs:?}");
 }
 
 #[test]
@@ -420,10 +410,7 @@ r3 = x.c
 #[test]
 fn add_number_error() {
     let errs = check_errs("x = \"a\"\nx += 42");
-    assert!(
-        errs.iter().any(|e| e.contains("`+=` requires")),
-        "{errs:?}"
-    );
+    assert!(errs.iter().any(|e| e.contains("`+=` requires")), "{errs:?}");
 }
 
 // ============================================================
@@ -1175,8 +1162,7 @@ fn functor_app_decl_error() {
 
 #[test]
 fn functor_app_module_error() {
-    let errs =
-        check_errs("A = \"a\"\nB = \"b\"\nf: A ~> B\na = \"y\"\nf(a) = {\n    x = \"v\"\n}");
+    let errs = check_errs("A = \"a\"\nB = \"b\"\nf: A ~> B\na = \"y\"\nf(a) = {\n    x = \"v\"\n}");
     assert!(
         errs.iter().any(|e| e.contains("functor application")),
         "{errs:?}"
@@ -1545,11 +1531,7 @@ import \"base\"
 b = import \"base\"
 ",
     );
-    let nat_gens: Vec<_> = p
-        .gens
-        .iter()
-        .filter(|g| g.cname == "base::nat")
-        .collect();
+    let nat_gens: Vec<_> = p.gens.iter().filter(|g| g.cname == "base::nat").collect();
     assert_eq!(
         nat_gens.len(),
         1,
