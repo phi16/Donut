@@ -1133,7 +1133,20 @@ impl<'a> Checker<'a> {
                 origin: self.current_origin.clone(),
                 param_counts,
             };
-            let def_id = self.alloc_def(def);
+            // Single-segment names always have a forward-ref Def (created
+            // before inner scope / with-clause resolution).  Reuse it so
+            // that paths already resolved inside with-clauses keep the
+            // same DefId.
+            let def_id = if let Some(ni) = name_infos.first().filter(|ni| ni.seg_names.len() == 1) {
+                let fwd = match self.lookup(&ni.seg_names[0].0) {
+                    Some(Ref::Def(id)) => id,
+                    _ => unreachable!("forward-ref Def must exist for single-segment declaration"),
+                };
+                *self.def_mut(fwd) = def;
+                fwd
+            } else {
+                self.alloc_def(def)
+            };
             for ni in &name_infos {
                 self.register_path(&ni.seg_names, def_id);
             }

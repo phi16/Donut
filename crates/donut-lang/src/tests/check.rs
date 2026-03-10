@@ -657,3 +657,407 @@ fn infer_ty_from_1cell_alias() {
     let g = get_def(&env, "g");
     assert!(matches!(g.ty, Ty::Arrow(1, ArrowTy::To, _, _)));
 }
+
+// =============================================
+// Tests migrated from old_check
+// =============================================
+
+// --- Basic (non-parametric) ---
+
+#[test]
+fn basic_cells_dim() {
+    // u: 0-cell, x: 1-cell, m: 2-cell (x x → x uses composition in type)
+    let env = check_ok("u: *\nx: u → u\nm: x x → x");
+    let u = get_def(&env, "u");
+    let x = get_def(&env, "x");
+    let m = get_def(&env, "m");
+    match (&u.val, &x.val, &m.val) {
+        (PureVal::Cell(uc), PureVal::Cell(xc), PureVal::Cell(mc)) => {
+            assert_eq!(uc.dim().in_space, 0);
+            assert_eq!(xc.dim().in_space, 1);
+            assert_eq!(mc.dim().in_space, 2);
+            // m.s should be x x (composition)
+            // m.t should be x
+            assert!(mc.t().is_convertible(xc));
+        }
+        _ => panic!("expected Cells"),
+    }
+}
+
+#[test]
+fn basic_alias_assoc() {
+    // Associator: a 3-cell from composed boundaries
+    let env = check_ok("u: *\nx: u → u\nm: x x → x\nrm = x m; m\nlm = m x; m\nassoc: rm → lm");
+    let assoc = get_def(&env, "assoc");
+    match &assoc.val {
+        PureVal::Cell(pc) => {
+            assert_eq!(pc.dim().in_space, 3);
+            // globular: assoc.s.s == assoc.t.s, assoc.s.t == assoc.t.t
+            assert!(pc.s().s().is_convertible(&pc.t().s()));
+            assert!(pc.s().t().is_convertible(&pc.t().t()));
+        }
+        _ => panic!("expected Cell"),
+    }
+}
+
+#[test]
+fn basic_module_path_access() {
+    // cat.u used in external type
+    let env = check_ok("cat = {\n  u: *\n  x: u → u\n}\nf: cat.u → cat.u");
+    let f = get_def(&env, "f");
+    match &f.val {
+        PureVal::Cell(fc) => {
+            assert_eq!(fc.dim().in_space, 1);
+            assert!(fc.s().is_convertible(&fc.t()));
+        }
+        _ => panic!("expected Cell"),
+    }
+}
+
+// --- Parametric declarations ---
+
+#[test]
+fn parametric_decl_is_cell() {
+    // A[x: *]: x → x — A should be a 1-cell with distinct source/target per param
+    let env = check_ok("A[x: *]: x → x");
+    let a = get_def(&env, "A");
+    match &a.val {
+        PureVal::Cell(pc) => {
+            assert_eq!(pc.dim().in_space, 1);
+            // source == target (both are x)
+            assert!(pc.s().is_convertible(&pc.t()));
+        }
+        _ => panic!("expected Cell"),
+    }
+}
+
+#[test]
+fn parametric_decl_one_cell_param() {
+    // B[f: u → u]: f → f is a 2-cell
+    let env = check_ok("u: *\nB[f: u → u]: f → f");
+    let b = get_def(&env, "B");
+    match &b.val {
+        PureVal::Cell(pc) => {
+            assert_eq!(pc.dim().in_space, 2);
+        }
+        _ => panic!("expected Cell"),
+    }
+}
+
+// --- Instantiation ---
+
+#[test]
+fn instantiation_1cell_param() {
+    // A[x: u → u]: x → x, then A[y] and A[z] with concrete params
+    let env = check_ok("u: *\nA[x: u → u]: x → x\ny: u → u\nz: u → u\nay = A[y]\naz = A[z]");
+    let y = get_def(&env, "y");
+    let z = get_def(&env, "z");
+    let ay = get_def(&env, "ay");
+    let az = get_def(&env, "az");
+    match (&y.val, &z.val, &ay.val, &az.val) {
+        (PureVal::Cell(yc), PureVal::Cell(zc), PureVal::Cell(ayc), PureVal::Cell(azc)) => {
+            // ay.s == y, ay.t == y
+            assert!(ayc.s().is_convertible(yc));
+            assert!(ayc.t().is_convertible(yc));
+            // az.s == z, az.t == z
+            assert!(azc.s().is_convertible(zc));
+            assert!(azc.t().is_convertible(zc));
+            // ay != az
+            assert!(!ayc.is_convertible(azc));
+        }
+        _ => panic!("expected Cells"),
+    }
+}
+
+// --- += forward reference ---
+
+#[test]
+fn add_forward_reference_source_target() {
+    let env = check_ok("u: *\nf: *\nu += {\n  to_f: u → f\n}");
+    let u_def = get_def(&env, "u");
+    let f_def = get_def(&env, "f");
+    // Find to_f in module
+    let u_module = env.root.lookup.get("u").unwrap();
+    let to_f_module = u_module.lookup.get("to_f").unwrap();
+    let to_f = &env.defs[to_f_module.this.unwrap().0];
+    match (&u_def.val, &f_def.val, &to_f.val) {
+        (PureVal::Cell(uc), PureVal::Cell(fc), PureVal::Cell(tc)) => {
+            assert!(tc.s().is_convertible(uc));
+            assert!(tc.t().is_convertible(fc));
+        }
+        _ => panic!("expected Cells"),
+    }
+}
+
+#[test]
+fn add_chained_forward_references() {
+    let env = check_ok(
+        "C: *\nx: C → C with { a = x }\ny: C → x\nx += { b = y }\nz = x.b\nx += { c = z }",
+    );
+    // x.a = x → 1-cell
+    let x_mod = env.root.lookup.get("x").unwrap();
+    let a_mod = x_mod.lookup.get("a").unwrap();
+    let a = &env.defs[a_mod.this.unwrap().0];
+    match &a.val {
+        PureVal::Cell(pc) => assert_eq!(pc.dim().in_space, 1),
+        _ => panic!("expected Cell"),
+    }
+    // y: C → x, x is 1-cell → y is 2-cell
+    let y = get_def(&env, "y");
+    match &y.val {
+        PureVal::Cell(pc) => assert_eq!(pc.dim().in_space, 2),
+        _ => panic!("expected Cell"),
+    }
+    // z = x.b = y → 2-cell
+    let z = get_def(&env, "z");
+    match &z.val {
+        PureVal::Cell(pc) => assert_eq!(pc.dim().in_space, 2),
+        _ => panic!("expected Cell"),
+    }
+    // x.c = z → 2-cell
+    let c_mod = x_mod.lookup.get("c").unwrap();
+    let c = &env.defs[c_mod.this.unwrap().0];
+    match &c.val {
+        PureVal::Cell(pc) => assert_eq!(pc.dim().in_space, 2),
+        _ => panic!("expected Cell"),
+    }
+}
+
+// --- Type aliases ---
+
+#[test]
+fn type_alias_composition() {
+    // T = x x → x should work as a type alias for composed boundary
+    let env = check_ok("u: *\nx: u → u\nT = x x → x\nm: T");
+    let m = get_def(&env, "m");
+    match &m.val {
+        PureVal::Cell(pc) => {
+            assert_eq!(pc.dim().in_space, 2);
+        }
+        _ => panic!("expected Cell"),
+    }
+}
+
+#[test]
+fn type_alias_star_decl() {
+    let env = check_ok("T = *\nu: T");
+    let u = get_def(&env, "u");
+    match &u.val {
+        PureVal::Cell(pc) => {
+            assert_eq!(pc.dim().in_space, 0);
+        }
+        _ => panic!("expected Cell"),
+    }
+}
+
+#[test]
+fn parametric_star_body() {
+    // g[x: *] = * should be valid (g: meta)
+    let env = check_ok("g[x: *] = *");
+    let g = get_def(&env, "g");
+    assert_eq!(g.ty, Ty::Meta);
+}
+
+#[test]
+fn cell_param_as_body() {
+    // h[x: *, y: x → x]: x → x = y
+    let env = check_ok("h[x: *, y: x → x]: x → x = y");
+    let h = get_def(&env, "h");
+    assert!(matches!(h.ty, Ty::Arrow(1, ArrowTy::To, _, _)));
+}
+
+#[test]
+fn cell_param_identity() {
+    // id[C: *, x: C → C]: x → x = x
+    // x is a 1-cell, x → x is level 2, so body x is lifted to id(x) = 2-cell
+    let env = check_ok("id[C: *, x: C → C]: x → x = x");
+    let id_def = get_def(&env, "id");
+    match &id_def.val {
+        PureVal::Cell(pc) => {
+            assert_eq!(pc.dim().in_space, 2);
+            assert!(pc.s().is_convertible(&pc.t()));
+        }
+        _ => panic!("expected Cell"),
+    }
+}
+
+#[test]
+fn type_alias_parametric_boundary() {
+    // g[x: *] = x → x, m: g[u], n: g[v] — verify source/target
+    let env = check_ok("g[x: *] = x → x\nu: *\nv: *\nm: g[u]\nn: g[v]");
+    let u = get_def(&env, "u");
+    let v = get_def(&env, "v");
+    let m = get_def(&env, "m");
+    let n = get_def(&env, "n");
+    match (&m.val, &n.val, &u.val, &v.val) {
+        (PureVal::Cell(mc), PureVal::Cell(nc), PureVal::Cell(uc), PureVal::Cell(vc)) => {
+            assert!(mc.s().is_convertible(uc));
+            assert!(mc.t().is_convertible(uc));
+            assert!(nc.s().is_convertible(vc));
+            assert!(nc.t().is_convertible(vc));
+        }
+        _ => panic!("expected Cells"),
+    }
+}
+
+#[test]
+fn type_alias_alias_chain() {
+    // T = x x → x, S = T, m: S → m should be 2-cell
+    let env = check_ok("u: *\nx: u → u\nT = x x → x\nS = T\nm: S");
+    let m = get_def(&env, "m");
+    match &m.val {
+        PureVal::Cell(pc) => {
+            assert_eq!(pc.dim().in_space, 2);
+        }
+        _ => panic!("expected Cell"),
+    }
+}
+
+#[test]
+fn type_alias_cross_usage() {
+    let env = check_ok("u: *\nEndo[X: *] = X → X\nf: Endo[u]\ng: Endo[u]\nalpha: f → g");
+    let u = get_def(&env, "u");
+    let f = get_def(&env, "f");
+    let g = get_def(&env, "g");
+    let alpha = get_def(&env, "alpha");
+    match (&f.val, &g.val, &u.val) {
+        (PureVal::Cell(fc), PureVal::Cell(gc), PureVal::Cell(uc)) => {
+            // f and g: u → u
+            assert!(fc.s().is_convertible(uc));
+            assert!(gc.s().is_convertible(uc));
+        }
+        _ => panic!("expected Cells"),
+    }
+    match &alpha.val {
+        PureVal::Cell(pc) => {
+            assert_eq!(pc.dim().in_space, 2);
+        }
+        _ => panic!("expected Cell"),
+    }
+}
+
+// --- += cross reference ---
+
+#[test]
+fn add_assign_cross_ref() {
+    let env = check_ok("C: *\nx: C → C\ny: C → C\nx += {\n  z: C → y\n}");
+    let x_mod = env.root.lookup.get("x").unwrap();
+    let z_mod = x_mod.lookup.get("z").unwrap();
+    let z = &env.defs[z_mod.this.unwrap().0];
+    match &z.val {
+        PureVal::Cell(pc) => {
+            assert_eq!(pc.dim().in_space, 2);
+        }
+        _ => panic!("expected Cell"),
+    }
+}
+
+// --- Functor tests ---
+
+#[test]
+fn functor_basic() {
+    check_ok(
+        "src = {\n  C: *\n  X: C → C\n  m: X X → X\n}\ntgt = {\n  D: *\n  Y: D → D\n  n: Y Y → Y\n}\nF: src.C ~> tgt.D\nF(src.X) = tgt.Y\nF(src.m) = tgt.n",
+    );
+}
+
+#[test]
+fn functor_dimension_mismatch() {
+    let (_, errors) = run_check(
+        "src = {\n  C: *\n  X: C → C\n}\ntgt = {\n  D: *\n  Y: D → D\n  n: Y Y → Y\n}\nF: src.C ~> tgt.D\nF(src.X) = tgt.n",
+    );
+    assert!(!errors.is_empty(), "expected dimension mismatch error");
+}
+
+#[test]
+fn functor_source_mismatch() {
+    let (_, errors) = run_check(
+        "src = {\n  C: *\n  X: C → C\n  Y: C → C\n  m: X X → Y\n}\ntgt = {\n  D: *\n  A: D → D\n  B: D → D\n  n: A A → A\n}\nF: src.C ~> tgt.D\nF(src.X) = tgt.A\nF(src.Y) = tgt.B\nF(src.m) = tgt.n",
+    );
+    assert!(!errors.is_empty(), "expected boundary mismatch error");
+}
+
+#[test]
+fn functor_missing_mapping() {
+    let (_, errors) = run_check(
+        "src = {\n  C: *\n  X: C → C\n  Y: C → C\n  m: X → Y\n}\ntgt = {\n  D: *\n  A: D → D\n  B: D → D\n  n: A → B\n}\nF: src.C ~> tgt.D\nF(src.m) = tgt.n",
+    );
+    assert!(!errors.is_empty(), "expected no mapping error");
+}
+
+#[test]
+fn functor_preserves_composition_boundary() {
+    check_ok(
+        "src = {\n  C: *\n  X: C → C\n  m: X X → X\n  u: C → X\n}\ntgt = {\n  D: *\n  Y: D → D\n  n: Y Y → Y\n  v: D → Y\n}\nF: src.C ~> tgt.D\nF(src.X) = tgt.Y\nF(src.m) = tgt.n\nF(src.u) = tgt.v",
+    );
+}
+
+#[test]
+fn functor_base_case_explicit() {
+    // F(src.C) = tgt.D is redundant but allowed
+    check_ok(
+        "src = {\n  C: *\n  X: C → C\n}\ntgt = {\n  D: *\n  Y: D → D\n}\nF: src.C ~> tgt.D\nF(src.C) = tgt.D\nF(src.X) = tgt.Y",
+    );
+}
+
+// --- Qname / module name tests ---
+
+#[test]
+fn qname_toplevel() {
+    let env = check_ok("C: *\nx: C → C");
+    let c = get_def(&env, "C");
+    assert_eq!(c.qname, "C");
+    let x = get_def(&env, "x");
+    assert_eq!(x.qname, "x");
+}
+
+#[test]
+fn qname_module() {
+    let env = check_ok("cat = {\n  u: *\n  x: u → u\n}");
+    // Children of cat should have "cat." prefix in qname
+    let cat_mod = env.root.lookup.get("cat").unwrap();
+    let u_mod = cat_mod.lookup.get("u").unwrap();
+    let u = &env.defs[u_mod.this.unwrap().0];
+    assert_eq!(u.qname, "cat.u");
+    let x_mod = cat_mod.lookup.get("x").unwrap();
+    let x = &env.defs[x_mod.this.unwrap().0];
+    assert_eq!(x.qname, "cat.x");
+}
+
+#[test]
+fn qname_nested_module() {
+    let env = check_ok("a = {\n  b = {\n    u: *\n  }\n}");
+    let a_mod = env.root.lookup.get("a").unwrap();
+    let b_mod = a_mod.lookup.get("b").unwrap();
+    let u_mod = b_mod.lookup.get("u").unwrap();
+    let u = &env.defs[u_mod.this.unwrap().0];
+    assert_eq!(u.qname, "a.b.u");
+}
+
+#[test]
+fn qname_with_clause() {
+    let env = check_ok("C: *\nx: C → C with {\n  m: x x → x\n}");
+    let x_mod = env.root.lookup.get("x").unwrap();
+    let m_mod = x_mod.lookup.get("m").unwrap();
+    let m = &env.defs[m_mod.this.unwrap().0];
+    assert_eq!(m.qname, "x.m");
+}
+
+#[test]
+fn qname_add_clause() {
+    let env = check_ok("C: *\nx: C → C\nx += {\n  m: x x → x\n}");
+    let x_mod = env.root.lookup.get("x").unwrap();
+    let m_mod = x_mod.lookup.get("m").unwrap();
+    let m = &env.defs[m_mod.this.unwrap().0];
+    assert_eq!(m.qname, "x.m");
+}
+
+// --- Module body with ref ---
+
+#[test]
+fn module_body_with_ref() {
+    let env = check_ok("x = {\n  a: *\n}\ny = x with {\n  b: a → a\n}");
+    let y_mod = env.root.lookup.get("y").unwrap();
+    assert!(y_mod.lookup.contains_key("a"));
+    assert!(y_mod.lookup.contains_key("b"));
+}

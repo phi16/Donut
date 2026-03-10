@@ -411,6 +411,14 @@ impl<'a> Checker<'a> {
             self.error_at(span, "composition requires cell values");
             return PureVal::App(ExtId(0), vec![]);
         }
+        // Lift all cells to the max dimension
+        let max_dim = cells.iter().map(|c| c.dim().in_space).max().unwrap_or(0);
+        let cells: Vec<PureCell> = cells.into_iter().map(|mut c| {
+            while c.dim().in_space < max_dim {
+                c = PureCell::id(c);
+            }
+            c
+        }).collect();
         match PureCell::comp(axis, cells) {
             Ok(pc) => PureVal::Cell(pc),
             Err(e) => {
