@@ -1,9 +1,7 @@
-pub mod convert;
-pub mod load;
-// pub mod old_check;
-// pub mod old_resolve;
 pub mod check;
+pub mod convert;
 pub mod deco;
+pub mod load;
 pub mod parse;
 pub mod pretty;
 pub mod resolve;
