@@ -6,7 +6,8 @@ use crate::shader_view::ShaderView;
 use donut_core::cell::*;
 use donut_core::common::*;
 use donut_core::free_cell::FreeCell;
-use donut_lang::old_check::Env;
+use donut_lang::types::env::Env;
+use donut_lang::types::item::DefId;
 use donut_layout::layout_solver::LayoutSolver;
 use donut_renderer::geometry::{Geometry, R};
 use donut_renderer::prim_table::PrimTable;
@@ -26,13 +27,44 @@ pub struct App {
     eval_result_el: web_sys::HtmlElement,
     diagnostics_el: web_sys::HtmlElement,
     shader_view: Option<ShaderView>,
-    env: Env,
+    root_entries: Vec<DefId>,
     table: PrimTable,
     runtime: Runtime,
-    selected: Option<usize>,
+    selected: Option<DefId>,
     cell: Option<Geometry>,
     slice_pos: Vec<R>,
     diagnostics: Vec<String>,
+}
+
+fn def_cell(env: &Env, def_id: DefId) -> Option<FreeCell> {
+    match &env.defs[def_id.0].val {
+        PureVal::Cell(pc) => Some(FreeCell::from_pure(pc)),
+        _ => None,
+    }
+}
+
+fn root_entries(env: &Env) -> Vec<DefId> {
+    let mut entries = Vec::new();
+    for (_, child) in &env.root.lookup {
+        if let Some(def_id) = child.this {
+            entries.push(def_id);
+        }
+    }
+    entries
+}
+
+fn prim_lookup(env: &Env) -> HashMap<String, PrimId> {
+    env.prim_item
+        .iter()
+        .map(|(&prim_id, &item_id)| (env.items[item_id.0].cname.clone(), prim_id))
+        .collect()
+}
+
+fn prim_names(env: &Env) -> HashMap<PrimId, String> {
+    env.prim_item
+        .iter()
+        .map(|(&prim_id, &item_id)| (prim_id, env.items[item_id.0].cname.clone()))
+        .collect()
 }
 
 impl App {
@@ -47,9 +79,12 @@ impl App {
         shader_view: Option<ShaderView>,
     ) -> Self {
         let input = include_str!("default.donut");
-        let (env, table, runtime, diagnostics) = Self::load(input);
-        let selected = Self::find_last_cell(&env);
-        let cell = selected.map(|i| Self::build_geometry(env.entries[i].as_cell().unwrap()));
+        let (table, runtime, diagnostics) = Self::load(input);
+        let root_entries = root_entries(table.env());
+        let selected = Self::find_last_cell(table.env(), &root_entries);
+        let cell = selected.and_then(|id| {
+            def_cell(table.env(), id).map(|c| Self::build_geometry(&c))
+        });
         let slice_pos = cell
             .as_ref()
             .map(|c| Self::init_slice_pos(&c.size))
@@ -64,7 +99,7 @@ impl App {
             eval_result_el,
             diagnostics_el,
             shader_view,
-            env,
+            root_entries,
             table,
             runtime,
             selected,
@@ -77,16 +112,25 @@ impl App {
         app
     }
 
-    fn find_last_cell(env: &Env) -> Option<usize> {
-        env.entries.iter().enumerate().rev().find_map(|(i, e)| {
-            if e.origin.is_some() {
+    fn env(&self) -> &Env {
+        self.table.env()
+    }
+
+    fn find_last_cell(env: &Env, root_entries: &[DefId]) -> Option<DefId> {
+        root_entries.iter().rev().find_map(|&def_id| {
+            let def = &env.defs[def_id.0];
+            if def.origin.is_some() {
                 return None;
             }
-            e.as_cell().map(|_| i)
+            if let PureVal::Cell(_) = &def.val {
+                Some(def_id)
+            } else {
+                None
+            }
         })
     }
 
-    fn load(code: &str) -> (Env, PrimTable, Runtime, Vec<String>) {
+    fn load(code: &str) -> (PrimTable, Runtime, Vec<String>) {
         let user_code = dedent(code);
         let (env, errors) = donut_lang::load::load(&user_code);
         let diagnostics: Vec<String> = errors
@@ -94,18 +138,13 @@ impl App {
             .map(|(pos, msg)| format!("{}:{}: {}", pos.line + 1, pos.col + 1, msg))
             .collect();
 
-        let table = PrimTable::new(env.prim_decls.clone());
+        let lookup = prim_lookup(&env);
+        let table = PrimTable::new(env);
 
-        // Build runtime (use prim_decls for canonical names)
-        let prim_lookup: HashMap<String, PrimId> = env
-            .prim_decls
-            .iter()
-            .map(|(&id, decl)| (decl.name.clone(), id))
-            .collect();
         let mut runtime = Runtime::new();
-        donut_runtime::env::register_sys(&mut runtime, &prim_lookup);
+        donut_runtime::env::register_sys(&mut runtime, &lookup);
 
-        (env, table, runtime, diagnostics)
+        (table, runtime, diagnostics)
     }
 
     fn build_geometry(free_cell: &FreeCell) -> Geometry {
@@ -126,25 +165,27 @@ impl App {
 
     fn populate_select(&self) {
         self.entry_select.set_inner_html("");
+        let env = self.env();
 
         let document = web_sys::window().unwrap().document().unwrap();
-        for (i, entry) in self.env.entries.iter().enumerate() {
-            if entry.origin.is_some() {
+        for &def_id in &self.root_entries {
+            let def = &env.defs[def_id.0];
+            if def.origin.is_some() {
                 continue;
             }
+            let Some(free) = def_cell(env, def_id) else {
+                continue;
+            };
             let option = document
                 .create_element("option")
                 .unwrap()
                 .dyn_into::<web_sys::HtmlOptionElement>()
                 .unwrap();
-            let Some(cell) = entry.as_cell() else {
-                continue;
-            };
-            let dim = cell.pure.dim().in_space;
-            let label = format!("{} ({}d)", entry.name, dim);
+            let dim = free.pure.dim().in_space;
+            let label = format!("{} ({}d)", def.lname, dim);
             option.set_text_content(Some(&label));
-            option.set_value(&i.to_string());
-            if self.selected == Some(i) {
+            option.set_value(&def_id.0.to_string());
+            if self.selected == Some(def_id) {
                 option.set_selected(true);
             }
             self.entry_select.append_child(&option).unwrap();
@@ -152,32 +193,34 @@ impl App {
     }
 
     pub fn update_code(&mut self, code: &str) {
-        let (env, table, runtime, diagnostics) = Self::load(code);
-        let selected = Self::find_last_cell(&env);
-        let cell = selected.map(|i| Self::build_geometry(env.entries[i].as_cell().unwrap()));
-        self.slice_pos = cell
+        let (table, runtime, diagnostics) = Self::load(code);
+        self.table = table;
+        self.runtime = runtime;
+        self.diagnostics = diagnostics;
+        self.root_entries = root_entries(self.env());
+        self.selected = Self::find_last_cell(self.env(), &self.root_entries);
+        self.cell = self.selected.and_then(|id| {
+            def_cell(self.env(), id).map(|c| Self::build_geometry(&c))
+        });
+        self.slice_pos = self
+            .cell
             .as_ref()
             .map(|c| Self::init_slice_pos(&c.size))
             .unwrap_or_default();
-        self.env = env;
-        self.table = table;
-        self.runtime = runtime;
-        self.selected = selected;
-        self.cell = cell;
-        self.diagnostics = diagnostics;
         self.populate_select();
         self.update_eval_result();
     }
 
     pub fn select_entry(&mut self, index: usize) {
-        if index >= self.env.entries.len() {
+        let def_id = DefId(index);
+        if index >= self.env().defs.len() {
             return;
         }
-        let Some(cell) = self.env.entries[index].as_cell() else {
+        let Some(free) = def_cell(self.env(), def_id) else {
             return;
         };
-        self.selected = Some(index);
-        let geom = Self::build_geometry(cell);
+        self.selected = Some(def_id);
+        let geom = Self::build_geometry(&free);
         self.slice_pos = Self::init_slice_pos(&geom.size);
         self.cell = Some(geom);
         self.update_eval_result();
@@ -344,26 +387,22 @@ impl App {
             self.hide_shader();
             return;
         };
-        let entry = &self.env.entries[selected];
-        let Some(cell) = entry.as_cell() else {
+        let env = self.env();
+        let def = &env.defs[selected.0];
+        let Some(free) = def_cell(env, selected) else {
             self.eval_result_el
-                .set_inner_text(&format!("{}: meta", entry.name));
+                .set_inner_text(&format!("{}: meta", def.lname));
             let _ = self.eval_result_el.class_list().remove_1("evaluable");
             self.hide_shader();
             return;
         };
-        let type_str = self.table.format_cell_type(&cell.pure);
+        let type_str = self.table.format_cell_type(&free.pure);
 
-        let evaluable = self.runtime.is_evaluable(cell);
-        let prim_names: HashMap<_, _> = self
-            .env
-            .prim_decls
-            .iter()
-            .map(|(&id, d)| (id, d.name.clone()))
-            .collect();
-        let eval_str = match self.runtime.eval_check(cell, &prim_names) {
+        let evaluable = self.runtime.is_evaluable(&free);
+        let names = prim_names(env);
+        let eval_str = match self.runtime.eval_check(&free, &names) {
             Some(reason) => reason,
-            None => match self.runtime.eval(cell, &[], &prim_names) {
+            None => match self.runtime.eval(&free, &[], &names) {
                 Ok(values) => format!("= {}", donut_runtime::format_values(&values)),
                 Err(e) => format!("BUG: {}", e),
             },
@@ -374,14 +413,14 @@ impl App {
         } else {
             let _ = self.eval_result_el.class_list().remove_1("evaluable");
         }
-        let mut text = format!("{}: {}\n{}", entry.name, type_str, eval_str);
+        let mut text = format!("{}: {}\n{}", def.lname, type_str, eval_str);
 
         // GLSL compilation + shader preview
         let mut shader_shown = false;
-        match donut_runtime::glsl::compile_to_glsl(cell, &prim_names) {
+        match donut_runtime::glsl::compile_to_glsl(&free, &names) {
             Ok(func) => {
                 text.push_str("\n\n--- GLSL ---\n");
-                text.push_str(&func.to_function(&entry.name));
+                text.push_str(&func.to_function(&def.lname));
 
                 if let Some(ref mut sv) = self.shader_view {
                     if let Ok(frag) = func.to_fragment_shader() {
@@ -423,7 +462,8 @@ impl App {
         let Some(selected) = self.selected else {
             return;
         };
-        let text = self.env.display_all_params(selected);
+        let def = &self.env().defs[selected.0];
+        let text = self.env().display_params(def);
         if text.is_empty() {
             return;
         }

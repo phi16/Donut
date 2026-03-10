@@ -1,4 +1,4 @@
-use donut_core::common::{Prim, PrimId};
+use donut_core::common::Prim;
 use donut_core::pure_cell::PureCell;
 use donut_lang::types::env::{Color, Env};
 

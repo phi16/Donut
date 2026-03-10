@@ -2,8 +2,9 @@ mod completion;
 mod hover;
 mod marking;
 
-use donut_lang::old_check::{EntryKind, Env};
 use donut_lang::types;
+use donut_lang::types::env::{self, Env, Ty};
+use donut_lang::types::item::DefId;
 use std::collections::HashMap;
 
 use completion::build_completion_data;
@@ -38,6 +39,40 @@ pub struct TokenData {
     pub length: u32,
     pub token_type: TokenType,
     pub token_index: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum EntryKind {
+    Cell(u8),
+    Meta,
+    Type,
+}
+
+impl EntryKind {
+    pub fn display(&self) -> String {
+        match self {
+            EntryKind::Cell(dim) => format!("{}-cell", dim),
+            EntryKind::Meta => "meta".to_string(),
+            EntryKind::Type => "type".to_string(),
+        }
+    }
+}
+
+fn def_to_kind(def: &env::Def) -> EntryKind {
+    match &def.ty {
+        Ty::Star => EntryKind::Cell(0),
+        Ty::Arrow(level, _, _, _) => EntryKind::Cell(*level as u8),
+        Ty::Meta => {
+            if def.item.is_some() {
+                EntryKind::Meta // declaration like `nat: meta`
+            } else {
+                EntryKind::Type // alias like `v = u → u`
+            }
+        }
+        Ty::Nat | Ty::Rat | Ty::Color | Ty::Deco => EntryKind::Meta,
+        Ty::Functor(_, _) => EntryKind::Type,
+        Ty::Hole => EntryKind::Cell(0),
+    }
 }
 
 #[derive(Clone)]
@@ -117,36 +152,68 @@ pub struct AnalysisResult {
     pub completion: CompletionData,
 }
 
+// --- Flat lookup from env Module tree ---
+
+pub(crate) struct FlatEnv {
+    pub defs: HashMap<String, DefId>,
+    pub modules: HashMap<String, bool>, // qname → has_children
+}
+
+impl FlatEnv {
+    pub fn build(env: &Env) -> Self {
+        let mut flat = FlatEnv {
+            defs: HashMap::new(),
+            modules: HashMap::new(),
+        };
+        Self::walk(&env.root, "", &mut flat);
+        flat
+    }
+
+    fn walk(module: &env::Module, prefix: &str, flat: &mut FlatEnv) {
+        for (name, child) in &module.lookup {
+            let qname = if prefix.is_empty() {
+                name.clone()
+            } else {
+                format!("{}.{}", prefix, name)
+            };
+            if let Some(def_id) = child.this {
+                flat.defs.insert(qname.clone(), def_id);
+            }
+            if !child.lookup.is_empty() {
+                flat.modules.insert(qname.clone(), true);
+            }
+            Self::walk(child, &qname, flat);
+        }
+    }
+}
+
 // --- Shared hover/completion info construction ---
 
 /// Build EntryInfo for an entry by qualified name.
-fn build_entry_info(qname: &str, env: &Env) -> Option<EntryInfo> {
-    let &idx = env.lookup.get(qname)?;
-    let entry = &env.entries[idx];
-    let is_module = env.module_members.contains_key(qname);
+fn build_entry_info(qname: &str, env: &Env, flat: &FlatEnv) -> Option<EntryInfo> {
+    let &def_id = flat.defs.get(qname)?;
+    let def = &env.defs[def_id.0];
+    let is_module = flat.modules.contains_key(qname);
+    let kind = def_to_kind(def);
     Some(EntryInfo {
-        kind: entry.kind(),
+        kind,
         is_module,
         type_expr: if is_module {
             None
         } else {
-            entry.display_type(env)
+            Some(env.display_ty(&def.ty))
         },
-        params: if is_module {
-            env.display_module_params(qname)
-        } else {
-            env.display_params(idx)
-        },
+        params: env.display_params(def),
     })
 }
 
-/// Build EntryInfo for a module (not in env.lookup, but known as a module).
-fn build_module_info(qname: &str, env: &Env) -> EntryInfo {
+/// Build EntryInfo for a module (not a def, but known as a module).
+fn build_module_info() -> EntryInfo {
     EntryInfo {
         kind: EntryKind::Cell(0), // unused when is_module=true
         is_module: true,
         type_expr: None,
-        params: env.display_module_params(qname),
+        params: String::new(),
     }
 }
 
@@ -235,15 +302,16 @@ pub fn analyze(code: &str) -> AnalysisResult {
     collect_diags(&mut diags, &convert_errors, "[convert]");
 
     // resolve（名前解決）を実行
-    let (resolved, resolve_errors) = donut_lang::old_resolve::resolve(sem_program, &tokens);
+    let (resolved, resolve_errors) = donut_lang::resolve::resolve(sem_program, &tokens);
     collect_diags(&mut diags, &resolve_errors, "[resolve]");
 
     // check（型検査）を実行
-    let (env, check_errors) = donut_lang::old_check::check(&resolved, &tokens);
+    let (env, check_errors) = donut_lang::check::check(&resolved, &tokens);
     collect_diags(&mut diags, &check_errors, "[check]");
 
     // hover map とスタイルオーバーライドを構築
-    let (hover_map, style_overrides) = HoverBuilder::new(&resolved, &env).build();
+    let flat = FlatEnv::build(&env);
+    let (hover_map, style_overrides) = HoverBuilder::new(&resolved, &env, &flat, &tokens).build();
 
     // スタイルオーバーライドを適用
     let mut token_data = token_data;
@@ -270,7 +338,7 @@ pub fn analyze(code: &str) -> AnalysisResult {
     res.sort_by_key(|t| (t.line, t.column));
 
     // 補完データを構築
-    let completion = build_completion_data(&resolved, &env, &tokens, dot_prefixes);
+    let completion = build_completion_data(&resolved, &env, &flat, &tokens, dot_prefixes);
 
     AnalysisResult {
         tokens: res,
