@@ -1326,3 +1326,19 @@ fn self_referential_param() {
     eprintln!("errors: {:?}", errors);
 }
 
+#[test]
+fn lit_prim_args() {
+    let env = check_ok("import \"base\"\nimport \"ui\"\nsys = import \"sys\"\nx = sys.u32.lit[42]");
+    let x = get_def(&env, "x");
+    eprintln!("x.val = {:?}", x.val);
+    if let PureVal::Cell(pc) = &x.val {
+        match pc {
+            donut_core::pure_cell::PureCell::Prim(prim, _, _) => {
+                eprintln!("prim.args = {:?}", prim.args);
+                assert!(!prim.args.is_empty(), "prim should have args");
+            }
+            _ => panic!("expected Prim"),
+        }
+    }
+}
+

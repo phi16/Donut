@@ -1,7 +1,7 @@
 use crate::geometry::*;
 use crate::prim_table::PrimTable;
 use donut_core::common::Prim;
-use donut_lang::old_check::Color;
+use donut_lang::types::env::Color;
 
 pub struct Renderer {
     context: web_sys::CanvasRenderingContext2d,
@@ -69,12 +69,12 @@ impl Renderer {
     }
 
     fn color(&self, color: Color) -> String {
-        format!("rgb({} {} {})", color.r, color.g, color.b)
+        format!("rgb({} {} {})", color.r(), color.g(), color.b())
     }
 
     fn brighten(color: Color) -> Color {
         let f = |c: u8| (c as f64 + (255.0 - c as f64) * 0.2) as u8;
-        Color::new(f(color.r), f(color.g), f(color.b))
+        Color::new(f(color.r()), f(color.g()), f(color.b()))
     }
 
     pub fn cube(&self, cube: &Cuboid, color: Color) {
@@ -114,7 +114,7 @@ impl Renderer {
                         (ts.1, tt.1),
                         target.1,
                         &target.2,
-                        &self.color(Color::new(color.r / 2, color.g / 2, color.b / 2)),
+                        &self.color(Color::new(color.r() / 2, color.g() / 2, color.b() / 2)),
                     );
                 }
                 _ => unreachable!(),
@@ -123,7 +123,7 @@ impl Renderer {
     }
 
     fn prim_color(&self, table: &PrimTable, prim: &Prim, highlight: Option<&Prim>) -> Color {
-        let base = table.get(prim).map(|e| e.color).unwrap_or(Color::gray());
+        let base = table.prim_color(prim);
         if highlight == Some(prim) {
             Self::brighten(base)
         } else {

@@ -1,26 +1,27 @@
 use crate::{extract_cell_width, Runtime, Value};
-use donut_core::common::{PureVal, PrimId};
+use donut_core::common::{PrimId, PureVal};
+use donut_lang::types::env::{self, Meta};
 use std::collections::HashMap;
 
 fn extract_nat(args: &[PureVal]) -> Result<u64, String> {
-    match args.first() {
-        Some(PureVal::Nat(n)) => Ok(*n),
+    match args.first().and_then(env::as_meta) {
+        Some(Meta::Nat(n)) => Ok(*n),
         _ => Err("missing nat parameter".to_string()),
     }
 }
 
 fn extract_rat(args: &[PureVal]) -> Result<f64, String> {
-    match args.first() {
-        Some(PureVal::Rat(r)) => Ok(*r),
-        Some(PureVal::Nat(n)) => Ok(*n as f64),
+    match args.first().and_then(env::as_meta) {
+        Some(Meta::Rat(r)) => Ok(*r),
+        Some(Meta::Nat(n)) => Ok(*n as f64),
         _ => Err("missing rat parameter".to_string()),
     }
 }
 
 fn extract_rat_at(args: &[PureVal], index: usize) -> Result<f64, String> {
-    match args.get(index) {
-        Some(PureVal::Rat(r)) => Ok(*r),
-        Some(PureVal::Nat(n)) => Ok(*n as f64),
+    match args.get(index).and_then(env::as_meta) {
+        Some(Meta::Rat(r)) => Ok(*r),
+        Some(Meta::Nat(n)) => Ok(*n as f64),
         _ => Err(format!("missing rat parameter at index {}", index)),
     }
 }

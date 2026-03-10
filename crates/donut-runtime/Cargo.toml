@@ -5,6 +5,4 @@ edition = "2024"
 
 [dependencies]
 donut-core = { path = "../donut-core" }
-
-[dev-dependencies]
 donut-lang = { path = "../donut-lang" }

@@ -460,7 +460,7 @@ impl<'a> Checker<'a> {
             pv
         } else {
             let span = self.program.val_span(val_id);
-            let target_name = match path.target {
+            match path.target {
                 Ref::Def(def_id) => {
                     let qname = &self.program.def(def_id).qname;
                     self.error_at(span, format!("self-referencing definition: `{}`", qname));
@@ -799,15 +799,22 @@ impl<'a> Checker<'a> {
         }
         let item = self.program.item(item_id);
 
+        // Collect parameter placeholders for Prim.args
+        let param_args: Vec<PureVal> = item
+            .params
+            .iter()
+            .map(|p| PureVal::App(ExtId(p.item.0 as u64), vec![]))
+            .collect();
+
         let (pv, prim_id) = match ty {
             Ty::Star => {
                 let prim_id = self.fresh_prim_id();
-                let prim = Prim::new(prim_id.0);
+                let prim = Prim::with_id_args(PrimId(prim_id.0), param_args);
                 (PureVal::Cell(PureCell::zero(prim)), Some(prim_id))
             }
             Ty::Arrow(level, _, src_val, tgt_val) => {
                 let prim_id = self.fresh_prim_id();
-                let prim = Prim::new(prim_id.0);
+                let prim = Prim::with_id_args(PrimId(prim_id.0), param_args);
                 match (Self::extract_cell(src_val), Self::extract_cell(tgt_val)) {
                     (Some(mut src), Some(mut tgt)) => {
                         let target_dim = *level - 1;

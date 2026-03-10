@@ -1,7 +1,8 @@
 use donut_core::cell::Globular;
-use donut_core::common::{PureVal, PrimId};
+use donut_core::common::{PrimId, PureVal};
 use donut_core::free_cell::{Cell, CellF, FreeCell};
 use donut_core::pure_cell::PureCell;
+use donut_lang::types::env::{self, Meta};
 use std::collections::HashMap;
 
 use crate::source_width;
@@ -435,16 +436,16 @@ impl GlslCompiler {
 // --- Helpers ---
 
 fn extract_nat(args: &[PureVal], index: usize) -> Result<u64, String> {
-    match args.get(index) {
-        Some(PureVal::Nat(n)) => Ok(*n),
+    match args.get(index).and_then(env::as_meta) {
+        Some(Meta::Nat(n)) => Ok(*n),
         _ => Err(format!("missing nat parameter at index {}", index)),
     }
 }
 
 fn extract_rat(args: &[PureVal], index: usize) -> Result<f64, String> {
-    match args.get(index) {
-        Some(PureVal::Rat(r)) => Ok(*r),
-        Some(PureVal::Nat(n)) => Ok(*n as f64),
+    match args.get(index).and_then(env::as_meta) {
+        Some(Meta::Rat(r)) => Ok(*r),
+        Some(Meta::Nat(n)) => Ok(*n as f64),
         _ => Err(format!("missing rat parameter at index {}", index)),
     }
 }
