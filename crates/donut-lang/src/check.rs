@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::types::common::{Error, TokenSpan};
-use crate::types::env::{self, ArrowTy, Meta, Ty};
+use crate::types::env::{self, ArrowTy, DisplayContext, Meta, Ty};
 use crate::types::item::*;
 use crate::types::token::Token;
 use donut_core::cell::Diagram;
@@ -32,6 +32,20 @@ struct Checker<'a> {
     functor_maps: HashMap<DefId, HashMap<PrimId, FunctorEntry>>,
 
     errors: Vec<Error>,
+}
+
+impl<'a> DisplayContext for Checker<'a> {
+    fn item_cname(&self, ext_id: ExtId) -> &str {
+        &self.program.item(ItemId(ext_id.0 as usize)).cname
+    }
+
+    fn prim_name(&self, prim_id: PrimId) -> &str {
+        if let Some(&item_id) = self.prim_item.get(&prim_id) {
+            &self.program.item(item_id).cname
+        } else {
+            "?"
+        }
+    }
 }
 
 impl<'a> Checker<'a> {
@@ -85,111 +99,8 @@ impl<'a> Checker<'a> {
         id
     }
 
-    fn current_prefix(&self) -> String {
-        self.prefixes.join(".")
-    }
-
-    // --- Display helpers ---
-
-    fn prim_name(&self, id: PrimId) -> String {
-        if let Some(&item_id) = self.prim_item.get(&id) {
-            self.program.item(item_id).cname.clone()
-        } else {
-            format!("P{}", id.0)
-        }
-    }
-
-    fn item_name(&self, id: ItemId) -> String {
-        self.program.item(id).cname.clone()
-    }
-
     fn display_pure_val(&self, pv: &PureVal) -> String {
-        match pv {
-            PureVal::Cell(cell) => self.display_cell(cell),
-            PureVal::App(ext_id, args) => {
-                let name = self.item_name(ItemId(ext_id.0 as usize));
-                if args.is_empty() {
-                    name
-                } else {
-                    let args_str: Vec<String> =
-                        args.iter().map(|a| self.display_pure_val(a)).collect();
-                    format!("{}[{}]", name, args_str.join(", "))
-                }
-            }
-            PureVal::Any(any) => self.display_meta(any.inner::<Meta>()),
-        }
-    }
-
-    fn display_cell(&self, cell: &PureCell) -> String {
-        match cell {
-            PureCell::Prim(prim, _, dim) => {
-                let name = self.prim_name(prim.id);
-                if !prim.args.is_empty() {
-                    let args_str: Vec<String> =
-                        prim.args.iter().map(|a| self.display_pure_val(a)).collect();
-                    format!("{}[{}]", name, args_str.join(", "))
-                } else if dim.in_space == 0 {
-                    name
-                } else {
-                    name
-                }
-            }
-            PureCell::Comp(axis, children, _) => {
-                let sep = match axis {
-                    0 => " ",
-                    1 => "; ",
-                    _ => ", ",
-                };
-                let parts: Vec<String> = children.iter().map(|c| self.display_cell(c)).collect();
-                if *axis >= 2 {
-                    format!("[{}: {}]", axis, parts.join(sep))
-                } else {
-                    parts.join(sep)
-                }
-            }
-        }
-    }
-
-    fn display_meta(&self, meta: &Meta) -> String {
-        match meta {
-            Meta::Ty(ty) => self.display_ty(ty),
-            Meta::Nat(n) => format!("{}", n),
-            Meta::Rat(r) => format!("{}", r),
-            Meta::Color(c) => format!("rgb({}, {}, {})", c.0, c.1, c.2),
-            Meta::Deco(d) => format!("{:?}", d),
-            Meta::Error => "<error>".to_string(),
-        }
-    }
-
-    fn display_ty(&self, ty: &Ty) -> String {
-        match ty {
-            Ty::Meta => "meta".to_string(),
-            Ty::Star => "*".to_string(),
-            Ty::Arrow(_, arrow_ty, src, tgt) => {
-                let op = match arrow_ty {
-                    ArrowTy::To => "→",
-                    ArrowTy::Eq => "~",
-                };
-                format!(
-                    "{} {} {}",
-                    self.display_pure_val(src),
-                    op,
-                    self.display_pure_val(tgt)
-                )
-            }
-            Ty::Functor(src, tgt) => {
-                format!(
-                    "{} ~> {}",
-                    self.display_pure_val(src),
-                    self.display_pure_val(tgt)
-                )
-            }
-            Ty::Nat => "nat".to_string(),
-            Ty::Rat => "rat".to_string(),
-            Ty::Color => "color".to_string(),
-            Ty::Deco => "decorator".to_string(),
-            Ty::Hole => "_".to_string(),
-        }
+        env::display_pure_val(self, pv)
     }
 
     // --- DefTree traversal ---

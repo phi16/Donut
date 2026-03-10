@@ -1,14 +1,25 @@
-use donut_core::common::Prim;
+use std::collections::HashMap;
+
+use donut_core::common::{Prim, PrimId};
 use donut_core::pure_cell::PureCell;
-use donut_lang::types::env::{Color, Env};
+use donut_lang::types::env::{Color, DisplayContext, Env};
 
 pub struct PrimTable {
     env: Env,
+    prim_color: HashMap<PrimId, Color>,
 }
 
 impl PrimTable {
     pub fn new(env: Env) -> Self {
-        PrimTable { env }
+        let mut prim_color = HashMap::new();
+        for def in &env.defs {
+            if let Some(item_id) = def.item {
+                if let Some(prim_id) = env.items[item_id.0].prim_id {
+                    prim_color.insert(prim_id, def.style.color);
+                }
+            }
+        }
+        PrimTable { env, prim_color }
     }
 
     pub fn env(&self) -> &Env {
@@ -16,15 +27,10 @@ impl PrimTable {
     }
 
     pub fn prim_color(&self, prim: &Prim) -> Color {
-        let prim_id = prim.id;
-        if let Some(&item_id) = self.env.prim_item.get(&prim_id) {
-            for def in &self.env.defs {
-                if def.item == Some(item_id) {
-                    return *self.env.def_color(def);
-                }
-            }
-        }
-        Color::gray()
+        self.prim_color
+            .get(&prim.id)
+            .copied()
+            .unwrap_or_else(Color::gray)
     }
 
     pub fn format_prim(&self, prim: &Prim) -> String {

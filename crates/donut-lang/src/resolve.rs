@@ -238,10 +238,6 @@ impl Scope {
         self.names.get(name).copied()
     }
 
-    fn contains_key(&self, name: &str) -> bool {
-        self.names.contains_key(name)
-    }
-
     /// Build an output Module from non-used Def entries.
     fn to_module(&self) -> Module {
         let mut module = Module::new();
