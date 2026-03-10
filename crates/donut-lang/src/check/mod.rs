@@ -387,18 +387,20 @@ impl<'a> Checker<'a> {
     }
 
     fn extract_ty(&mut self, pv: &PureVal, val_id: ValId) -> Ty {
-        if let Some(Meta::Ty(ty)) = env::as_meta(pv) {
-            ty.clone()
-        } else {
-            let span = self.program.val_span(val_id);
-            self.error_at(
-                span,
-                format!(
-                    "expected type expression, got `{}`",
-                    self.display_pure_val(pv)
-                ),
-            );
-            Ty::Star
+        match env::as_meta(pv) {
+            Some(Meta::Ty(ty)) => ty.clone(),
+            Some(Meta::Error) => Ty::Hole,
+            _ => {
+                let span = self.program.val_span(val_id);
+                self.error_at(
+                    span,
+                    format!(
+                        "expected type expression, got `{}`",
+                        self.display_pure_val(pv)
+                    ),
+                );
+                Ty::Hole
+            }
         }
     }
 
@@ -459,10 +461,15 @@ impl<'a> Checker<'a> {
         } else {
             let span = self.program.val_span(val_id);
             let target_name = match path.target {
-                Ref::Def(def_id) => format!("`{}` (unchecked)", self.program.def(def_id).qname),
-                Ref::Item(item_id) => format!("`{}` (item)", self.program.item(item_id).cname),
+                Ref::Def(def_id) => {
+                    let qname = &self.program.def(def_id).qname;
+                    self.error_at(span, format!("self-referencing definition: `{}`", qname));
+                }
+                Ref::Item(item_id) => {
+                    let cname = &self.program.item(item_id).cname;
+                    self.error_at(span, format!("unresolved item: `{}`", cname));
+                }
             };
-            self.error_at(span, format!("unresolved path: {}", target_name));
             return Meta::Error.into();
         };
 
