@@ -66,6 +66,7 @@ pub enum Val {
 pub struct Param {
     pub name: String,
     pub ty: ValId,
+    pub item: ItemId,
 }
 
 // --- Item ---
@@ -130,12 +131,9 @@ pub struct Module {
 // --- DefTree ---
 
 #[derive(Debug, Clone)]
-pub enum DefTree {
-    Def(DefId),
-    Scope {
-        def_id: DefId,
-        children: Vec<DefTree>,
-    },
+pub struct DefTree {
+    pub def_id: DefId,
+    pub children: Vec<DefTree>,
 }
 
 // --- Program ---

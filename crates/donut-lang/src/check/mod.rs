@@ -4,7 +4,10 @@ use crate::types::token::Token;
 use crate::types::common::{Error, TokenSpan};
 use crate::types::env::{self, ArrowTy, Meta, Ty};
 use crate::types::item::*;
-use donut_core::common::{ExtId, PrimId, PureVal};
+use donut_core::cell::Diagram;
+use donut_core::cell::Globular;
+use donut_core::common::{Axis, ExtId, Level, PrimId, PureVal};
+use donut_core::pure_cell::PureCell;
 
 struct Checker<'a> {
     program: &'a Program,
@@ -13,7 +16,6 @@ struct Checker<'a> {
     // Output
     env_items: Vec<Option<env::Item>>,
     env_defs: Vec<Option<env::Def>>,
-    modules: HashMap<DefId, env::Module>,
     prim_item: HashMap<PrimId, ItemId>,
 
     // State
@@ -34,7 +36,6 @@ impl<'a> Checker<'a> {
             tokens,
             env_items: (0..n_items).map(|_| None).collect(),
             env_defs: (0..n_defs).map(|_| None).collect(),
-            modules: HashMap::new(),
             prim_item: HashMap::new(),
             next_prim: 1, // 0 reserved for meta
             prefixes: Vec::new(),
@@ -82,19 +83,55 @@ impl<'a> Checker<'a> {
 
     // --- DefTree traversal ---
 
-    fn process_trees(&mut self, trees: &[DefTree]) {
+    fn process_trees(&mut self, trees: &[DefTree]) -> HashMap<String, env::Module> {
+        let mut lookup: HashMap<String, env::Module> = HashMap::new();
         for tree in trees {
-            match tree {
-                DefTree::Def(def_id) => self.process_def(*def_id),
-                DefTree::Scope { def_id, children } => self.process_scope(*def_id, children),
+            let module = self.process_tree(tree);
+            let lname = self.program.def(tree.def_id).lname.clone();
+            if let Some(existing) = lookup.get_mut(&lname) {
+                // += : merge children into existing module
+                existing.lookup.extend(module.lookup);
+            } else {
+                lookup.insert(lname, module);
             }
+        }
+        lookup
+    }
+
+    fn process_tree(&mut self, tree: &DefTree) -> env::Module {
+        let def_id = tree.def_id;
+
+        let def = self.program.def(def_id);
+        let lname = def.lname.clone();
+        let params = def.params.clone();
+
+        self.prefixes.push(lname);
+
+        // Check param Items
+        for param in &params {
+            let ty = self.eval_ty(param.ty);
+            self.check_item(param.item, &ty);
+        }
+
+        // Process this def
+        self.check_def(def_id);
+
+        // Process children → build lookup
+        let lookup = self.process_trees(&tree.children);
+
+        self.prefixes.pop();
+
+        env::Module {
+            this: Some(def_id),
+            lookup,
         }
     }
 
-    fn process_def(&mut self, def_id: DefId) {
+    fn check_def(&mut self, def_id: DefId) {
         if self.env_defs[def_id.0].is_some() {
             return; // already checked
         }
+
         let def = self.program.def(def_id);
         let span = def.span.clone();
         let lname = def.lname.clone();
@@ -122,8 +159,19 @@ impl<'a> Checker<'a> {
                 let pv = self.eval_val(val_id);
                 (None, pv)
             }
-            DefBody::Functor { .. } => {
-                // TODO: functor checking
+            DefBody::Functor { mappings } => {
+                let checked_mappings: Vec<(PureVal, PureVal)> = mappings.iter().map(|m| {
+                    // Check mapping params
+                    for param in &m.params {
+                        let ty = self.eval_ty(param.ty);
+                        self.check_item(param.item, &ty);
+                    }
+                    let applicand = self.eval_val(m.applicand);
+                    let val = self.eval_val(m.val);
+                    (applicand, val)
+                }).collect();
+                // Functor value: store as opaque for now
+                let _ = checked_mappings;
                 (None, PureVal::App(ExtId(0), vec![]))
             }
             DefBody::None => {
@@ -137,14 +185,10 @@ impl<'a> Checker<'a> {
             .map(|&d| self.eval_val(d))
             .collect();
 
-        // Evaluate params → ItemIds
+        // Params → ItemIds (already checked in process_tree)
         let params: Vec<ItemId> = self.program.def(def_id).params
             .iter()
-            .filter_map(|p| {
-                // Find the ItemId for this param by name
-                // Params should have been checked when entering scope
-                None // TODO
-            })
+            .map(|p| p.item)
             .collect();
 
         let env_def = env::Def {
@@ -161,38 +205,6 @@ impl<'a> Checker<'a> {
         };
         self.checked.insert(Ref::Def(def_id), env_def.val.clone());
         self.env_defs[def_id.0] = Some(env_def);
-    }
-
-    fn process_scope(&mut self, def_id: DefId, children: &[DefTree]) {
-        let def = self.program.def(def_id);
-        let lname = def.lname.clone();
-
-        self.prefixes.push(lname);
-
-        // Push params into scope
-        let params = self.program.def(def_id).params.clone();
-        for param in &params {
-            // Each param references an Item via the scope
-            // We need to check param items here
-        }
-
-        // Process children
-        self.process_trees(children);
-
-        // Build/update module for this def
-        let module = self.modules.entry(def_id).or_insert_with(|| env::Module {
-            this: Some(def_id),
-            lookup: HashMap::new(),
-        });
-        // Add children defs to module lookup
-        for tree in children {
-            if let DefTree::Def(child_id) = tree {
-                let child_def = self.program.def(*child_id);
-                module.lookup.insert(child_def.lname.clone(), *child_id);
-            }
-        }
-
-        self.prefixes.pop();
     }
 
     // --- Type evaluation ---
@@ -225,11 +237,20 @@ impl<'a> Checker<'a> {
                 let l_val = self.eval_val(*l);
                 let r_val = self.eval_val(*r);
                 let ty = match kind {
-                    ArrowKind::To => {
-                        Ty::Arrow(1, ArrowTy::To, l_val, r_val) // TODO: infer level
-                    }
-                    ArrowKind::Eq => {
-                        Ty::Arrow(1, ArrowTy::Eq, l_val, r_val) // TODO: infer level
+                    ArrowKind::To | ArrowKind::Eq => {
+                        let l_level = self.level_of(&l_val);
+                        let r_level = self.level_of(&r_val);
+                        let level = match (l_level, r_level) {
+                            (Some(l), Some(r)) => l.max(r) + 1,
+                            (Some(l), None) => l + 1,
+                            (None, Some(r)) => r + 1,
+                            (None, None) => 1,
+                        };
+                        let arrow_ty = match kind {
+                            ArrowKind::To => ArrowTy::To,
+                            _ => ArrowTy::Eq,
+                        };
+                        Ty::Arrow(level, arrow_ty, l_val, r_val)
                     }
                     ArrowKind::Functor => {
                         Ty::Functor(l_val, r_val)
@@ -237,17 +258,44 @@ impl<'a> Checker<'a> {
                 };
                 Meta::Ty(ty).into()
             }
-            Val::Hole(_) => PureVal::App(ExtId(0), vec![]), // TODO
+            Val::Hole(_) => Meta::Ty(Ty::Hole).into(),
         }
     }
 
     fn eval_val_path(&mut self, path: &Path, val_id: ValId) -> PureVal {
-        if let Some(pv) = self.resolve_ref(path.target) {
+        let base = if let Some(pv) = self.resolve_ref(path.target) {
             pv
         } else {
             let span = self.program.val_span(val_id);
             self.error_at(span, "unresolved path");
-            PureVal::App(ExtId(0), vec![])
+            return PureVal::App(ExtId(0), vec![]);
+        };
+
+        // Apply args
+        let result = if path.args.is_empty() {
+            base
+        } else {
+            let args: Vec<PureVal> = path.args.iter().map(|&a| self.eval_val(a)).collect();
+            match base {
+                PureVal::App(id, mut existing) => {
+                    existing.extend(args);
+                    PureVal::App(id, existing)
+                }
+                _ => {
+                    let span = self.program.val_span(val_id);
+                    self.error_at(span, "cannot apply arguments to this value");
+                    base
+                }
+            }
+        };
+
+        // Functor application: f(x)
+        if let Some(app_val_id) = path.applicand {
+            let _applicand = self.eval_val(app_val_id);
+            // TODO: look up functor mapping and apply
+            result
+        } else {
+            result
         }
     }
 
@@ -276,14 +324,56 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn eval_comp(&mut self, _axis: u8, _children: &[ValId], _val_id: ValId) -> PureVal {
-        // TODO: evaluate composition
-        PureVal::App(ExtId(0), vec![])
+    fn eval_comp(&mut self, axis: Axis, children: &[ValId], val_id: ValId) -> PureVal {
+        let child_vals: Vec<PureVal> = children.iter().map(|&c| self.eval_val(c)).collect();
+        let cells: Vec<PureCell> = child_vals
+            .into_iter()
+            .filter_map(|pv| match pv {
+                PureVal::Cell(pc) => Some(pc),
+                _ => None,
+            })
+            .collect();
+        if cells.len() != children.len() {
+            let span = self.program.val_span(val_id);
+            self.error_at(span, "composition requires cell values");
+            return PureVal::App(ExtId(0), vec![]);
+        }
+        match PureCell::comp(axis, cells) {
+            Ok(pc) => PureVal::Cell(pc),
+            Err(e) => {
+                let span = self.program.val_span(val_id);
+                self.error_at(span, format!("{}", e));
+                PureVal::App(ExtId(0), vec![])
+            }
+        }
     }
 
     fn eval_comp_star(&mut self, _children: &[ValId], _val_id: ValId) -> PureVal {
-        // TODO
         PureVal::App(ExtId(0), vec![])
+    }
+
+    // --- Level inference ---
+
+    fn level_of_ty(&self, ty: &Ty) -> Option<Level> {
+        match ty {
+            Ty::Star | Ty::Meta | Ty::Nat | Ty::Rat | Ty::Color | Ty::Deco => Some(0),
+            Ty::Arrow(level, _, _, _) => Some(*level),
+            Ty::Functor(_, _) | Ty::Hole => None,
+        }
+    }
+
+    fn level_of(&self, pv: &PureVal) -> Option<Level> {
+        match pv {
+            PureVal::Cell(pc) => Some(pc.dim().in_space),
+            PureVal::App(ext_id, _) => {
+                let idx = ext_id.0 as usize;
+                self.env_items.get(idx)?.as_ref().and_then(|item| self.level_of_ty(&item.ty))
+            }
+            _ => match env::as_meta(pv)? {
+                Meta::Ty(ty) => self.level_of_ty(ty),
+                _ => Some(0),
+            }
+        }
     }
 
     // --- Path resolution ---
@@ -313,20 +403,14 @@ impl<'a> Checker<'a> {
             kind: item.kind,
             ty: ty.clone(),
             prim_id: Some(prim_id),
-            params: vec![], // TODO
+            params: item.params.iter().map(|p| p.item).collect(),
         };
         self.env_items[item_id.0] = Some(env_item);
     }
 
     // --- Finalize ---
 
-    fn into_result(self) -> (env::Env, Vec<Error>) {
-        // Build root module
-        let mut root_lookup = HashMap::new();
-        for &def_id in &self.program.root.entries {
-            let def = self.program.def(def_id);
-            root_lookup.insert(def.lname.clone(), def_id);
-        }
+    fn into_result(self, root_lookup: HashMap<String, env::Module>) -> (env::Env, Vec<Error>) {
         let root = env::Module {
             this: None,
             lookup: root_lookup,
@@ -378,6 +462,6 @@ impl<'a> Checker<'a> {
 
 pub fn check(program: &Program, tokens: &[Token]) -> (env::Env, Vec<Error>) {
     let mut checker = Checker::new(program, tokens);
-    checker.process_trees(&program.def_order);
-    checker.into_result()
+    let root_lookup = checker.process_trees(&program.def_order);
+    checker.into_result(root_lookup)
 }

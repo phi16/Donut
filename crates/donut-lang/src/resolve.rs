@@ -453,23 +453,16 @@ impl<'a> Checker<'a> {
     fn generate_def_trees(&self, module: &Module) -> Vec<DefTree> {
         let mut trees = Vec::new();
         for &def_id in &module.entries {
-            trees.push(DefTree::Def(def_id));
-            let members = &self.def(def_id).members;
-            if !members.entries.is_empty() {
-                let children = self.generate_def_trees(members);
-                trees.push(DefTree::Scope { def_id, children });
-            }
+            let children = self.generate_def_trees(&self.def(def_id).members);
+            trees.push(DefTree { def_id, children });
         }
         trees
     }
 
     fn emit_def_with_scope(&mut self, def_id: DefId) {
-        self.emit_def_tree(DefTree::Def(def_id));
         let members = self.def(def_id).members.clone();
-        if !members.entries.is_empty() {
-            let children = self.generate_def_trees(&members);
-            self.emit_def_tree(DefTree::Scope { def_id, children });
-        }
+        let children = self.generate_def_trees(&members);
+        self.emit_def_tree(DefTree { def_id, children });
     }
 
     // --- Name building ---
@@ -946,21 +939,22 @@ impl<'a> Checker<'a> {
                     let resolved_ty = param_decl.ty.resolve(self);
                     if i == 0 {
                         for name in param_decl.names {
-                            let param = Param {
-                                name: name.0.clone(),
-                                ty: resolved_ty,
-                            };
                             // Create Item for parameter
                             let param_cname = self.make_param_cname(&first_lname, &name.0);
-                            let _item_id = self.alloc_item(Item {
+                            let item_id = self.alloc_item(Item {
                                 cname: param_cname,
                                 lname: name.0.clone(),
                                 kind: ItemKind::Param,
-                                ty: param.ty,
+                                ty: resolved_ty,
                                 params: vec![],
                             });
+                            let param = Param {
+                                name: name.0.clone(),
+                                ty: resolved_ty,
+                                item: item_id,
+                            };
                             // Register in scope as Ref::Item
-                            self.define(param.name.clone(), Ref::Item(_item_id));
+                            self.define(param.name.clone(), Ref::Item(item_id));
                             params.push(param);
                         }
                     }
@@ -1045,9 +1039,15 @@ impl<'a> Checker<'a> {
         let resolved_apps = if has_functor_app {
             let mapping_params: Vec<Param> = deco_param_defs
                 .iter()
-                .map(|(name, val_id)| Param {
-                    name: name.clone(),
-                    ty: *val_id,
+                .map(|(name, val_id)| {
+                    let Ref::Item(item) = self.lookup(name).unwrap() else {
+                        unreachable!("deco param must be Item")
+                    };
+                    Param {
+                        name: name.clone(),
+                        ty: *val_id,
+                        item,
+                    }
                 })
                 .collect();
             let apps: Vec<Option<ValId>> = name_infos
@@ -1284,13 +1284,13 @@ impl<'a> Checker<'a> {
             self.merge_into_path(seg_names, members_to_merge.clone());
         }
 
-        // Emit DefTree::Scope for each += target
+        // Emit DefTree for each += target (children only, def itself already emitted)
         if !members_to_merge.entries.is_empty() {
             let children = self.generate_def_trees(&members_to_merge);
             for seg_names in &all_seg_names {
                 let names: Vec<&str> = seg_names.iter().map(|(n, _)| n.as_str()).collect();
                 if let Some(def_id) = self.lookup_path(&names) {
-                    self.emit_def_tree(DefTree::Scope { def_id, children: children.clone() });
+                    self.emit_def_tree(DefTree { def_id, children: children.clone() });
                 }
             }
         }

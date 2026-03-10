@@ -1650,11 +1650,13 @@ fn def_origin_set_for_import() {
 fn format_def_order(p: &Program, trees: &[DefTree]) -> String {
     let parts: Vec<String> = trees
         .iter()
-        .map(|t| match t {
-            DefTree::Def(id) => p.def(*id).lname.clone(),
-            DefTree::Scope { def_id, children } => {
-                let inner = format_def_order(p, children);
-                format!("{} {{ {} }}", p.def(*def_id).lname, inner)
+        .map(|t| {
+            let name = p.def(t.def_id).lname.clone();
+            if t.children.is_empty() {
+                name
+            } else {
+                let inner = format_def_order(p, &t.children);
+                format!("{} {{ {} }}", name, inner)
             }
         })
         .collect();
@@ -1672,7 +1674,7 @@ fn def_order_module() {
     let p = check_module("cat = {\n  x: *\n  y: *\n}");
     assert_eq!(
         format_def_order(&p, &p.def_order),
-        "cat, cat { x, y }"
+        "cat { x, y }"
     );
 }
 
@@ -1681,7 +1683,7 @@ fn def_order_nested_module() {
     let p = check_module("a = {\n  b = {\n    c: *\n  }\n}");
     assert_eq!(
         format_def_order(&p, &p.def_order),
-        "a, a { b, b { c } }"
+        "a { b { c } }"
     );
 }
 
@@ -1690,7 +1692,7 @@ fn def_order_alias_inherits_members() {
     let p = check_module("a = {\n  b: *\n}\nc = a");
     assert_eq!(
         format_def_order(&p, &p.def_order),
-        "a, a { b }, c, c { b }"
+        "a { b }, c { b }"
     );
 }
 
@@ -1699,7 +1701,7 @@ fn def_order_add() {
     let p = check_module("a = {\n  x: *\n}\na += {\n  y: *\n}");
     assert_eq!(
         format_def_order(&p, &p.def_order),
-        "a, a { x }, a { y }"
+        "a { x }, a { y }"
     );
 }
 
@@ -1708,7 +1710,7 @@ fn def_order_with_clause() {
     let p = check_module("cat = {\n  x: *\n} with {\n  y: *\n}");
     assert_eq!(
         format_def_order(&p, &p.def_order),
-        "cat, cat { x, y }"
+        "cat { x, y }"
     );
 }
 
@@ -1725,7 +1727,7 @@ fn def_order_import() {
 fn def_order_named_import() {
     let p = check_module("b = import \"base\"");
     let order = format_def_order(&p, &p.def_order);
-    assert!(order.starts_with("b, b { "), "expected b with scope in: {order}");
+    assert!(order.starts_with("b { "), "expected b with scope in: {order}");
     assert!(order.contains("nat"), "expected nat in: {order}");
 }
 

@@ -35,6 +35,7 @@ pub enum Ty {
     Rat,
     Color,
     Deco,
+    Hole,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -90,7 +91,7 @@ pub struct Def {
 #[derive(Debug)]
 pub struct Module {
     pub this: Option<DefId>,
-    pub lookup: HashMap<String, DefId>,
+    pub lookup: HashMap<String, Module>,
 }
 
 // --- Env ---
