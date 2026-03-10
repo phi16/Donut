@@ -300,6 +300,21 @@ impl<'a> Checker<'a> {
                 Meta::Ty(ty).into()
             }
             Val::Hole(_) => Meta::Ty(Ty::Hole).into(),
+            Val::Subst(inner_id, mapping) => {
+                let inner_id = *inner_id;
+                let mapping: HashMap<ItemId, ValId> = mapping.clone();
+                let inner_pv = self.eval_val(inner_id);
+                // Convert HashMap<ItemId, ValId> to HashMap<ExtId, PureVal>
+                let subst_map: HashMap<ExtId, PureVal> = mapping
+                    .iter()
+                    .map(|(item_id, &val_id)| {
+                        let ext_id = ExtId(item_id.0 as u64);
+                        let pv = self.eval_val(val_id);
+                        (ext_id, pv)
+                    })
+                    .collect();
+                subst_pv(&inner_pv, &subst_map, &self.prim_item)
+            }
         }
     }
 

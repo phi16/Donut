@@ -1061,3 +1061,175 @@ fn module_body_with_ref() {
     assert!(y_mod.lookup.contains_key("a"));
     assert!(y_mod.lookup.contains_key("b"));
 }
+
+// --- Parametric module instantiation ---
+
+fn get_member_def<'a>(env: &'a env::Env, parent: &str, child: &str) -> &'a env::Def {
+    let parent_mod = env.root.lookup.get(parent).unwrap_or_else(|| panic!("module `{}` not found", parent));
+    let child_mod = parent_mod.lookup.get(child).unwrap_or_else(|| panic!("member `{}.{}` not found", parent, child));
+    &env.defs[child_mod.this.unwrap().0]
+}
+
+#[test]
+fn parametric_module() {
+    let env = check_ok(
+        "cat[C: *] = {\n  x: C → C\n  m: x x → x\n}\nu: *\nv: *\ncu = cat[u]\ncv = cat[v]",
+    );
+    let u = get_def(&env, "u");
+    let v = get_def(&env, "v");
+
+    // cu.x should have source/target = u
+    let cu_x = get_member_def(&env, "cu", "x");
+    match (&u.val, &cu_x.val) {
+        (PureVal::Cell(uc), PureVal::Cell(cxc)) => {
+            assert_eq!(cxc.s(), *uc);
+            assert_eq!(cxc.t(), *uc);
+        }
+        _ => panic!("expected Cell values"),
+    }
+
+    // cv.x should have source/target = v
+    let cv_x = get_member_def(&env, "cv", "x");
+    match (&v.val, &cv_x.val) {
+        (PureVal::Cell(vc), PureVal::Cell(cxc)) => {
+            assert_eq!(cxc.s(), *vc);
+            assert_eq!(cxc.t(), *vc);
+        }
+        _ => panic!("expected Cell values"),
+    }
+
+    // cu.x ≠ cv.x
+    assert_ne!(cu_x.val, cv_x.val);
+
+    // cu.m should be a 2-cell
+    let cu_m = get_member_def(&env, "cu", "m");
+    match &cu_m.val {
+        PureVal::Cell(pc) => assert_eq!(pc.dim().in_space, 2),
+        _ => panic!("expected Cell"),
+    }
+}
+
+#[test]
+fn parametric_module_composition() {
+    let env = check_ok(
+        "cat[C: *] = {\n  x: C → C\n  m: x x → x\n}\nu: *\nc = cat[u]\ndouble = c.x c.x; c.m",
+    );
+    let double = get_def(&env, "double");
+    match &double.val {
+        PureVal::Cell(pc) => assert_eq!(pc.dim().in_space, 2),
+        _ => panic!("expected Cell"),
+    }
+}
+
+#[test]
+fn prim_args_distinguish_instances() {
+    let env = check_ok(
+        "cat[C: *] = {\n  T[x: C → C]: x → x\n}\nu: *\nc = cat[u]\na: u → u\nb: u → u\nta = c.T[a]\ntb = c.T[b]",
+    );
+    let ta = get_def(&env, "ta");
+    let tb = get_def(&env, "tb");
+    assert_ne!(ta.val, tb.val);
+    match (&ta.val, &tb.val) {
+        (PureVal::Cell(ac), PureVal::Cell(bc)) => {
+            assert_eq!(ac.dim().in_space, 2);
+            assert_eq!(bc.dim().in_space, 2);
+            assert_ne!(ac.s(), bc.s());
+        }
+        _ => panic!("expected Cell values"),
+    }
+}
+
+#[test]
+fn nested_module_instantiation_two_levels() {
+    let env = check_ok(
+        "outer[C: *] = {\n  inner = {\n    x: C → C\n  }\n}\nu: *\nv: *\nou = outer[u]\nov = outer[v]",
+    );
+    let u = get_def(&env, "u");
+    let v = get_def(&env, "v");
+
+    let ou_mod = env.root.lookup.get("ou").unwrap();
+    let inner_mod = ou_mod.lookup.get("inner").unwrap();
+    let ou_x = &env.defs[inner_mod.lookup.get("x").unwrap().this.unwrap().0];
+
+    let ov_mod = env.root.lookup.get("ov").unwrap();
+    let ov_inner = ov_mod.lookup.get("inner").unwrap();
+    let ov_x = &env.defs[ov_inner.lookup.get("x").unwrap().this.unwrap().0];
+
+    match (&u.val, &ou_x.val) {
+        (PureVal::Cell(uc), PureVal::Cell(xc)) => {
+            assert_eq!(xc.s(), *uc);
+            assert_eq!(xc.t(), *uc);
+        }
+        _ => panic!("expected Cell values"),
+    }
+    match (&v.val, &ov_x.val) {
+        (PureVal::Cell(vc), PureVal::Cell(xc)) => {
+            assert_eq!(xc.s(), *vc);
+        }
+        _ => panic!("expected Cell values"),
+    }
+    assert_ne!(ou_x.val, ov_x.val);
+}
+
+#[test]
+fn nested_module_instantiation_three_levels() {
+    let env = check_ok(
+        "outer[C: *] = {\n  mid = {\n    inner = {\n      x: C → C\n    }\n  }\n}\nu: *\nv: *\nou = outer[u]\nov = outer[v]",
+    );
+    let u = get_def(&env, "u");
+    let v = get_def(&env, "v");
+
+    let ou_x = {
+        let ou = env.root.lookup.get("ou").unwrap();
+        let mid = ou.lookup.get("mid").unwrap();
+        let inner = mid.lookup.get("inner").unwrap();
+        &env.defs[inner.lookup.get("x").unwrap().this.unwrap().0]
+    };
+    let ov_x = {
+        let ov = env.root.lookup.get("ov").unwrap();
+        let mid = ov.lookup.get("mid").unwrap();
+        let inner = mid.lookup.get("inner").unwrap();
+        &env.defs[inner.lookup.get("x").unwrap().this.unwrap().0]
+    };
+
+    match (&u.val, &ou_x.val) {
+        (PureVal::Cell(uc), PureVal::Cell(xc)) => assert_eq!(xc.s(), *uc),
+        _ => panic!("expected Cell values"),
+    }
+    match (&v.val, &ov_x.val) {
+        (PureVal::Cell(vc), PureVal::Cell(xc)) => assert_eq!(xc.s(), *vc),
+        _ => panic!("expected Cell values"),
+    }
+    assert_ne!(ou_x.val, ov_x.val);
+}
+
+#[test]
+fn nested_module_use_after_instantiation() {
+    let env = check_ok(
+        "cat[C: *] = {\n  arr = {\n    x: C → C\n    m: x x → x\n  }\n}\nu: *\nc = cat[u]\ndouble = c.arr.x c.arr.x; c.arr.m",
+    );
+    let double = get_def(&env, "double");
+    match &double.val {
+        PureVal::Cell(pc) => assert_eq!(pc.dim().in_space, 2),
+        _ => panic!("expected Cell"),
+    }
+}
+
+#[test]
+fn type_alias_in_parametric_module() {
+    let env = check_ok(
+        "cat[C: *] = {\n  T = C → C\n  x: T\n}\nu: *\nv: *\ncu = cat[u]\ncv = cat[v]",
+    );
+    let u = get_def(&env, "u");
+    let v = get_def(&env, "v");
+    let cu_x = get_member_def(&env, "cu", "x");
+    let cv_x = get_member_def(&env, "cv", "x");
+    match (&u.val, &cu_x.val) {
+        (PureVal::Cell(uc), PureVal::Cell(xc)) => assert_eq!(xc.s(), *uc),
+        _ => panic!("expected Cell values"),
+    }
+    match (&v.val, &cv_x.val) {
+        (PureVal::Cell(vc), PureVal::Cell(xc)) => assert_eq!(xc.s(), *vc),
+        _ => panic!("expected Cell values"),
+    }
+}

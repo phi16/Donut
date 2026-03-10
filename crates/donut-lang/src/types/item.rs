@@ -58,6 +58,7 @@ pub enum Val {
     CompStar(Vec<ValId>),
     Arrow(ArrowKind, ValId, ValId),
     Hole(Hole),
+    Subst(ValId, HashMap<ItemId, ValId>),
 }
 
 // --- Param ---

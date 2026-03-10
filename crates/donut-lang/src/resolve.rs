@@ -442,6 +442,100 @@ impl<'a> Checker<'a> {
         &self.vals[id.0].1
     }
 
+    // --- Deep clone for module instantiation ---
+
+    fn deep_clone_module(&mut self, source: &Module, mapping: &HashMap<ItemId, ValId>) -> Module {
+        let mut new_module = Module::new();
+        for &def_id in &source.entries {
+            let new_def_id = self.deep_clone_def(def_id, mapping);
+            let lname = self.def(new_def_id).lname.clone();
+            new_module.define(lname, new_def_id);
+        }
+        new_module
+    }
+
+    fn wrap_body_with_subst(
+        &mut self,
+        def_id: DefId,
+        mapping: &HashMap<ItemId, ValId>,
+        span: &TokenSpan,
+    ) -> DefBody {
+        match &self.def(def_id).body {
+            DefBody::Decl { item } => {
+                let item = *item;
+                let s = span.clone();
+                let path_val = self.alloc_val(
+                    Val::Path(Path { target: Ref::Item(item), args: vec![], applicand: None }),
+                    s.clone(),
+                );
+                DefBody::Alias { val: self.alloc_val(Val::Subst(path_val, mapping.clone()), s) }
+            }
+            DefBody::Alias { val } => {
+                let val = *val;
+                let s = self.val_span(val).clone();
+                DefBody::Alias { val: self.alloc_val(Val::Subst(val, mapping.clone()), s) }
+            }
+            DefBody::Functor { mappings } => {
+                let orig_mappings: Vec<_> = mappings.iter().map(|m| {
+                    (m.params.clone(), m.applicand, m.val)
+                }).collect();
+                DefBody::Functor {
+                    mappings: orig_mappings.into_iter().map(|(params, applicand, val)| {
+                        let app_s = self.val_span(applicand).clone();
+                        let val_s = self.val_span(val).clone();
+                        FunctorMapping {
+                            params,
+                            applicand: self.alloc_val(Val::Subst(applicand, mapping.clone()), app_s),
+                            val: self.alloc_val(Val::Subst(val, mapping.clone()), val_s),
+                        }
+                    }).collect(),
+                }
+            }
+            DefBody::None => DefBody::None,
+        }
+    }
+
+    fn deep_clone_def(&mut self, def_id: DefId, mapping: &HashMap<ItemId, ValId>) -> DefId {
+        let original = self.def(def_id);
+        let qname = original.qname.clone();
+        let lname = original.lname.clone();
+        let span = original.span.clone();
+        let origin = original.origin.clone();
+        let param_counts = original.param_counts.clone();
+        let params = original.params.clone();
+        let decos = original.decos.clone();
+        let original_ty = original.ty;
+        let original_members = original.members.clone();
+
+        // Wrap ty in Val::Subst
+        let new_ty = original_ty.map(|ty_id| {
+            let s = self.val_span(ty_id).clone();
+            self.alloc_val(Val::Subst(ty_id, mapping.clone()), s)
+        });
+
+        // Build new body with Val::Subst wrapping
+        // Decl → Alias(Subst(Path(Item), mapping)): reuses original PrimId with substituted boundaries
+        // Alias → Alias(Subst(val, mapping))
+        let new_body = self.wrap_body_with_subst(def_id, mapping, &span);
+
+        // Recursively deep clone members
+        let new_members = self.deep_clone_module(&original_members, mapping);
+
+        let new_def = Def {
+            qname,
+            lname,
+            span,
+            ty: new_ty,
+            params,
+            body: new_body,
+            members: new_members,
+            decos,
+            origin,
+            param_counts,
+        };
+        self.alloc_def(new_def)
+    }
+
     // --- DefTree generation ---
 
     fn emit_def_tree(&mut self, tree: DefTree) {
@@ -1019,7 +1113,19 @@ impl<'a> Checker<'a> {
                     if let Ref::Def(id) = path.target {
                         let m = &self.def(id).members;
                         if !m.entries.is_empty() {
-                            body_members = m.clone();
+                            if path.args.is_empty() {
+                                body_members = m.clone();
+                            } else {
+                                // Build substitution mapping: param ItemId → arg ValId
+                                let target_params = &self.def(id).params;
+                                let mapping: HashMap<ItemId, ValId> = target_params
+                                    .iter()
+                                    .zip(path.args.iter())
+                                    .map(|(param, &arg)| (param.item, arg))
+                                    .collect();
+                                let m_clone = m.clone();
+                                body_members = self.deep_clone_module(&m_clone, &mapping);
+                            }
                         }
                     }
                 }
