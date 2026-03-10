@@ -393,11 +393,10 @@ impl<'a> Checker<'a> {
         let mut trees = Vec::new();
         for &def_id in &module.entries {
             trees.push(DefTree::Def(def_id));
-            if let Some(members) = self.def(def_id).members() {
-                if !members.entries.is_empty() {
-                    let children = self.generate_def_trees(members);
-                    trees.push(DefTree::Scope { def_id, children });
-                }
+            let members = &self.def(def_id).members;
+            if !members.entries.is_empty() {
+                let children = self.generate_def_trees(members);
+                trees.push(DefTree::Scope { def_id, children });
             }
         }
         trees
@@ -405,12 +404,10 @@ impl<'a> Checker<'a> {
 
     fn emit_def_with_scope(&mut self, def_id: DefId) {
         self.emit_def_tree(DefTree::Def(def_id));
-        if let Some(members) = self.def(def_id).members() {
-            if !members.entries.is_empty() {
-                let members = members.clone();
-                let children = self.generate_def_trees(&members);
-                self.emit_def_tree(DefTree::Scope { def_id, children });
-            }
+        let members = self.def(def_id).members.clone();
+        if !members.entries.is_empty() {
+            let children = self.generate_def_trees(&members);
+            self.emit_def_tree(DefTree::Scope { def_id, children });
         }
     }
 
@@ -555,8 +552,7 @@ impl<'a> Checker<'a> {
         };
         for &(name, span) in rest {
             let next = current_def
-                .and_then(|id| self.def(id).members())
-                .and_then(|m| m.get(name));
+                .and_then(|id| self.def(id).members.get(name));
             match next {
                 Some(id) => current_def = Some(id),
                 None => {
@@ -571,7 +567,7 @@ impl<'a> Checker<'a> {
         let (first, rest) = names.split_first()?;
         let mut current = self.lookup_def(first.as_ref())?;
         for name in rest {
-            current = self.def(current).members()?.get(name.as_ref())?;
+            current = self.def(current).members.get(name.as_ref())?;
         }
         Some(current)
     }
@@ -859,13 +855,10 @@ impl<'a> Checker<'a> {
                         qname,
                         lname: name.clone(),
                         span: span.clone(),
-                        item: None,
                         ty: None,
                         params: vec![],
-                        body: DefBody::Value {
-                            val: None,
-                            members: Module::new(),
-                        },
+                        body: DefBody::None,
+                        members: Module::new(),
                         decos: vec![],
                         origin: self.current_origin.clone(),
                         param_counts: vec![],
@@ -972,10 +965,9 @@ impl<'a> Checker<'a> {
                     let path_names: Vec<String> =
                         path.segments.iter().map(|s| s.name.clone()).collect();
                     if let Some(id) = self.lookup_path(&path_names) {
-                        if let Some(m) = self.def(id).members() {
-                            if !m.entries.is_empty() {
-                                body_members = m.clone();
-                            }
+                        let m = &self.def(id).members;
+                        if !m.entries.is_empty() {
+                            body_members = m.clone();
                         }
                     }
                 }
@@ -1036,7 +1028,7 @@ impl<'a> Checker<'a> {
         } else if is_add {
             self.register_add(name_infos, body_val_resolved, result);
         } else {
-            // Create Item if this is a declaration/def
+            let is_functor = ty_resolved.map_or(false, |id| is_functor_type(&self.vals[id.0].0));
             let item_id = if let Some(ik) = item_kind {
                 if let Some(ty_id) = ty_resolved {
                     let cname = self.make_cname(&first_lname);
@@ -1053,17 +1045,16 @@ impl<'a> Checker<'a> {
             } else {
                 None
             };
-
-            let is_functor = ty_resolved.map_or(false, |id| is_functor_type(&self.vals[id.0].0));
             let body = if is_functor {
                 DefBody::Functor {
                     mappings: Vec::new(),
                 }
+            } else if let Some(item) = item_id {
+                DefBody::Decl { item }
+            } else if let Some(val) = body_val_resolved {
+                DefBody::Alias { val }
             } else {
-                DefBody::Value {
-                    val: body_val_resolved,
-                    members: result,
-                }
+                DefBody::None
             };
             let span = name_infos
                 .first()
@@ -1076,10 +1067,10 @@ impl<'a> Checker<'a> {
                 qname,
                 lname: first_lname.clone(),
                 span,
-                item: item_id,
                 ty: ty_resolved,
                 params,
                 body,
+                members: result,
                 decos: deco_vals,
                 origin: self.current_origin.clone(),
                 param_counts,
@@ -1115,18 +1106,17 @@ impl<'a> Checker<'a> {
         let mut conflict = false;
         if let Some(Ref::Def(mut current_id)) = self.lookup(first_name) {
             for (name, _) in &segs[1..segs.len() - 1] {
-                let next = self.def(current_id).members().and_then(|m| m.get(name));
+                let next = self.def(current_id).members.get(name);
                 match next {
                     Some(id) => current_id = id,
                     None => return,
                 }
             }
-            if let Some(members) = self.def_mut(current_id).members_mut() {
-                if members.contains_key(last_name) {
-                    conflict = true;
-                } else {
-                    members.define(last_name.clone(), def_id);
-                }
+            let members = &mut self.def_mut(current_id).members;
+            if members.contains_key(last_name) {
+                conflict = true;
+            } else {
+                members.define(last_name.clone(), def_id);
             }
         }
 
@@ -1148,17 +1138,14 @@ impl<'a> Checker<'a> {
                 .map(|&id| (id, self.defs[id.0].lname.clone()))
                 .collect();
             let conflicts = if let Some(Ref::Def(id)) = self.lookup(name) {
-                if let Some(members) = self.def_mut(id).members_mut() {
-                    let mut cs = Vec::new();
-                    for (new_id, lname) in &lnames {
-                        if members.define(lname.clone(), *new_id).is_some() {
-                            cs.push(lname.clone());
-                        }
+                let members = &mut self.def_mut(id).members;
+                let mut cs = Vec::new();
+                for (new_id, lname) in &lnames {
+                    if members.define(lname.clone(), *new_id).is_some() {
+                        cs.push(lname.clone());
                     }
-                    cs
-                } else {
-                    Vec::new()
                 }
+                cs
             } else {
                 Vec::new()
             };
@@ -1223,8 +1210,7 @@ impl<'a> Checker<'a> {
                         let path_names: Vec<String> =
                             path.segments.iter().map(|s| s.name.clone()).collect();
                         self.lookup_path(&path_names)
-                            .and_then(|id| self.def(id).members())
-                            .cloned()
+                            .map(|id| self.def(id).members.clone())
                             .unwrap_or_else(Module::new)
                     }
                     _ => {

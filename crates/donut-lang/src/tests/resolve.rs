@@ -972,7 +972,7 @@ m = {
 "#,
     );
     let m_def = get_def(&p, "m");
-    let x_id = m_def.members().unwrap().get("x").unwrap();
+    let x_id = m_def.members.get("x").unwrap();
     let x_def = p.def(x_id);
     assert_eq!(val_as_string(&p, x_def.val().unwrap()), Some("\"inner\""));
 }
@@ -989,7 +989,7 @@ x = g
     );
     let x = get_def(&p, "x");
     assert!(
-        x.members().unwrap().get("g").is_none(),
+        x.members.get("g").is_none(),
         "where binding should not be a member"
     );
     assert_eq!(val_as_path_name(&p, x.val().unwrap()), Some("g"));
@@ -1008,9 +1008,9 @@ x = "base"
     );
     let x = get_def(&p, "x");
     assert_eq!(val_as_string(&p, x.val().unwrap()), Some("\"base\""));
-    let a = p.def(x.members().unwrap().get("a").unwrap());
+    let a = p.def(x.members.get("a").unwrap());
     assert_eq!(val_as_string(&p, a.val().unwrap()), Some("\"m1\""));
-    let b = p.def(x.members().unwrap().get("b").unwrap());
+    let b = p.def(x.members.get("b").unwrap());
     assert_eq!(val_as_string(&p, b.val().unwrap()), Some("\"m2\""));
 }
 
@@ -1044,7 +1044,7 @@ m[x: T] = {
     assert_eq!(def.params[0].name, "x");
     assert_eq!(val_as_path_name(&p, def.params[0].ty), Some("T"));
     assert!(def.val().is_none(), "module body should not produce val");
-    assert_eq!(names(&p, def.members().unwrap()), vec!["inner"]);
+    assert_eq!(names(&p, &def.members), vec!["inner"]);
 }
 
 #[test]
@@ -1058,7 +1058,7 @@ m = {
 }
 "#,
     );
-    let members = get_def(&p, "m").members().unwrap();
+    let members = &get_def(&p, "m").members;
     assert_eq!(names(&p, members), vec!["x", "y", "z"]);
 }
 
@@ -1073,7 +1073,7 @@ x = "v"
   }
 "#,
     );
-    let members = get_def(&p, "x").members().unwrap();
+    let members = &get_def(&p, "x").members;
     assert_eq!(names(&p, members), vec!["a", "b"]);
 }
 
@@ -1088,7 +1088,7 @@ m.b = "2"
 m.c = "3"
 "#,
     );
-    let members = get_def(&p, "m").members().unwrap();
+    let members = &get_def(&p, "m").members;
     assert_eq!(names(&p, members), vec!["a", "b", "c"]);
 }
 
@@ -1105,7 +1105,7 @@ x += {
 }
 "#,
     );
-    let members = get_def(&p, "x").members().unwrap();
+    let members = &get_def(&p, "x").members;
     assert_eq!(names(&p, members), vec!["a", "b", "c"]);
 }
 
@@ -1137,9 +1137,9 @@ a = {
 "#,
     );
     let a = get_def(&p, "a");
-    let b_id = a.members().unwrap().get("b").unwrap();
+    let b_id = a.members.get("b").unwrap();
     let b = p.def(b_id);
-    assert_eq!(names(&p, b.members().unwrap()), vec!["c", "d"]);
+    assert_eq!(names(&p, &b.members), vec!["c", "d"]);
 }
 
 // ============================================================
@@ -1415,13 +1415,19 @@ z: T := "w"
 "#,
     );
     // alias (T, y) → no Item
-    assert!(get_def(&p, "T").item.is_none());
-    assert!(get_def(&p, "y").item.is_none());
-    // declaration (x) → Item(Decl)
-    let x_item_id = get_def(&p, "x").item.unwrap();
+    assert!(!matches!(get_def(&p, "T").body, DefBody::Decl { .. }));
+    assert!(!matches!(get_def(&p, "y").body, DefBody::Decl { .. }));
+    // declaration (x) → Decl
+    let x_item_id = match get_def(&p, "x").body {
+        DefBody::Decl { item } => item,
+        _ => panic!("expected Decl"),
+    };
     assert!(matches!(p.item(x_item_id).kind, ItemKind::Decl));
-    // definition (z) → Item(Def)
-    let z_item_id = get_def(&p, "z").item.unwrap();
+    // definition (z) → Decl (with := syntax)
+    let z_item_id = match get_def(&p, "z").body {
+        DefBody::Decl { item } => item,
+        _ => panic!("expected Decl"),
+    };
     assert!(matches!(p.item(z_item_id).kind, ItemKind::Def));
 }
 
@@ -1540,7 +1546,7 @@ m = {
 "#,
     );
     let m = get_def(&p, "m");
-    let a_id = m.members().unwrap().get("a").unwrap();
+    let a_id = m.members.get("a").unwrap();
     let a = p.def(a_id);
     assert_eq!(a.qname, "m.a");
     assert_eq!(a.lname, "a");
@@ -1558,10 +1564,10 @@ a = {
 "#,
     );
     let a = get_def(&p, "a");
-    let b_id = a.members().unwrap().get("b").unwrap();
+    let b_id = a.members.get("b").unwrap();
     let b = p.def(b_id);
     assert_eq!(b.qname, "a.b");
-    let c_id = b.members().unwrap().get("c").unwrap();
+    let c_id = b.members.get("c").unwrap();
     let c = p.def(c_id);
     assert_eq!(c.qname, "a.b.c");
 }

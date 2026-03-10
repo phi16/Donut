@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 pub type Level = u8;
 pub type Axis = u8;
 
@@ -31,24 +33,68 @@ impl std::fmt::Display for PrimId {
     }
 }
 
+// --- AnyBox ---
+
+pub struct AnyBox {
+    data: Rc<dyn std::any::Any>,
+    eq_fn: fn(&dyn std::any::Any, &dyn std::any::Any) -> bool,
+    debug_fn: fn(&dyn std::any::Any, &mut std::fmt::Formatter<'_>) -> std::fmt::Result,
+}
+
+impl AnyBox {
+    pub fn new<T: PartialEq + std::fmt::Debug + 'static>(val: T) -> Self {
+        fn eq_impl<T: PartialEq + 'static>(a: &dyn std::any::Any, b: &dyn std::any::Any) -> bool {
+            a.downcast_ref::<T>()
+                .zip(b.downcast_ref::<T>())
+                .map_or(false, |(a, b)| a == b)
+        }
+        fn debug_impl<T: std::fmt::Debug + 'static>(
+            data: &dyn std::any::Any,
+            f: &mut std::fmt::Formatter<'_>,
+        ) -> std::fmt::Result {
+            std::fmt::Debug::fmt(data.downcast_ref::<T>().unwrap(), f)
+        }
+        AnyBox {
+            data: Rc::new(val),
+            eq_fn: eq_impl::<T>,
+            debug_fn: debug_impl::<T>,
+        }
+    }
+
+    pub fn inner<T: 'static>(&self) -> &T {
+        self.data.downcast_ref::<T>().unwrap()
+    }
+}
+
+impl Clone for AnyBox {
+    fn clone(&self) -> Self {
+        AnyBox {
+            data: Rc::clone(&self.data),
+            eq_fn: self.eq_fn,
+            debug_fn: self.debug_fn,
+        }
+    }
+}
+
+impl PartialEq for AnyBox {
+    fn eq(&self, other: &Self) -> bool {
+        (self.eq_fn)(self.data.as_ref(), other.data.as_ref())
+    }
+}
+
+impl std::fmt::Debug for AnyBox {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        (self.debug_fn)(self.data.as_ref(), f)
+    }
+}
+
+// --- PureVal ---
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum PureVal {
     Cell(crate::pure_cell::PureCell),
-    Nat(u64),
-    Rat(f64),
     App(ExtId, Vec<PureVal>),
-}
-
-impl PureVal {
-    pub fn rat(v: f64) -> Self {
-        PureVal::Rat(v)
-    }
-    pub fn as_rat(&self) -> Option<f64> {
-        match self {
-            PureVal::Rat(v) => Some(*v),
-            _ => None,
-        }
-    }
+    Any(AnyBox),
 }
 
 #[derive(Debug, Clone, PartialEq)]

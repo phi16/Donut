@@ -1,4 +1,4 @@
-pub use crate::types::common::{S, TokenSpan};
+use crate::types::common::{S, TokenSpan};
 use donut_core::common::Axis;
 use std::collections::HashMap;
 
@@ -22,7 +22,7 @@ pub enum Ref {
 
 // --- Val types ---
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ArrowKind {
     To,
     Eq,
@@ -85,7 +85,7 @@ pub struct Param {
 #[derive(Debug, Clone, Copy)]
 pub enum ItemKind {
     Decl,
-    Def,
+    Def, // TODO
     Param,
 }
 
@@ -110,13 +110,10 @@ pub struct FunctorMapping {
 
 #[derive(Debug)]
 pub enum DefBody {
-    Value {
-        val: Option<ValId>,
-        members: Module,
-    },
-    Functor {
-        mappings: Vec<FunctorMapping>,
-    },
+    None,
+    Decl { item: ItemId },
+    Alias { val: ValId },
+    Functor { mappings: Vec<FunctorMapping> },
 }
 
 #[derive(Debug)]
@@ -124,10 +121,10 @@ pub struct Def {
     pub qname: String,
     pub lname: String,
     pub span: TokenSpan,
-    pub item: Option<ItemId>,
     pub ty: Option<ValId>,
     pub params: Vec<Param>,
     pub body: DefBody,
+    pub members: Module,
     pub decos: Vec<ValId>,
     pub origin: Option<String>,
     pub param_counts: Vec<usize>,
@@ -146,7 +143,10 @@ pub struct Module {
 #[derive(Debug, Clone)]
 pub enum DefTree {
     Def(DefId),
-    Scope { def_id: DefId, children: Vec<DefTree> },
+    Scope {
+        def_id: DefId,
+        children: Vec<DefTree>,
+    },
 }
 
 // --- Program ---
@@ -216,23 +216,9 @@ impl Module {
 }
 
 impl Def {
-    pub fn members(&self) -> Option<&Module> {
-        match &self.body {
-            DefBody::Value { members, .. } => Some(members),
-            _ => None,
-        }
-    }
-
-    pub fn members_mut(&mut self) -> Option<&mut Module> {
-        match &mut self.body {
-            DefBody::Value { members, .. } => Some(members),
-            _ => None,
-        }
-    }
-
     pub fn val(&self) -> Option<ValId> {
         match &self.body {
-            DefBody::Value { val, .. } => *val,
+            DefBody::Alias { val } => Some(*val),
             _ => None,
         }
     }

@@ -167,8 +167,6 @@ impl PureVal {
         }
         match self {
             PureVal::Cell(pc) => PureVal::Cell(pc.subst(mapping)),
-            PureVal::Nat(n) => PureVal::Nat(*n),
-            PureVal::Rat(bits) => PureVal::Rat(*bits),
             PureVal::App(id, args) => {
                 let new_args: Vec<PureVal> = args.iter().map(|a| a.subst(mapping)).collect();
                 if new_args.is_empty() {
@@ -178,6 +176,7 @@ impl PureVal {
                 }
                 PureVal::App(*id, new_args)
             }
+            PureVal::Any(_) => self.clone(),
         }
     }
 }
@@ -234,8 +233,6 @@ impl fmt::Display for PureVal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             PureVal::Cell(pc) => write!(f, "{}", pc),
-            PureVal::Nat(n) => write!(f, "{}", n),
-            PureVal::Rat(v) => write!(f, "{}", v),
             PureVal::App(id, args) => {
                 write!(f, "P{}", id)?;
                 if !args.is_empty() {
@@ -250,6 +247,7 @@ impl fmt::Display for PureVal {
                 }
                 Ok(())
             }
+            PureVal::Any(v) => write!(f, "{:?}", v),
         }
     }
 }
