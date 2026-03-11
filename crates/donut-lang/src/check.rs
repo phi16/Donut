@@ -106,6 +106,27 @@ impl<'a> Checker<'a> {
         env::display_pure_val(self, pv)
     }
 
+    fn display_cell(&self, pc: &PureCell) -> String {
+        env::display_cell(self, pc)
+    }
+
+    fn format_comp_error(&self, e: &donut_core::common::Error) -> String {
+        match e {
+            donut_core::common::Error::NotConvertible(a, b) => {
+                format!("{} is not convertible to {}", self.display_cell(a), self.display_cell(b))
+            }
+            _ => format!("{}", e),
+        }
+    }
+
+    fn format_functor_error(&self, def_id: DefId, e: &FunctorError) -> String {
+        let name = &self.program.def(def_id).lname;
+        match e {
+            FunctorError::NoMapping(prim) => format!("functor {}: no mapping for {}", name, self.prim_name(prim.id)),
+            FunctorError::CompError(e) => format!("functor {} composition error: {}", name, self.format_comp_error(e)),
+        }
+    }
+
     // --- DefTree traversal ---
 
     fn process_trees(&mut self, trees: &[DefTree]) -> HashMap<String, env::Module> {
@@ -468,7 +489,7 @@ impl<'a> Checker<'a> {
                     Ok(pc) => PureVal::Cell(pc),
                     Err(e) => {
                         let span = self.program.val_span(val_id);
-                        self.error_at(span, format_functor_error(&e));
+                        self.error_at(span, self.format_functor_error(functor_def_id, &e));
                         result
                     }
                 }
@@ -536,7 +557,7 @@ impl<'a> Checker<'a> {
             Ok(pc) => PureVal::Cell(pc),
             Err(e) => {
                 let span = self.program.val_span(val_id);
-                self.error_at(span, format!("{}", e));
+                self.error_at(span, self.format_comp_error(&e));
                 Meta::Error.into()
             }
         }
@@ -699,7 +720,7 @@ impl<'a> Checker<'a> {
                 }
                 (Err(e), _) | (_, Err(e)) => {
                     let span = self.program.val_span(mapping.applicand);
-                    self.error_at(span, format_functor_error(&e));
+                    self.error_at(span, self.format_functor_error(def_id, &e));
                     continue;
                 }
             }
@@ -1113,12 +1134,6 @@ fn apply_functor(
     }
 }
 
-fn format_functor_error(e: &FunctorError) -> String {
-    match e {
-        FunctorError::NoMapping(prim) => format!("functor: no mapping for prim {:?}", prim.id),
-        FunctorError::CompError(e) => format!("functor composition error: {}", e),
-    }
-}
 
 // --- Public API ---
 
