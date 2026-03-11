@@ -1,0 +1,8 @@
+[book]
+title = "Donut Language Guide"
+authors = ["phi16", "Claude Code"]
+language = "ja"
+
+[output.html]
+default-theme = "coal"
+preferred-dark-theme = "coal"

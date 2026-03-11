@@ -1,0 +1,30 @@
+import "sys"
+
+fdup = val.dup[f32]
+
+square :=
+  val.dup[f32x2];
+  f32x2.unpack f32x2.unpack;
+  (fdup; f32.mul) (fdup; f32.mul) (f32.lit[2] f32.mul; f32.mul);
+  f32.sub f32;
+  f32x2.pack
+
+step: f32x2 f32x2 → f32x2 f32x2 =
+  square val.dup[f32x2]; f32x2.add f32x2
+
+rep4[x: C → C, f: x → x]: x → x = f; f; f; f
+step4 := rep4[f32x2 f32x2, step]
+step16 := rep4[f32x2 f32x2, step4]
+step64 := rep4[f32x2 f32x2, step16]
+
+coloring: f32x2 → f32 := f32x2.unpack;
+  (fdup; f32.mul) (fdup; f32.mul);
+  f32.add f32.lit[2];
+  f32.le;
+  f32.lit[1] f32.lit[0] bool;
+  bool.ind[f32]
+
+result = f32x2.lit[0,0] (f32x2 f32x2.lit[0.6,0.5]; f32x2.sub; f32.lit[3] f32x2; f32x2.scale);
+  step64; 
+  f32x2 val.drop[f32x2];
+  coloring

@@ -1,0 +1,18 @@
+# Summary
+
+- [Donut とは](./intro.md)
+- [基本構文](./syntax.md)
+  - [宣言と型](./syntax/declarations.md)
+  - [合成](./syntax/composition.md)
+  - [モジュール](./syntax/modules.md)
+  - [パラメータ](./syntax/parameters.md)
+  - [Equivalence](./syntax/equivalence.md)
+  - [定義](./syntax/decldef.md)
+  - [次元の自動リフト](./syntax/dim-lift.md)
+  - [デコレータ](./syntax/decorators.md)
+  - [import と use](./syntax/import.md)
+- [Functor](./functor.md)
+- [sys ライブラリ](./sys.md)
+- [例](./examples.md)
+  - [pentagon](./examples/pentagon.md)
+  - [mandelbrot](./examples/mandelbrot.md)
