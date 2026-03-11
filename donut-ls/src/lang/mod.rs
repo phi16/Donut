@@ -673,6 +673,27 @@ mod tests {
     }
 
     #[test]
+    fn namespace_not_applied_to_param_ref() {
+        // Parameter `x` inside y[x: C → C] = x x should NOT be marked as Namespace,
+        // even though the outer module is also named `x`.
+        let r = analyze("C: *\nx = {\n  y[x: C → C] = x x\n}");
+        // line 2: "  y[x: C → C] = x x"
+        // first x in body at col 16, second at col 18
+        let ty1 = token_type_at(&r, 2, 16);
+        assert!(
+            !matches!(ty1, Some(TokenType::Namespace)),
+            "first x in body should not be Namespace, got {:?}",
+            ty1
+        );
+        let ty2 = token_type_at(&r, 2, 18);
+        assert!(
+            !matches!(ty2, Some(TokenType::Namespace)),
+            "second x in body should not be Namespace, got {:?}",
+            ty2
+        );
+    }
+
+    #[test]
     fn namespace_marking_deep() {
         let r = analyze("a = {\n  b = {\n    c: *\n  }\n}\nx = a.b.c");
         let ty_a = token_type_at(&r, 5, 4);

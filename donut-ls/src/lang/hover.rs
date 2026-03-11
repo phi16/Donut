@@ -66,7 +66,7 @@ impl<'a> HoverBuilder<'a> {
                     // Find name tokens in the span for per-segment hover
                     // We need to be careful: only consider name tokens BEFORE any '[' (args)
                     let mut name_tokens = Vec::new();
-                    for i in span.start..=span.end {
+                    for i in span.start..span.end {
                         if let Some(t) = self.tokens.get(i) {
                             if t.str == "[" {
                                 break; // stop at first bracket (args follow)
