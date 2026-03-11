@@ -548,6 +548,34 @@ fn incompatible_composition_errors() {
     );
 }
 
+// --- Parameter count tests ---
+
+#[test]
+fn param_count_too_many() {
+    let (_, errors) = run_check("import \"sys\"\nx = f32.lit[1, 2]");
+    assert!(!errors.is_empty(), "expected param count error");
+    assert!(errors[0].contains("expects 1 parameters, but 2 were given"), "wrong error: {}", errors[0]);
+}
+
+#[test]
+fn param_count_too_few() {
+    let (_, errors) = run_check("A[x: *, y: *] = { u: x → y }\nB: *\nc = A[B]");
+    assert!(!errors.is_empty(), "expected param count error");
+    assert!(errors[0].contains("expects 2 parameters, but 1 were given"), "wrong error: {}", errors[0]);
+}
+
+#[test]
+fn param_count_zero_given_nonzero_expected() {
+    let (_, errors) = run_check("A[x: *]: * = x\nB: *\nc = A");
+    assert!(!errors.is_empty(), "expected param count error");
+    assert!(errors[0].contains("expects 1 parameters, but 0 were given"), "wrong error: {}", errors[0]);
+}
+
+#[test]
+fn param_count_correct() {
+    check_ok("import \"sys\"\nx = f32.lit[1]");
+}
+
 // --- Dim lift tests ---
 
 #[test]

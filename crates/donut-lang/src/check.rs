@@ -429,6 +429,23 @@ impl<'a> Checker<'a> {
             return Meta::Error.into();
         };
 
+        // Check arg count (only for Def targets; Item refs may appear
+        // internally via Subst without args)
+        if let Ref::Def(def_id) = path.target {
+            let expected_params = self.program.def(def_id).params.len();
+            if path.args.len() != expected_params {
+                let name = &self.program.def(def_id).qname;
+                let span = self.program.val_span(val_id);
+                self.error_at(
+                    span,
+                    format!(
+                        "`{}` expects {} parameters, but {} were given",
+                        name, expected_params, path.args.len()
+                    ),
+                );
+            }
+        }
+
         // Apply args
         let result = if path.args.is_empty() {
             base
