@@ -240,6 +240,34 @@ impl DisplayContext for Env {
     }
 }
 
+struct DefDisplayContext<'a> {
+    env: &'a Env,
+    def: &'a Def,
+}
+
+impl<'a> DisplayContext for DefDisplayContext<'a> {
+    fn item_cname(&self, ext_id: ExtId) -> &str {
+        let item_id = ItemId(ext_id.0 as usize);
+        if self.def.params.contains(&item_id) {
+            &self.env.items[item_id.0].lname
+        } else {
+            &self.env.items[item_id.0].cname
+        }
+    }
+
+    fn prim_name(&self, prim_id: PrimId) -> &str {
+        if let Some(&item_id) = self.env.prim_item.get(&prim_id) {
+            if self.def.params.contains(&item_id) {
+                &self.env.items[item_id.0].lname
+            } else {
+                &self.env.items[item_id.0].cname
+            }
+        } else {
+            "?"
+        }
+    }
+}
+
 impl Env {
     pub fn display_pure_val(&self, pv: &PureVal) -> String {
         display_pure_val(self, pv)
@@ -257,11 +285,19 @@ impl Env {
         if def.params.is_empty() {
             return String::new();
         }
+        let ctx = DefDisplayContext { env: self, def };
         let params: Vec<String> = def.params.iter().map(|&item_id| {
             let item = &self.items[item_id.0];
-            format!("{}: {}", item.lname, self.display_ty(&item.ty))
+            format!("{}: {}", item.lname, display_ty(&ctx, &item.ty))
         }).collect();
         format!("[{}]", params.join(", "))
+    }
+
+    pub fn display_def_signature(&self, def: &Def) -> String {
+        let params_str = self.display_params(def);
+        let ctx = DefDisplayContext { env: self, def };
+        let ty_str = display_ty(&ctx, &def.ty);
+        format!("{}{}: {}", def.lname, params_str, ty_str)
     }
 
     pub fn def_color<'a>(&self, def: &'a Def) -> &'a Color {

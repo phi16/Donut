@@ -417,7 +417,7 @@ impl App {
             self.hide_shader();
             return;
         };
-        let type_str = self.table.env().display_ty(&def.ty);
+        let sig = env.display_def_signature(def);
 
         // Expand DeclDef substitutions for evaluation
         let expanded = self.runtime.expand(&free.pure);
@@ -436,7 +436,7 @@ impl App {
         } else {
             let _ = self.eval_result_el.class_list().remove_1("evaluable");
         }
-        let mut text = format!("{}: {}\n{}", def.lname, type_str, eval_str);
+        let mut text = format!("{}\n{}", sig, eval_str);
 
         // GLSL compilation + shader preview (use expanded cell)
         let mut shader_shown = false;

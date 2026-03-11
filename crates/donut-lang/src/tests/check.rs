@@ -535,6 +535,17 @@ fn incompatible_composition_errors() {
     // f: a → b, g: c → d — 0次合成 should fail (b != c)
     let (_, errors) = run_check("a: *\nb: *\nc: *\nd: *\nf: a → b\ng: c → d\nh = f g");
     assert!(!errors.is_empty(), "expected composition error");
+    assert!(
+        errors[0].contains("is not convertible to"),
+        "error should mention convertibility: {}",
+        errors[0]
+    );
+    // Error message should use named prim display, not raw PrimId
+    assert!(
+        !errors[0].contains("P"),
+        "error should not contain raw PrimId: {}",
+        errors[0]
+    );
 }
 
 // --- Dim lift tests ---
@@ -983,6 +994,17 @@ fn functor_missing_mapping() {
         "src = {\n  C: *\n  X: C → C\n  Y: C → C\n  m: X → Y\n}\ntgt = {\n  D: *\n  A: D → D\n  B: D → D\n  n: A → B\n}\nF: src.C ~> tgt.D\nF(src.m) = tgt.n",
     );
     assert!(!errors.is_empty(), "expected no mapping error");
+    // Error message should include functor name and use named prims
+    assert!(
+        errors[0].contains("functor F"),
+        "error should mention functor name: {}",
+        errors[0]
+    );
+    assert!(
+        !errors[0].contains("PrimId"),
+        "error should not contain raw PrimId: {}",
+        errors[0]
+    );
 }
 
 #[test]

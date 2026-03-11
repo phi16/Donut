@@ -233,6 +233,30 @@ fn test_load_parametric_example() {
 }
 
 #[test]
+fn test_display_params() {
+    let input = r#"
+        C: *
+        rep2[x: C → C, f: x → x] = f; f
+    "#;
+    let env = load(input);
+    let def_id = find_def(&env, "rep2");
+    let def = &env.defs[def_id.0];
+    assert_eq!(env.display_params(def), "[x: C → C, f: x → x]");
+}
+
+#[test]
+fn test_display_def_signature() {
+    let input = r#"
+        C: *
+        rep2[x: C → C, f: x → x] = f; f
+    "#;
+    let env = load(input);
+    let def_id = find_def(&env, "rep2");
+    let def = &env.defs[def_id.0];
+    assert_eq!(env.display_def_signature(def), "rep2[x: C → C, f: x → x]: x → x");
+}
+
+#[test]
 fn test_load_default_donut() {
     let input = include_str!("../../../../donut-app/src/default.donut");
     load(input);
