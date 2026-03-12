@@ -1444,3 +1444,30 @@ fn decldef_member_type() {
         panic!("expected Arrow(Eq) type, got {:?}", def_def.ty);
     }
 }
+
+#[test]
+fn parametric_arg_type_mismatch() {
+    // f32 f32 is C → C (0-comp of two 0-cells), not f32 → f32
+    let (_env, errors) = run_check(
+        r#"import "sys"
+m[x: f32 → f32] = {
+  f[y: f32 → f32] = x; y
+}
+h = m[f32 f32]"#,
+    );
+    assert!(!errors.is_empty(), "expected type error for wrong arg type");
+}
+
+#[test]
+fn parametric_arg_type_ok() {
+    // g is f32 → f32, should be accepted
+    let (_env, errors) = run_check(
+        r#"import "sys"
+g: f32 → f32
+m[x: f32 → f32] = {
+  f: f32 → f32 = x
+}
+h = m[g]"#,
+    );
+    assert!(errors.is_empty(), "unexpected errors: {:?}", errors);
+}

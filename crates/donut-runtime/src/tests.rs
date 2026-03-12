@@ -653,7 +653,7 @@ fn test_decldef_0cell() {
 fn test_decldef_op() {
     // DeclDef for operations: add := sys.u32.add
     let (rt, env) = setup(
-        "C := sys.C\nu32 := sys.u32\nadd := sys.u32.add\nresult: u32 u32 → u32 = sys.u32.lit[3] sys.u32.lit[4]; add",
+        "C := sys.C\nu32 := sys.u32\nadd := sys.u32.add\nresult = sys.u32.lit[3] sys.u32.lit[4]; add",
     );
     let result = eval_entry_expanded(&rt, &env, "result");
     assert_eq!(result, vec![Value::U32(7)]);
@@ -663,7 +663,7 @@ fn test_decldef_op() {
 fn test_decldef_transitive() {
     // x := sys.u32, y := x — transitive expansion
     let (rt, env) = setup(
-        "C := sys.C\nx := sys.u32\ny := x\nresult: y → y = sys.u32.lit[10]",
+        "C := sys.C\nx := sys.u32\ny := x\nresult = sys.u32.lit[10]",
     );
     let result = eval_entry_expanded(&rt, &env, "result");
     assert_eq!(result, vec![Value::U32(10)]);

@@ -515,7 +515,7 @@ impl<'a> Checker<'a> {
         let span = original.span.clone();
         let origin = original.origin.clone();
         let param_counts = original.param_counts.clone();
-        let params = original.params.clone();
+        let orig_params = original.params.clone();
         let decos = original.decos.clone();
         let original_ty = original.ty;
         let original_members = original.members.clone();
@@ -525,6 +525,13 @@ impl<'a> Checker<'a> {
             let s = self.val_span(ty_id).clone();
             self.alloc_val(Val::Subst(ty_id, mapping.clone()), s)
         });
+
+        // Wrap param types in Val::Subst
+        let params: Vec<Param> = orig_params.into_iter().map(|p| {
+            let s = self.val_span(p.ty).clone();
+            let new_ty = self.alloc_val(Val::Subst(p.ty, mapping.clone()), s);
+            Param { name: p.name, ty: new_ty, item: p.item }
+        }).collect();
 
         // Build new body with Val::Subst wrapping
         // Decl → Alias(Subst(Path(Item), mapping)): reuses original PrimId with substituted boundaries

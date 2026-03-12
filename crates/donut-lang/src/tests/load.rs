@@ -304,3 +304,18 @@ fn test_where_nested_clauses() {
         "#,
     );
 }
+
+#[test]
+fn test_parametric_wrong_arg_no_crash() {
+    // f32 f32 is not f32 → f32; should produce errors but not crash
+    let code = r#"
+        import "sys"
+        m[x: f32 → f32] = {
+            f[y: f32 → f32] = x; y
+        }
+        h = m[f32 f32]
+    "#;
+    let code = super::dedent(code.trim_matches('\n'));
+    let (_env, errors) = crate::load::load(&code);
+    assert!(!errors.is_empty(), "expected errors for wrong arg type");
+}

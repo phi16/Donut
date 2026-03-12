@@ -32,7 +32,6 @@ struct Checker<'a> {
     functor_maps: HashMap<DefId, HashMap<PrimId, FunctorEntry>>,
     // DeclDef expansion: PrimId of `x` → PureCell of `y`
     def_subs: HashMap<PrimId, PureCell>,
-
     errors: Vec<Error>,
 }
 
@@ -454,6 +453,28 @@ impl<'a> Checker<'a> {
             base
         } else {
             let args: Vec<PureVal> = path.args.iter().map(|&a| self.eval_val(a)).collect();
+
+            // Type-check args against parameter types
+            if let Ref::Def(def_id) = path.target {
+                let params: Vec<_> = self.program.def(def_id)
+                    .params.iter().map(|p| (p.item, p.ty)).collect();
+                let span = self.program.val_span(val_id);
+                let err_count = self.errors.len();
+                let mut param_subst: HashMap<ExtId, PureVal> = HashMap::new();
+                for (i, arg) in args.iter().enumerate() {
+                    if let Some(&(item_id, ty_val_id)) = params.get(i) {
+                        let mut param_ty = self.eval_ty(ty_val_id);
+                        if !param_subst.is_empty() {
+                            param_ty = subst_ty(&param_ty, &param_subst, &self.prim_item);
+                        }
+                        self.coerce_val_to_ty(arg.clone(), &param_ty, &span);
+                        param_subst.insert(ExtId(item_id.0 as u64), arg.clone());
+                    }
+                }
+                if self.errors.len() > err_count {
+                    return Meta::Error.into();
+                }
+            }
             // Decl defs (with item) and bare Items accumulate args into App;
             // Alias defs substitute param placeholders with actual args.
             let is_alias = match path.target {
@@ -882,6 +903,7 @@ impl<'a> Checker<'a> {
     }
 
     fn coerce_val_to_ty(&mut self, pv: PureVal, ty: &Ty, span: &TokenSpan) -> PureVal {
+        let error_val = || -> PureVal { Meta::Error.into() };
         match ty {
             Ty::Star => {
                 if let PureVal::Cell(pc) = &pv {
@@ -890,9 +912,11 @@ impl<'a> Checker<'a> {
                             span,
                             format!("expected 0-cell, got {}-cell", pc.dim().in_space),
                         );
+                        return error_val();
                     }
                 } else if !matches!(env::as_meta(&pv), Some(Meta::Ty(Ty::Star))) {
                     self.error_at(span, "expected a 0-cell value");
+                    return error_val();
                 }
                 pv
             }
@@ -907,66 +931,74 @@ impl<'a> Checker<'a> {
                             span,
                             format!("expected {}-cell, got {}-cell", level, pc.dim().in_space),
                         );
-                    } else {
-                        // Check source/target compatibility
-                        if let Some(src) = Self::extract_cell(src_val) {
-                            let mut expected_src = src;
-                            while expected_src.dim().in_space < *level - 1 {
-                                expected_src = PureCell::id(expected_src);
-                            }
-                            if !pc.s().is_convertible(&expected_src) {
-                                self.error_at(
-                                    span,
-                                    "value source does not match declared type source",
-                                );
-                            }
+                        return error_val();
+                    }
+                    // Check source/target compatibility
+                    let mut ok = true;
+                    if let Some(src) = Self::extract_cell(src_val) {
+                        let mut expected_src = src;
+                        while expected_src.dim().in_space < *level - 1 {
+                            expected_src = PureCell::id(expected_src);
                         }
-                        if let Some(tgt) = Self::extract_cell(tgt_val) {
-                            let mut expected_tgt = tgt;
-                            while expected_tgt.dim().in_space < *level - 1 {
-                                expected_tgt = PureCell::id(expected_tgt);
-                            }
-                            if !pc.t().is_convertible(&expected_tgt) {
-                                self.error_at(
-                                    span,
-                                    "value target does not match declared type target",
-                                );
-                            }
+                        if !pc.s().is_convertible(&expected_src) {
+                            self.error_at(
+                                span,
+                                "value source does not match declared type source",
+                            );
+                            ok = false;
                         }
                     }
-                    PureVal::Cell(pc)
+                    if let Some(tgt) = Self::extract_cell(tgt_val) {
+                        let mut expected_tgt = tgt;
+                        while expected_tgt.dim().in_space < *level - 1 {
+                            expected_tgt = PureCell::id(expected_tgt);
+                        }
+                        if !pc.t().is_convertible(&expected_tgt) {
+                            self.error_at(
+                                span,
+                                "value target does not match declared type target",
+                            );
+                            ok = false;
+                        }
+                    }
+                    if ok { PureVal::Cell(pc) } else { error_val() }
                 } else {
                     self.error_at(span, format!("expected a {}-cell value", level));
-                    pv
+                    error_val()
                 }
             }
             Ty::Meta => {
                 if env::as_meta(&pv).is_none() {
                     self.error_at(span, "expected a meta value");
+                    return error_val();
                 }
                 pv
             }
             Ty::Nat => {
                 if !self.check_meta_val(&pv, Ty::Nat) {
                     self.error_at(span, "expected a nat value");
+                    return error_val();
                 }
                 pv
             }
             Ty::Rat => {
                 if !self.check_meta_val(&pv, Ty::Rat) && !self.check_meta_val(&pv, Ty::Nat) {
                     self.error_at(span, "expected a rat value");
+                    return error_val();
                 }
                 pv
             }
             Ty::Color => {
                 if !self.check_meta_val(&pv, Ty::Color) {
                     self.error_at(span, "expected a color value");
+                    return error_val();
                 }
                 pv
             }
             Ty::Deco => {
                 if !self.check_meta_val(&pv, Ty::Deco) {
                     self.error_at(span, "expected a decorator value");
+                    return error_val();
                 }
                 pv
             }

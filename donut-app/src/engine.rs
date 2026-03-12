@@ -143,6 +143,11 @@ impl Engine {
 
     pub fn update_code(&mut self, code: &str) {
         let (table, runtime, prim_names, diagnostics) = Self::load(code);
+        if !diagnostics.is_empty() {
+            // Errors present: only update diagnostics, keep previous valid state
+            self.diagnostics = diagnostics;
+            return;
+        }
         self.table = table;
         self.runtime = runtime;
         self.diagnostics = diagnostics;
