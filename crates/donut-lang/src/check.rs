@@ -14,6 +14,12 @@ struct FunctorEntry {
     cell: PureCell,
 }
 
+struct FunctorMap {
+    entries: HashMap<PrimId, FunctorEntry>,
+    /// tgt_dim - src_dim (mapped cells shift dimension by this amount)
+    dim_shift: i32,
+}
+
 struct Checker<'a> {
     program: &'a Program,
     tokens: &'a [Token<'a>],
@@ -29,7 +35,7 @@ struct Checker<'a> {
     // Ref → PureVal for checked items/defs
     checked: HashMap<Ref, PureVal>,
     // DefId → (PrimId → FunctorEntry)
-    functor_maps: HashMap<DefId, HashMap<PrimId, FunctorEntry>>,
+    functor_maps: HashMap<DefId, FunctorMap>,
     // DeclDef expansion: PrimId of `x` → PureCell of `y`
     def_subs: HashMap<PrimId, PureCell>,
     errors: Vec<Error>,
@@ -526,7 +532,7 @@ impl<'a> Checker<'a> {
                 }
             };
             if let Some(fmap) = self.functor_maps.get(&functor_def_id) {
-                match apply_functor(app_cell, fmap, &self.prim_item) {
+                match apply_functor(app_cell, &fmap.entries, &self.prim_item, fmap.dim_shift) {
                     Ok(pc) => PureVal::Cell(pc),
                     Err(e) => {
                         let span = self.program.val_span(val_id);
@@ -659,6 +665,8 @@ impl<'a> Checker<'a> {
             }
         };
 
+        let dim_shift = tgt_cell.dim().in_space as i32 - src_cell.dim().in_space as i32;
+
         // Extract source PrimId for base case
         let src_prim_id = match src_cell.extract_prim_id() {
             Some(id) => id,
@@ -726,25 +734,31 @@ impl<'a> Checker<'a> {
 
             let app_dim = app_cell.dim().in_space;
 
-            // 0-cell: check consistency with base case
-            if app_dim == 0 {
-                if app_prim_id == src_prim_id {
-                    if !val_cell.is_convertible(&tgt_cell) {
-                        let span = self.program.val_span(mapping.val);
-                        self.error_at(span, "functor 0-cell mapping contradicts base case");
-                    }
+            // Base cell: check consistency with base case
+            if app_prim_id == src_prim_id {
+                if !val_cell.is_convertible(&tgt_cell) {
+                    let span = self.program.val_span(mapping.val);
+                    self.error_at(span, "functor base mapping contradicts base case");
                 }
                 continue;
             }
 
-            // Lift val to app dimension if needed
-            while val_cell.dim().in_space < app_dim {
+            // Expected dimension of mapped result
+            let expected_dim = app_dim as i32 + dim_shift;
+            if expected_dim < 0 {
+                let span = self.program.val_span(mapping.applicand);
+                self.error_at(span, "functor mapping applicand dimension is below functor source");
+                continue;
+            }
+
+            // Lift val to expected dimension if needed
+            while (val_cell.dim().in_space as i32) < expected_dim {
                 val_cell = PureCell::id(val_cell);
             }
 
             // Functoriality check: apply_functor(app.s) == val.s, apply_functor(app.t) == val.t
-            let expected_s = apply_functor(&app_cell.s(), &functor_map, &self.prim_item);
-            let expected_t = apply_functor(&app_cell.t(), &functor_map, &self.prim_item);
+            let expected_s = apply_functor(&app_cell.s(), &functor_map, &self.prim_item, dim_shift);
+            let expected_t = apply_functor(&app_cell.t(), &functor_map, &self.prim_item, dim_shift);
 
             match (expected_s, expected_t) {
                 (Ok(es), Ok(et)) => {
@@ -775,7 +789,10 @@ impl<'a> Checker<'a> {
             );
         }
 
-        self.functor_maps.insert(def_id, functor_map);
+        self.functor_maps.insert(def_id, FunctorMap {
+            entries: functor_map,
+            dim_shift,
+        });
     }
 
     // --- Path resolution ---
@@ -1151,6 +1168,7 @@ fn apply_functor(
     cell: &PureCell,
     map: &HashMap<PrimId, FunctorEntry>,
     prim_item: &HashMap<PrimId, ItemId>,
+    dim_shift: i32,
 ) -> Result<PureCell, FunctorError> {
     match cell {
         PureCell::Prim(prim, _, dim) => {
@@ -1167,8 +1185,9 @@ fn apply_functor(
                             .collect();
                         result = subst_cell(&result, &subst_map, prim_item);
                     }
-                    // Lift to target dimension
-                    while result.dim().in_space < dim.in_space {
+                    // Lift to target dimension (accounting for dimension shift)
+                    let target_dim = dim.in_space as i32 + dim_shift;
+                    while (result.dim().in_space as i32) < target_dim {
                         result = PureCell::id(result);
                     }
                     Ok(result)
@@ -1179,7 +1198,7 @@ fn apply_functor(
         PureCell::Comp(axis, children, _) => {
             let mapped: Vec<PureCell> = children
                 .iter()
-                .map(|c| apply_functor(c, map, prim_item))
+                .map(|c| apply_functor(c, map, prim_item, dim_shift))
                 .collect::<Result<_, _>>()?;
             PureCell::comp(*axis, mapped).map_err(FunctorError::CompError)
         }

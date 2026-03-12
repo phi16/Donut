@@ -1050,6 +1050,14 @@ fn functor_base_case_explicit() {
     );
 }
 
+#[test]
+fn functor_negative_shift() {
+    // F: D ~> C where dim(D) > dim(C)
+    check_ok(
+        "C: *\nD: C → C\nx: C → C\ny: D → D\nF: D ~> C\nF(y) = x",
+    );
+}
+
 // --- Qname / module name tests ---
 
 #[test]
