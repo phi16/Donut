@@ -37,11 +37,6 @@ trait Resolve {
 
 // --- Helper types ---
 
-struct NameInfo {
-    seg_names: Vec<(String, TokenSpan)>,
-    applicand: Option<S<semtree::Val>>,
-}
-
 // --- Helper functions ---
 
 fn is_functor_type(val: &Val) -> bool {
@@ -527,11 +522,18 @@ impl<'a> Checker<'a> {
         });
 
         // Wrap param types in Val::Subst
-        let params: Vec<Param> = orig_params.into_iter().map(|p| {
-            let s = self.val_span(p.ty).clone();
-            let new_ty = self.alloc_val(Val::Subst(p.ty, mapping.clone()), s);
-            Param { name: p.name, ty: new_ty, item: p.item }
-        }).collect();
+        let params: Vec<Param> = orig_params
+            .into_iter()
+            .map(|p| {
+                let s = self.val_span(p.ty).clone();
+                let new_ty = self.alloc_val(Val::Subst(p.ty, mapping.clone()), s);
+                Param {
+                    name: p.name,
+                    ty: new_ty,
+                    item: p.item,
+                }
+            })
+            .collect();
 
         // Build new body with Val::Subst wrapping
         // Decl → Alias(Subst(Path(Item), mapping)): reuses original PrimId with substituted boundaries
@@ -565,7 +567,11 @@ impl<'a> Checker<'a> {
     }
 
     fn emit_def_with_scope(&mut self, def_id: DefId, before: Vec<DefTree>, after: Vec<DefTree>) {
-        self.emit_def_tree(DefTree { def_id, before, after });
+        self.emit_def_tree(DefTree {
+            def_id,
+            before,
+            after,
+        });
     }
 
     fn emit_module_as_trees(&mut self, module: &Module) {
@@ -580,7 +586,11 @@ impl<'a> Checker<'a> {
                     after: self.collect_module_trees(&grandchildren_module),
                 });
             }
-            self.emit_def_tree(DefTree { def_id, before: vec![], after });
+            self.emit_def_tree(DefTree {
+                def_id,
+                before: vec![],
+                after,
+            });
         }
     }
 
@@ -588,7 +598,11 @@ impl<'a> Checker<'a> {
         let mut trees = Vec::new();
         for &def_id in &module.entries {
             let after = self.collect_module_trees(&self.def(def_id).members);
-            trees.push(DefTree { def_id, before: vec![], after });
+            trees.push(DefTree {
+                def_id,
+                before: vec![],
+                after,
+            });
         }
         trees
     }
@@ -977,6 +991,85 @@ impl<'a> Checker<'a> {
             body,
         } = unit;
 
+        if names.len() != 1 {
+            // simultaneous declaration case
+
+            assert!(matches!(op.0, semtree::AssignOp::Decl));
+            assert!(body.is_none());
+            if !with_clauses.is_empty() {
+                let span = &names[0].1;
+                self.error_at(span, "simultaneous declaration cannot have with clauses");
+            }
+
+            // Where clauses
+            let where_trees = self.resolve_where_clauses(where_clauses);
+
+            // Resolve type (shared across all names)
+            let ty_resolved = ty.map(|t| t.resolve(self));
+
+            for name in names {
+                let S(semtree::Path(segs, _applicand), _) = name;
+                let seg_names: Vec<(String, TokenSpan)> = segs
+                    .iter()
+                    .map(|seg_s| {
+                        let S(seg, span) = seg_s;
+                        (seg.0.0.clone(), span.clone())
+                    })
+                    .collect();
+                let lname = seg_names.last().map(|(n, _)| n.clone()).unwrap();
+                let span = seg_names.last().map(|(_, s)| s.clone()).unwrap();
+
+                let params = self.extract_params(segs, &lname);
+
+                // Create Item + Def body
+                let ty_id = ty_resolved.expect("declaration-only must have a type");
+                let cname = self.make_cname(&lname);
+                let item_id = self.alloc_item(Item {
+                    cname,
+                    lname: lname.clone(),
+                    kind: ItemKind::Decl,
+                    ty: ty_id,
+                    params: params.clone(),
+                });
+                let body = DefBody::Decl {
+                    item: item_id,
+                    def_val: None,
+                };
+                let qname = self.make_qname(&lname);
+                let param_counts = self.current_param_counts(params.len());
+                let def = Def {
+                    qname,
+                    lname: lname.clone(),
+                    span: span.clone(),
+                    ty: ty_resolved,
+                    params,
+                    body,
+                    members: Module::new(),
+                    decos: deco_vals.clone(),
+                    origin: self.current_origin.clone(),
+                    param_counts,
+                };
+                let def_id = self.alloc_def(def);
+                if !self.define(lname, Ref::Def(def_id)) {
+                    self.error_at(&span, "duplicate definition");
+                }
+                self.emit_def_tree(DefTree {
+                    def_id,
+                    before: vec![],
+                    after: vec![],
+                });
+            }
+
+            // Emit where trees
+            for tree in where_trees {
+                self.emit_def_tree(tree);
+            }
+
+            return;
+        }
+
+        let S(semtree::Path(segs, applicand), _) = names.into_iter().next().unwrap();
+
         // Determine if this declaration creates an Item
         let has_body_val = matches!(&body, Some(semtree::ValMod::Val(_)));
         let item_kind = item_kind_from_op(&op.0, has_body_val);
@@ -988,118 +1081,63 @@ impl<'a> Checker<'a> {
             None => (None, None),
         };
 
-        // --- Outer scope: extract seg_names ---
-        let seg_names_list: Vec<Vec<(String, TokenSpan)>> = names
+        // --- Extract seg_names ---
+        let seg_names: Vec<(String, TokenSpan)> = segs
             .iter()
-            .map(|name_s| {
-                let S(pd, _) = name_s;
-                pd.0.iter()
-                    .map(|seg_s| {
-                        let S(seg, span) = seg_s;
-                        (seg.0.0.clone(), span.clone())
-                    })
-                    .collect()
+            .map(|seg_s| {
+                let S(seg, span) = seg_s;
+                (seg.0.0.clone(), span.clone())
             })
             .collect();
 
         // --- Resolve prefixes ---
-        for seg_names in &seg_names_list {
-            if seg_names.len() > 1 {
-                let prefix: Vec<_> = seg_names[..seg_names.len() - 1]
-                    .iter()
-                    .map(|(name, span)| (name.as_str(), span))
-                    .collect();
-                self.resolve_segments(&prefix);
-            }
+        if seg_names.len() > 1 {
+            let prefix: Vec<_> = seg_names[..seg_names.len() - 1]
+                .iter()
+                .map(|(name, span)| (name.as_str(), span))
+                .collect();
+            self.resolve_segments(&prefix);
         }
 
-        let first_lname = seg_names_list
-            .first()
-            .and_then(|sns| sns.last())
-            .map(|(n, _)| n.clone())
-            .unwrap();
+        let lname = seg_names.last().map(|(n, _)| n.clone()).unwrap();
 
         // --- += pre-check ---
         let is_add = matches!(&op.0, semtree::AssignOp::Add);
-        if is_add {
-            for seg_names in &seg_names_list {
-                if seg_names.len() == 1 {
-                    let (name, span) = &seg_names[0];
-                    if self.lookup(name).is_none() {
-                        self.error_at(span, format!("`{}` must be declared before `+=`", name));
-                    }
-                }
+        if is_add && seg_names.len() == 1 {
+            let (name, span) = &seg_names[0];
+            if self.lookup(name).is_none() {
+                self.error_at(span, format!("`{}` must be declared before `+=`", name));
             }
         }
 
-        // --- Forward refs (outer scope, before inner scope) ---
-        if !is_add {
-            for (name_s, seg_names) in names.iter().zip(&seg_names_list) {
-                let has_applicand = name_s.0.1.is_some();
-                if !has_applicand && seg_names.len() == 1 {
-                    let (name, span) = &seg_names[0];
-                    let qname = self.make_qname(name);
-                    let def = Def {
-                        qname,
-                        lname: name.clone(),
-                        span: span.clone(),
-                        ty: None,
-                        params: vec![],
-                        body: DefBody::None,
-                        members: Module::new(),
-                        decos: vec![],
-                        origin: self.current_origin.clone(),
-                        param_counts: vec![],
-                    };
-                    let id = self.alloc_def(def);
-                    if !self.define(name.clone(), Ref::Def(id)) {
-                        self.error_at(span, format!("duplicate definition `{}`", name));
-                    }
-                }
+        // --- Forward ref (outer scope, before inner scope) ---
+        let has_applicand = applicand.is_some();
+        if !is_add && !has_applicand && seg_names.len() == 1 {
+            let (name, span) = &seg_names[0];
+            let qname = self.make_qname(name);
+            let def = Def {
+                qname,
+                lname: name.clone(),
+                span: span.clone(),
+                ty: None,
+                params: vec![],
+                body: DefBody::None,
+                members: Module::new(),
+                decos: vec![],
+                origin: self.current_origin.clone(),
+                param_counts: vec![],
+            };
+            let id = self.alloc_def(def);
+            if !self.define(name.clone(), Ref::Def(id)) {
+                self.error_at(span, format!("duplicate definition `{}`", name));
             }
         }
 
         // --- Inner scope ---
-        self.enter_inner_scope(&first_lname, &deco_param_defs);
+        self.enter_inner_scope(&lname, &deco_param_defs);
 
-        // --- Extract params (defined incrementally) ---
-        let mut params = Vec::new();
-        let mut name_infos: Vec<NameInfo> = Vec::new();
-        for (i, (name_s, seg_names)) in names.into_iter().zip(seg_names_list).enumerate() {
-            let S(pd, _) = name_s;
-            let semtree::Path(segs, applicand) = pd;
-            for seg_s in segs {
-                let S(seg, _) = seg_s;
-                for param_decl in seg.1.0 {
-                    let resolved_ty = param_decl.ty.resolve(self);
-                    if i == 0 {
-                        for name in param_decl.names {
-                            // Create Item for parameter
-                            let param_cname = self.make_param_cname(&first_lname, &name.0);
-                            let item_id = self.alloc_item(Item {
-                                cname: param_cname,
-                                lname: name.0.clone(),
-                                kind: ItemKind::Param,
-                                ty: resolved_ty,
-                                params: vec![],
-                            });
-                            let param = Param {
-                                name: name.0.clone(),
-                                ty: resolved_ty,
-                                item: item_id,
-                            };
-                            // Register in scope as Ref::Item
-                            self.define(param.name.clone(), Ref::Item(item_id));
-                            params.push(param);
-                        }
-                    }
-                }
-            }
-            name_infos.push(NameInfo {
-                seg_names,
-                applicand,
-            });
-        }
+        // --- Extract params ---
+        let params = self.extract_params(segs, &lname);
 
         // Where clauses — trees emitted before parent def
         let where_trees = self.resolve_where_clauses(where_clauses);
@@ -1108,7 +1146,7 @@ impl<'a> Checker<'a> {
         let ty_resolved = ty.map(|t| t.resolve(self));
 
         // --- Functor constraints ---
-        let has_functor_app = name_infos.iter().any(|ni| ni.applicand.is_some());
+        let has_functor_app = applicand.is_some();
         if has_functor_app {
             if !matches!(&op.0, semtree::AssignOp::Alias) {
                 self.error_at(&op.1, "functor application only allows `=`");
@@ -1129,13 +1167,13 @@ impl<'a> Checker<'a> {
         // --- Push prefixes for body module / with clause resolution ---
         let has_body_or_with = body_mod.is_some() || !with_clauses.is_empty();
         if has_body_or_with {
-            let parent_qname = self.make_qname(&first_lname);
+            let parent_qname = self.make_qname(&lname);
             self.prefix_stack.push(parent_qname);
 
             let parent_cname_local = if let Some(cp) = self.cname_prefix_stack.last() {
-                format!("{}.{}", cp, first_lname)
+                format!("{}.{}", cp, lname)
             } else {
-                first_lname.clone()
+                lname.clone()
             };
             self.cname_prefix_stack.push(parent_cname_local);
 
@@ -1184,8 +1222,8 @@ impl<'a> Checker<'a> {
             self.param_count_stack.pop();
         }
 
-        // --- Resolve functor applicands ---
-        let resolved_apps = if has_functor_app {
+        // --- Resolve functor applicand ---
+        let resolved_app = if has_functor_app {
             let mapping_params: Vec<Param> = deco_param_defs
                 .iter()
                 .map(|(name, val_id)| {
@@ -1199,30 +1237,23 @@ impl<'a> Checker<'a> {
                     }
                 })
                 .collect();
-            let apps: Vec<Option<ValId>> = name_infos
-                .iter_mut()
-                .map(|ni| {
-                    ni.applicand.take().map(|applicand| {
-                        let fspan = &ni.seg_names[0].1;
-                        self.used_deco_params_in_applicand = Some(HashSet::new());
-                        let app_resolved = applicand.resolve(self);
-                        let used = self.used_deco_params_in_applicand.take().unwrap();
-                        let all_deco_params: HashSet<ItemId> =
-                            self.deco_param_stack.iter().flatten().copied().collect();
-                        for dp in &all_deco_params {
-                            if !used.contains(dp) {
-                                self.error_at(
-                                    fspan,
-                                    "decorator parameter must appear in functor applicand",
-                                );
-                                break;
-                            }
-                        }
-                        app_resolved
-                    })
-                })
-                .collect();
-            Some((apps, mapping_params))
+            let applicand = applicand.expect("functor app requires applicand");
+            let fspan = &seg_names[0].1;
+            self.used_deco_params_in_applicand = Some(HashSet::new());
+            let app_resolved = applicand.resolve(self);
+            let used = self.used_deco_params_in_applicand.take().unwrap();
+            let all_deco_params: HashSet<ItemId> =
+                self.deco_param_stack.iter().flatten().copied().collect();
+            for dp in &all_deco_params {
+                if !used.contains(dp) {
+                    self.error_at(
+                        fspan,
+                        "decorator parameter must appear in functor applicand",
+                    );
+                    break;
+                }
+            }
+            Some((app_resolved, mapping_params))
         } else {
             None
         };
@@ -1230,16 +1261,12 @@ impl<'a> Checker<'a> {
         let inner_children = self.exit_inner_scope();
 
         // --- Registration ---
-        if let Some((resolved_apps, mapping_params)) = resolved_apps {
-            self.register_functor_app(name_infos, body_val_resolved, mapping_params, resolved_apps);
+        if let Some((resolved_app, mapping_params)) = resolved_app {
+            self.register_functor_app(&seg_names, body_val_resolved, mapping_params, resolved_app);
         } else if is_add {
-            self.register_add(name_infos, body_val_resolved, result, inner_children);
+            self.register_add(&seg_names, body_val_resolved, result, inner_children);
         } else {
-            let span = name_infos
-                .first()
-                .and_then(|ni| ni.seg_names.last())
-                .map(|(_, s)| s.clone())
-                .unwrap();
+            let span = seg_names.last().map(|(_, s)| s.clone()).unwrap();
             let is_functor = ty_resolved.map_or(false, |id| is_functor_type(&self.vals[id.0].0));
             let is_decldef = matches!(item_kind, Some(ItemKind::DeclDef));
             let item_id = if let Some(ik) = item_kind {
@@ -1252,10 +1279,10 @@ impl<'a> Checker<'a> {
                     None
                 };
                 if let Some(ty_id) = ty_id {
-                    let cname = self.make_cname(&first_lname);
+                    let cname = self.make_cname(&lname);
                     Some(self.alloc_item(Item {
                         cname,
-                        lname: first_lname.clone(),
+                        lname: lname.clone(),
                         kind: ik,
                         ty: ty_id,
                         params: params.clone(),
@@ -1280,11 +1307,11 @@ impl<'a> Checker<'a> {
             } else {
                 DefBody::None
             };
-            let qname = self.make_qname(&first_lname);
+            let qname = self.make_qname(&lname);
             let param_counts = self.current_param_counts(params.len());
             let def = Def {
                 qname,
-                lname: first_lname.clone(),
+                lname: lname.clone(),
                 span: span.clone(),
                 ty: ty_resolved,
                 params,
@@ -1298,8 +1325,8 @@ impl<'a> Checker<'a> {
             // before inner scope / with-clause resolution).  Reuse it so
             // that paths already resolved inside with-clauses keep the
             // same DefId.
-            let def_id = if let Some(ni) = name_infos.first().filter(|ni| ni.seg_names.len() == 1) {
-                let fwd = match self.lookup(&ni.seg_names[0].0) {
+            let def_id = if seg_names.len() == 1 {
+                let fwd = match self.lookup(&seg_names[0].0) {
                     Some(Ref::Def(id)) => id,
                     _ => unreachable!("forward-ref Def must exist for single-segment declaration"),
                 };
@@ -1311,8 +1338,10 @@ impl<'a> Checker<'a> {
 
             // --- DeclDef: create member def `x.def : x ~ y` ---
             let mut inner_children = inner_children;
-            if let DefBody::Decl { item: main_item_id, def_val: Some(body_val) } =
-                &self.defs[def_id.0].body
+            if let DefBody::Decl {
+                item: main_item_id,
+                def_val: Some(body_val),
+            } = &self.defs[def_id.0].body
             {
                 let main_item_id = *main_item_id;
                 let body_val = *body_val;
@@ -1325,15 +1354,9 @@ impl<'a> Checker<'a> {
                     }),
                     span.clone(),
                 );
-                let eq_val = self.alloc_val(
-                    Val::Arrow(ArrowKind::Eq, x_val, body_val),
-                    span.clone(),
-                );
-                let def_cname = format!(
-                    "{}.{}",
-                    self.items[main_item_id.0].cname,
-                    DEF_MEMBER_NAME
-                );
+                let eq_val =
+                    self.alloc_val(Val::Arrow(ArrowKind::Eq, x_val, body_val), span.clone());
+                let def_cname = format!("{}.{}", self.items[main_item_id.0].cname, DEF_MEMBER_NAME);
                 let def_item_id = self.alloc_item(Item {
                     cname: def_cname,
                     lname: DEF_MEMBER_NAME.to_string(),
@@ -1341,11 +1364,7 @@ impl<'a> Checker<'a> {
                     ty: eq_val,
                     params: vec![],
                 });
-                let def_qname = format!(
-                    "{}.{}",
-                    self.defs[def_id.0].qname,
-                    DEF_MEMBER_NAME
-                );
+                let def_qname = format!("{}.{}", self.defs[def_id.0].qname, DEF_MEMBER_NAME);
                 let mut member_param_counts = self.defs[def_id.0].param_counts.clone();
                 member_param_counts.push(0);
                 let member_def = Def {
@@ -1374,11 +1393,43 @@ impl<'a> Checker<'a> {
                 });
             }
 
-            for ni in &name_infos {
-                self.register_path(&ni.seg_names, def_id);
-            }
+            self.register_path(&seg_names, def_id);
             self.emit_def_with_scope(def_id, where_trees, inner_children);
         }
+    }
+
+    /// Extract parameter declarations from path segments, creating Items and
+    /// registering them in scope.
+    fn extract_params(
+        &mut self,
+        segs: Vec<S<semtree::Segment<semtree::ParamDecl>>>,
+        owner_lname: &str,
+    ) -> Vec<Param> {
+        let mut params = Vec::new();
+        for seg_s in segs {
+            let S(seg, _) = seg_s;
+            for param_decl in seg.1.0 {
+                let resolved_ty = param_decl.ty.resolve(self);
+                for name in param_decl.names {
+                    let param_cname = self.make_param_cname(owner_lname, &name.0);
+                    let item_id = self.alloc_item(Item {
+                        cname: param_cname,
+                        lname: name.0.clone(),
+                        kind: ItemKind::Param,
+                        ty: resolved_ty,
+                        params: vec![],
+                    });
+                    let param = Param {
+                        name: name.0.clone(),
+                        ty: resolved_ty,
+                        item: item_id,
+                    };
+                    self.define(param.name.clone(), Ref::Item(item_id));
+                    params.push(param);
+                }
+            }
+        }
+        params
     }
 
     // --- Registration helpers ---
@@ -1455,52 +1506,43 @@ impl<'a> Checker<'a> {
 
     fn register_functor_app(
         &mut self,
-        name_infos: Vec<NameInfo>,
+        seg_names: &[(String, TokenSpan)],
         body_val_resolved: Option<ValId>,
         mapping_params: Vec<Param>,
-        resolved_apps: Vec<Option<ValId>>,
+        app_resolved: ValId,
     ) {
-        for (ni, app_resolved) in name_infos.into_iter().zip(resolved_apps) {
-            if let Some(app_resolved) = app_resolved {
-                let (fname, fspan) = (&ni.seg_names[0].0, &ni.seg_names[0].1);
-                let lookup_result = self.lookup_def(fname);
-                match lookup_result {
-                    Some(id) => {
-                        let is_functor = matches!(&self.def(id).body, DefBody::Functor { .. });
-                        if is_functor {
-                            if let Some(v) = body_val_resolved {
-                                if let DefBody::Functor { mappings } = &mut self.def_mut(id).body {
-                                    mappings.push(FunctorMapping {
-                                        params: mapping_params.clone(),
-                                        applicand: app_resolved,
-                                        val: v,
-                                    });
-                                }
-                            }
-                        } else {
-                            self.error_at(fspan, format!("`{}` is not a functor", fname));
+        let (fname, fspan) = (&seg_names[0].0, &seg_names[0].1);
+        let lookup_result = self.lookup_def(fname);
+        match lookup_result {
+            Some(id) => {
+                let is_functor = matches!(&self.def(id).body, DefBody::Functor { .. });
+                if is_functor {
+                    if let Some(v) = body_val_resolved {
+                        if let DefBody::Functor { mappings } = &mut self.def_mut(id).body {
+                            mappings.push(FunctorMapping {
+                                params: mapping_params,
+                                applicand: app_resolved,
+                                val: v,
+                            });
                         }
                     }
-                    None => {
-                        self.error_at(fspan, format!("undefined functor `{}`", fname));
-                    }
+                } else {
+                    self.error_at(fspan, format!("`{}` is not a functor", fname));
                 }
+            }
+            None => {
+                self.error_at(fspan, format!("undefined functor `{}`", fname));
             }
         }
     }
 
     fn register_add(
         &mut self,
-        name_infos: Vec<NameInfo>,
+        seg_names: &[(String, TokenSpan)],
         body_val_resolved: Option<ValId>,
         result: Module,
         inner_children: Vec<DefTree>,
     ) {
-        let all_seg_names: Vec<&[(String, TokenSpan)]> = name_infos
-            .iter()
-            .map(|ni| ni.seg_names.as_slice())
-            .collect();
-
         let members_to_merge = match body_val_resolved {
             Some(val_id) => {
                 let span = self.vals[val_id.0].1.clone();
@@ -1521,21 +1563,17 @@ impl<'a> Checker<'a> {
             None => result,
         };
 
-        for seg_names in &all_seg_names {
-            self.merge_into_path(seg_names, members_to_merge.clone());
-        }
+        self.merge_into_path(seg_names, members_to_merge.clone());
 
-        // Emit DefTree for each += target (children only, def itself already emitted)
+        // Emit DefTree (children only, def itself already emitted)
         if !members_to_merge.entries.is_empty() {
-            for seg_names in &all_seg_names {
-                let names: Vec<&str> = seg_names.iter().map(|(n, _)| n.as_str()).collect();
-                if let Some(def_id) = self.lookup_path(&names) {
-                    self.emit_def_tree(DefTree {
-                        def_id,
-                        before: vec![],
-                        after: inner_children.clone(),
-                    });
-                }
+            let names: Vec<&str> = seg_names.iter().map(|(n, _)| n.as_str()).collect();
+            if let Some(def_id) = self.lookup_path(&names) {
+                self.emit_def_tree(DefTree {
+                    def_id,
+                    before: vec![],
+                    after: inner_children,
+                });
             }
         }
     }

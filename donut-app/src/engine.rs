@@ -115,9 +115,9 @@ impl Engine {
     fn refresh_selection(&mut self) {
         self.root_entries = root_entries(self.env());
         self.selected = Self::find_last_cell(self.env(), &self.root_entries);
-        self.cell = self.selected.and_then(|id| {
-            def_cell(self.env(), id).map(|c| Self::build_geometry(&c))
-        });
+        self.cell = self
+            .selected
+            .and_then(|id| def_cell(self.env(), id).map(|c| Self::build_geometry(&c)));
         self.slice_pos = self
             .cell
             .as_ref()
@@ -221,7 +221,9 @@ impl Engine {
     }
 
     pub fn is_evaluable(&self) -> bool {
-        let Some(selected) = self.selected else { return false };
+        let Some(selected) = self.selected else {
+            return false;
+        };
         if self.env().is_parametric(&self.env().defs[selected.0]) {
             return false;
         }
@@ -229,7 +231,10 @@ impl Engine {
             return false;
         };
         self.runtime.is_evaluable(&expanded)
-            && self.runtime.eval_check(&expanded, &self.prim_names).is_none()
+            && self
+                .runtime
+                .eval_check(&expanded, &self.prim_names)
+                .is_none()
     }
 
     pub fn compile_glsl(&self) -> Option<String> {

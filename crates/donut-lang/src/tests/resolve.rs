@@ -757,6 +757,62 @@ r2 = b
 }
 
 #[test]
+fn multi_name_separate_defs() {
+    // Each name gets its own Def
+    let p = check_module("T = \"t\"\na b c: T");
+    assert!(p.root.get("a").is_some());
+    assert!(p.root.get("b").is_some());
+    assert!(p.root.get("c").is_some());
+    // They are distinct DefIds
+    let a_id = p.root.get("a").unwrap();
+    let b_id = p.root.get("b").unwrap();
+    let c_id = p.root.get("c").unwrap();
+    assert_ne!(a_id, b_id);
+    assert_ne!(b_id, c_id);
+}
+
+#[test]
+fn multi_name_usable_independently() {
+    // Each name can be referenced independently
+    check_ok("T = \"t\"\na b: T\nx = a\ny = b");
+}
+
+#[test]
+fn multi_name_with_params() {
+    // Each name can have its own params
+    check_ok("T = \"t\"\nf[x: T] g[y: T, z: T]: T");
+}
+
+#[test]
+fn multi_name_with_where() {
+    // where clauses are allowed
+    check_ok("T = \"t\"\na b: T where { h = \"h\" }");
+}
+
+#[test]
+fn multi_name_with_with_clause_error() {
+    // with clauses are not allowed
+    let errs = check_errs("T = \"t\"\na b: T with { x = \"x\" }");
+    assert!(
+        errs.iter().any(|e| e.contains("with")),
+        "expected with clause error, got: {errs:?}"
+    );
+}
+
+#[test]
+fn multi_name_with_assignment_error() {
+    // assignment is not allowed (checked in convert)
+    let code = "T = \"t\"\na b = \"x\"";
+    let (tokens, _, _) = crate::tokenize::tokenize(code.trim());
+    let (program, _) = crate::parse::parse(&tokens);
+    let (_, conv_errors) = crate::convert::convert(program, &tokens);
+    assert!(
+        !conv_errors.is_empty(),
+        "expected convert error for multi-name assignment"
+    );
+}
+
+#[test]
 fn compound_kitchen_sink() {
     check_ok(
         r#"
