@@ -293,10 +293,21 @@ impl Env {
         format!("[{}]", params.join(", "))
     }
 
+    /// Display type using def's parameter context (lname for params)
+    pub fn display_def_ty(&self, def: &Def) -> String {
+        let ctx = DefDisplayContext { env: self, def };
+        display_ty(&ctx, &def.ty)
+    }
+
+    /// Display any Ty using def's parameter context
+    pub fn display_ty_in_def(&self, ty: &Ty, def: &Def) -> String {
+        let ctx = DefDisplayContext { env: self, def };
+        display_ty(&ctx, ty)
+    }
+
     pub fn display_def_signature(&self, def: &Def) -> String {
         let params_str = self.display_params(def);
-        let ctx = DefDisplayContext { env: self, def };
-        let ty_str = display_ty(&ctx, &def.ty);
+        let ty_str = self.display_def_ty(def);
         format!("{}{}: {}", def.lname, params_str, ty_str)
     }
 

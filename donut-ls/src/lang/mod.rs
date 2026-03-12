@@ -58,10 +58,18 @@ impl EntryKind {
     }
 }
 
-fn def_to_kind(def: &env::Def) -> EntryKind {
-    match &def.ty {
+fn ty_to_kind(ty: &Ty) -> EntryKind {
+    match ty {
         Ty::Star => EntryKind::Cell(0),
         Ty::Arrow(level, _, _, _) => EntryKind::Cell(*level as u8),
+        Ty::Nat | Ty::Rat | Ty::Color | Ty::Deco | Ty::Meta => EntryKind::Meta,
+        Ty::Functor(_, _) => EntryKind::Type,
+        Ty::Hole => EntryKind::Cell(0),
+    }
+}
+
+fn def_to_kind(def: &env::Def) -> EntryKind {
+    match &def.ty {
         Ty::Meta => {
             if def.item.is_some() {
                 EntryKind::Meta // declaration like `nat: meta`
@@ -69,27 +77,39 @@ fn def_to_kind(def: &env::Def) -> EntryKind {
                 EntryKind::Type // alias like `v = u → u`
             }
         }
-        Ty::Nat | Ty::Rat | Ty::Color | Ty::Deco => EntryKind::Meta,
-        Ty::Functor(_, _) => EntryKind::Type,
-        Ty::Hole => EntryKind::Cell(0),
+        ty => ty_to_kind(ty),
     }
+}
+
+pub(crate) fn item_to_kind(item: &env::Item) -> EntryKind {
+    ty_to_kind(&item.ty)
 }
 
 #[derive(Clone)]
 pub struct EntryInfo {
     pub kind: EntryKind,
-    pub is_module: bool,
+    pub module_kind: Option<ModuleKind>,
     pub type_expr: Option<String>,
     pub params: String,
 }
 
 impl EntryInfo {
-    pub fn display_detail(&self) -> String {
-        if self.is_module {
-            "module".to_string()
-        } else {
-            self.kind.display()
+    pub fn is_module(&self) -> bool {
+        self.module_kind.is_some()
+    }
+
+    pub fn tags(&self) -> Vec<String> {
+        let mut tags = vec![self.kind.display()];
+        match self.module_kind {
+            Some(ModuleKind::Module) => tags.push("module".to_string()),
+            Some(ModuleKind::Definition) => tags.push("definition".to_string()),
+            None => {}
         }
+        tags
+    }
+
+    pub fn display_detail(&self) -> String {
+        self.tags().join(", ")
     }
 
     /// Completion アイテムの detail 文字列を生成
@@ -108,11 +128,13 @@ impl EntryInfo {
 pub struct HoverInfo {
     pub name: String,
     pub entry: EntryInfo,
+    /// Tags describing the entry (e.g. ["1-cell", "parameter of rep4"])
+    pub tags: Vec<String>,
 }
 
 impl HoverInfo {
     pub fn display_markdown(&self) -> String {
-        let detail = self.entry.display_detail();
+        let detail = self.tags.join(", ");
         if let Some(ty) = &self.entry.type_expr {
             format!(
                 "```donut\n{}{}: {}\n```\n{}",
@@ -154,9 +176,18 @@ pub struct AnalysisResult {
 
 // --- Flat lookup from env Module tree ---
 
+/// def メンバーのみ持つ (DeclDef) か、他のメンバーも持つ (module) かを区別
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum ModuleKind {
+    /// Only contains "def" member (DeclDef)
+    Definition,
+    /// Contains other members
+    Module,
+}
+
 pub(crate) struct FlatEnv {
     pub defs: HashMap<String, DefId>,
-    pub modules: HashMap<String, bool>, // qname → has_children
+    pub modules: HashMap<String, ModuleKind>,
 }
 
 impl FlatEnv {
@@ -180,7 +211,14 @@ impl FlatEnv {
                 flat.defs.insert(qname.clone(), def_id);
             }
             if !child.lookup.is_empty() {
-                flat.modules.insert(qname.clone(), true);
+                let kind = if child.lookup.len() == 1
+                    && child.lookup.contains_key(donut_lang::types::item::DEF_MEMBER_NAME)
+                {
+                    ModuleKind::Definition
+                } else {
+                    ModuleKind::Module
+                };
+                flat.modules.insert(qname.clone(), kind);
             }
             Self::walk(child, &qname, flat);
         }
@@ -193,16 +231,12 @@ impl FlatEnv {
 fn build_entry_info(qname: &str, env: &Env, flat: &FlatEnv) -> Option<EntryInfo> {
     let &def_id = flat.defs.get(qname)?;
     let def = &env.defs[def_id.0];
-    let is_module = flat.modules.contains_key(qname);
+    let module_kind = flat.modules.get(qname).copied();
     let kind = def_to_kind(def);
     Some(EntryInfo {
         kind,
-        is_module,
-        type_expr: if is_module {
-            None
-        } else {
-            Some(env.display_ty(&def.ty))
-        },
+        module_kind,
+        type_expr: Some(env.display_def_ty(def)),
         params: env.display_params(def),
     })
 }
@@ -210,8 +244,8 @@ fn build_entry_info(qname: &str, env: &Env, flat: &FlatEnv) -> Option<EntryInfo>
 /// Build EntryInfo for a module (not a def, but known as a module).
 fn build_module_info() -> EntryInfo {
     EntryInfo {
-        kind: EntryKind::Cell(0), // unused when is_module=true
-        is_module: true,
+        kind: EntryKind::Cell(0), // unused when module_kind=Some
+        module_kind: Some(ModuleKind::Module),
         type_expr: None,
         params: String::new(),
     }
@@ -416,7 +450,7 @@ mod tests {
     fn hover_module() {
         let r = analyze("cat = {\n  u: *\n  x: u → u\n}");
         let cat = find_hover(&r, "cat").unwrap();
-        assert!(cat.entry.is_module);
+        assert!(cat.entry.is_module());
 
         let u = find_hover(&r, "cat.u").unwrap();
         assert_eq!(u.entry.kind, EntryKind::Cell(0));
@@ -426,7 +460,7 @@ mod tests {
     fn hover_nested_path() {
         let r = analyze("cat = {\n  u: *\n  x: u → u\n}\ny = cat.x");
         let cat = find_hover(&r, "cat").unwrap();
-        assert!(cat.entry.is_module);
+        assert!(cat.entry.is_module());
         let x = find_hover(&r, "cat.x").unwrap();
         assert_eq!(x.entry.kind, EntryKind::Cell(1));
     }
@@ -501,11 +535,11 @@ mod tests {
     fn completion_module_kind() {
         let r = analyze("cat = {\n  u: *\n}");
         let cat = find_completion(&r, "", "cat").unwrap();
-        assert!(cat.entry.is_module);
+        assert!(cat.entry.is_module());
 
         let u = find_completion(&r, "cat", "u").unwrap();
         assert_eq!(u.entry.kind, EntryKind::Cell(0));
-        assert!(!u.entry.is_module);
+        assert!(!u.entry.is_module());
     }
 
     #[test]
@@ -673,22 +707,48 @@ mod tests {
     }
 
     #[test]
-    fn namespace_not_applied_to_param_ref() {
-        // Parameter `x` inside y[x: C → C] = x x should NOT be marked as Namespace,
-        // even though the outer module is also named `x`.
+    fn imported_defs_do_not_leak_styles() {
+        // Imported defs' spans refer to the source file's token indices.
+        // They must not pollute the current file's token styling.
+        let r = analyze("import \"sys\"\nstep: f32x2 → f32x2");
+        // No token should be marked as Namespace (f32x2 is a 0-cell, not a module prefix)
+        let namespace_tokens: Vec<_> = r
+            .tokens
+            .iter()
+            .filter(|t| matches!(t.token_type, TokenType::Namespace))
+            .collect();
+        assert!(
+            namespace_tokens.is_empty(),
+            "no token should be Namespace, but found {} at line={} col={}",
+            namespace_tokens.len(),
+            namespace_tokens.first().map_or(0, |t| t.line),
+            namespace_tokens.first().map_or(0, |t| t.column),
+        );
+    }
+
+    #[test]
+    fn param_ref_marked_as_parameter() {
+        // Parameter `x` references in body should be marked as Parameter
         let r = analyze("C: *\nx = {\n  y[x: C → C] = x x\n}");
         // line 2: "  y[x: C → C] = x x"
-        // first x in body at col 16, second at col 18
+        // param declaration at col 4
+        let ty_decl = token_type_at(&r, 2, 4);
+        assert!(
+            matches!(ty_decl, Some(TokenType::Parameter)),
+            "param declaration should be Parameter"
+        );
+        // first x in body at col 16
         let ty1 = token_type_at(&r, 2, 16);
         assert!(
-            !matches!(ty1, Some(TokenType::Namespace)),
-            "first x in body should not be Namespace, got {:?}",
+            matches!(ty1, Some(TokenType::Parameter)),
+            "first param ref should be Parameter, got {:?}",
             ty1
         );
+        // second x in body at col 18
         let ty2 = token_type_at(&r, 2, 18);
         assert!(
-            !matches!(ty2, Some(TokenType::Namespace)),
-            "second x in body should not be Namespace, got {:?}",
+            matches!(ty2, Some(TokenType::Parameter)),
+            "second param ref should be Parameter, got {:?}",
             ty2
         );
     }

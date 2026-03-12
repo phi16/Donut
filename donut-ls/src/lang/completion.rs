@@ -86,14 +86,11 @@ fn collect_module_members(
                     if member_child.this.is_some() {
                         let def = &env.defs[member_child.this.unwrap().0];
                         let is_imported = def.origin.is_some();
+                        let module_kind = flat.modules.get(&full_name).copied();
                         let info = super::EntryInfo {
                             kind: super::def_to_kind(def),
-                            is_module: !member_child.lookup.is_empty(),
-                            type_expr: if member_child.lookup.is_empty() {
-                                Some(env.display_ty(&def.ty))
-                            } else {
-                                None
-                            },
+                            module_kind,
+                            type_expr: Some(env.display_def_ty(def)),
                             params: env.display_params(def),
                         };
                         Some((info, is_imported))

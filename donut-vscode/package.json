@@ -42,7 +42,25 @@
         "command": "donut-vscode.stopServer",
         "title": "donut-ls: Stop server"
       }
-    ]
+    ],
+    "semanticTokenScopes": [
+      {
+        "language": "donut",
+        "scopes": {
+          "parameter": ["variable.parameter"],
+          "namespace": ["entity.name.namespace"],
+          "variable": ["variable.other"]
+        }
+      }
+    ],
+    "configurationDefaults": {
+      "editor.semanticTokenColorCustomizations": {
+        "rules": {
+          "parameter:donut": "#e0a060",
+          "namespace:donut": "#70b0d0"
+        }
+      }
+    }
   },
   "dependencies": {
     "vscode-languageclient": "^9.0.1"

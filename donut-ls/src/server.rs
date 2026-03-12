@@ -510,7 +510,7 @@ fn build_completion_list(doc: &Doc, scope: &str, cursor_line: u32) -> Option<Com
 fn candidate_to_item(c: &CompletionCandidate, cursor_line: u32) -> CompletionItem {
     use crate::lang::EntryKind;
 
-    let lsp_kind = if c.entry.is_module {
+    let lsp_kind = if c.entry.is_module() {
         Some(CompletionItemKind::MODULE)
     } else {
         match c.entry.kind {

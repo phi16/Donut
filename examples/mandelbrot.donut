@@ -12,6 +12,7 @@ square :=
 step: f32x2 f32x2 → f32x2 f32x2 =
   square val.dup[f32x2]; f32x2.add f32x2
 
+rep4'[C: *, x: C → C, f: x → x]: x → x = f; f; f; f
 rep4[x: C → C, f: x → x]: x → x = f; f; f; f
 step4 := rep4[f32x2 f32x2, step]
 step16 := rep4[f32x2 f32x2, step4]
