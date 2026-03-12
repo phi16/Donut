@@ -56,7 +56,7 @@ export interface EntryDesc {
 // Opaque handle for shader view (created via create_shader_view)
 export interface WasmShaderView {
   set_shader(fragmentSource: string): void;
-  render(): void;
+  render(vpMinX: number, vpMinY: number, vpMaxX: number, vpMaxY: number): void;
   show(): void;
   hide(): void;
 }
@@ -89,6 +89,6 @@ export interface WasmEngine {
   is_evaluable(): boolean;
   diagnostics(): string[];
   compile_glsl(): string | undefined;
-  compile_fragment_shader(): string | null;
+  compile_fragment_parts(): [string, string] | null;
   selected_index(): number | null;
 }

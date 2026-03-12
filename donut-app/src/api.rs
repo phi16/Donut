@@ -205,9 +205,15 @@ impl WasmEngine {
         self.inner.compile_glsl()
     }
 
-    pub fn compile_fragment_shader(&self) -> JsValue {
-        match self.inner.compile_fragment_shader() {
-            Some(Ok(src)) => JsValue::from_str(&src),
+    /// Returns [cell_function, color_wrapper] or null.
+    pub fn compile_fragment_parts(&self) -> JsValue {
+        match self.inner.compile_fragment_parts() {
+            Some(Ok((func, body))) => {
+                let arr = js_sys::Array::new();
+                arr.push(&JsValue::from_str(&func));
+                arr.push(&JsValue::from_str(&body));
+                arr.into()
+            }
             _ => JsValue::NULL,
         }
     }

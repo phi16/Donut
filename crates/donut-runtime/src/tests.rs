@@ -533,7 +533,10 @@ fn compile_entry(
 }
 
 fn compile_shader(env: &Env, name: &str) -> Result<String, String> {
-    compile_entry(env, name)?.to_fragment_shader()
+    let func = compile_entry(env, name)?;
+    let cell_fn = func.to_function("cell");
+    let wrapper = func.to_color_wrapper("cell_color")?;
+    Ok(format!("{}\n{}", cell_fn, wrapper))
 }
 
 #[test]
@@ -542,7 +545,7 @@ fn test_glsl_constant_color() {
     let func = compile_entry(&env, "my_color").unwrap();
     assert!(func.inputs.is_empty());
     assert_eq!(func.outputs, vec![crate::glsl::GlslTy::Vec3]);
-    assert!(func.to_fragment_shader().is_err());
+    assert!(func.to_color_wrapper("cell_color").is_err());
 }
 
 #[test]
@@ -554,9 +557,8 @@ shader = sys.f32x2.unpack sys.f32.lit[0]; sys.f32x3.pack
     );
     let glsl = compile_shader(&env, "shader").unwrap();
 
-    assert!(glsl.contains("precision mediump float;"));
-    assert!(glsl.contains("gl_FragColor"));
     assert!(glsl.contains("void cell("));
+    assert!(glsl.contains("vec3 cell_color(vec2 uv)"));
 }
 
 #[test]
@@ -570,7 +572,7 @@ shader = sys.f32x2.unpack sys.f32.lit[0]; sys.f32x3.pack
     assert!(glsl.contains(".x;"));
     assert!(glsl.contains(".y;"));
     assert!(glsl.contains("0.0"));
-    assert!(glsl.contains("gl_FragColor = vec4(vec3(o0.x, o0.y, o0.z), 1.0);"));
+    assert!(glsl.contains("return vec3(o0.x, o0.y, o0.z);"));
 }
 
 #[test]
@@ -593,7 +595,7 @@ shader = sys.f32x2.unpack; sys.val.dup[sys.f32] sys.val.drop[sys.f32] sys.f32.li
     );
     let glsl = compile_shader(&env, "shader").unwrap();
 
-    assert!(glsl.contains("gl_FragColor"));
+    assert!(glsl.contains("vec3 cell_color(vec2 uv)"));
 }
 
 #[test]
@@ -624,7 +626,7 @@ my_cell = sys.f32.lit[1] sys.f32.lit[0] sys.f32.lit[0]; sys.f32x3.pack
 ",
     );
     let func = compile_entry(&env, "my_cell").unwrap();
-    assert!(func.to_fragment_shader().is_err());
+    assert!(func.to_color_wrapper("cell_color").is_err());
 }
 
 // --- DeclDef expansion ---

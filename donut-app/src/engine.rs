@@ -227,10 +227,17 @@ impl Engine {
         Some(func.to_function(&def.lname))
     }
 
-    pub fn compile_fragment_shader(&self) -> Option<std::result::Result<String, String>> {
+    /// Returns (cell_function, color_wrapper) for the selected entry.
+    /// cell_function: `void cell(in ... , out ...)` definition
+    /// color_wrapper: `vec3 cell_color(vec2 uv)` wrapper that calls cell and returns RGB
+    pub fn compile_fragment_parts(&self) -> Option<std::result::Result<(String, String), String>> {
         let (_, expanded) = self.selected_expanded()?;
         let func = donut_runtime::glsl::compile_to_glsl(&expanded, &self.prim_names).ok()?;
-        Some(func.to_fragment_shader().map_err(|e| e.to_string()))
+        Some(
+            func.to_color_wrapper("cell_color")
+                .map(|wrapper| (func.to_function("cell"), wrapper))
+                .map_err(|e| e.to_string()),
+        )
     }
 
     pub fn selected_color(&self) -> Option<&Color> {

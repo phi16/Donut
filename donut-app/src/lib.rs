@@ -57,8 +57,8 @@ impl WasmShaderView {
             .map_err(|e| JsValue::from_str(&e))
     }
 
-    pub fn render(&self) {
-        self.inner.render();
+    pub fn render(&self, vp_min_x: f32, vp_min_y: f32, vp_max_x: f32, vp_max_y: f32) {
+        self.inner.render(vp_min_x, vp_min_y, vp_max_x, vp_max_y);
     }
 
     pub fn show(&self) {

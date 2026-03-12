@@ -670,11 +670,14 @@ impl GlslFunction {
         s
     }
 
-    /// Build a complete fragment shader (UV → RGB).
+    /// Build a `vec3 <name>(vec2 uv)` wrapper function that calls the cell
+    /// function and returns an RGB color.
+    ///
+    /// The cell function itself should be emitted separately via `to_function()`.
     ///
     /// Input types must total 1..=2 float components.
     /// Output types must total 1..=3 float components.
-    pub fn to_fragment_shader(&self) -> Result<String, String> {
+    pub fn to_color_wrapper(&self, name: &str) -> Result<String, String> {
         let input_width = total_float_width(&self.inputs)
             .ok_or("input types must be float/vec2/vec3 for fragment shader")?;
         let _ = total_float_width(&self.outputs)
@@ -700,9 +703,9 @@ impl GlslFunction {
         let mut out_decls = Vec::new();
         let mut out_names = Vec::new();
         for (i, ty) in self.outputs.iter().enumerate() {
-            let name = format!("o{}", i);
-            out_decls.push(format!("    {} {};\n", ty.decl(), name));
-            out_names.push(name);
+            let oname = format!("o{}", i);
+            out_decls.push(format!("    {} {};\n", ty.decl(), oname));
+            out_names.push(oname);
         }
 
         // Function call: cell(input_args..., out_names...)
@@ -713,25 +716,18 @@ impl GlslFunction {
             .collect();
         let call_str = format!("    cell({});\n", call_args.join(", "));
 
-        // gl_FragColor = vec4(rgb, 1.0)
         let float_comps = expand_to_floats(&out_names, &self.outputs);
         let rgb = build_rgb_expr(&float_comps)?;
-        let frag_color = format!("vec4({}, 1.0)", rgb);
 
-        let mut shader = String::new();
-        shader.push_str("precision mediump float;\n");
-        shader.push_str("uniform vec2 u_resolution;\n\n");
-        shader.push_str(&self.to_function("cell"));
-        shader.push_str("\nvoid main() {\n");
-        shader.push_str("    vec2 uv = gl_FragCoord.xy / u_resolution;\n");
+        let mut s = format!("vec3 {}(vec2 uv) {{\n", name);
         for decl in &out_decls {
-            shader.push_str(decl);
+            s.push_str(decl);
         }
-        shader.push_str(&call_str);
-        shader.push_str(&format!("    gl_FragColor = {};\n", frag_color));
-        shader.push_str("}\n");
+        s.push_str(&call_str);
+        s.push_str(&format!("    return {};\n", rgb));
+        s.push_str("}\n");
 
-        Ok(shader)
+        Ok(s)
     }
 }
 

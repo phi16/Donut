@@ -36,6 +36,9 @@ impl ShaderView {
             );
         }
 
+        // Enable OES_standard_derivatives for dFdx/dFdy
+        gl.get_extension("OES_standard_derivatives").ok();
+
         Some(ShaderView {
             canvas,
             gl,
@@ -81,7 +84,7 @@ impl ShaderView {
         Ok(())
     }
 
-    pub fn render(&self) {
+    pub fn render(&self, vp_min_x: f32, vp_min_y: f32, vp_max_x: f32, vp_max_y: f32) {
         let Some(ref program) = self.program else {
             return;
         };
@@ -94,10 +97,15 @@ impl ShaderView {
 
         self.gl.use_program(Some(program));
 
-        // Set u_resolution
+        // Set uniforms
         let loc = self.gl.get_uniform_location(program, "u_resolution");
-        self.gl
-            .uniform2f(loc.as_ref(), w as f32, h as f32);
+        self.gl.uniform2f(loc.as_ref(), w as f32, h as f32);
+
+        let loc = self.gl.get_uniform_location(program, "u_viewport_min");
+        self.gl.uniform2f(loc.as_ref(), vp_min_x, vp_min_y);
+
+        let loc = self.gl.get_uniform_location(program, "u_viewport_max");
+        self.gl.uniform2f(loc.as_ref(), vp_max_x, vp_max_y);
 
         // Bind vertex attribute
         let pos_loc = self.gl.get_attrib_location(program, "a_position") as u32;

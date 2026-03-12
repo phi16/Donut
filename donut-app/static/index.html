@@ -38,7 +38,7 @@
 
       /* --- Left: Canvas --- */
       #panel-canvas {
-        flex: 1 1 0;
+        flex: 1 1 0%;
         min-width: 100px;
         position: relative;
         background: rgb(40, 40, 40);
@@ -63,11 +63,18 @@
 
       /* --- Middle: Output --- */
       #panel-output {
-        width: 300px;
+        flex: 1 1 0%;
         min-width: 120px;
         background: rgba(30, 30, 30, 0.95);
         display: flex;
         flex-direction: column;
+        overflow: hidden;
+      }
+      #output-top {
+        display: flex;
+        flex-direction: column;
+        flex: 1 1 0;
+        min-height: 80px;
         overflow: hidden;
       }
       #entry-select {
@@ -108,19 +115,80 @@
       #eval-result.evaluable {
         color: #e0e0e0;
       }
-      #shader-canvas {
+
+      /* --- Output vertical resize handle --- */
+      #handle-output-v {
+        height: 6px;
+        cursor: row-resize;
+        background: #333;
+        flex-shrink: 0;
+        transition: background 0.15s;
         display: none;
-        margin: 0 8px 8px 8px;
-        border: 1px solid #444;
+      }
+      #handle-output-v.visible {
+        display: block;
+      }
+      #handle-output-v:hover, #handle-output-v.active {
+        background: #555;
+      }
+
+      /* --- Shader viewport (bottom of middle column) --- */
+      #shader-viewport {
+        display: none;
+        flex-direction: column;
+        flex: 1 1 0;
+        min-height: 100px;
+      }
+      #shader-viewport.visible {
+        display: flex;
+      }
+      #shader-viewport-bar {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 8px;
         flex-shrink: 0;
       }
-      #shader-canvas.visible {
+      #shader-viewport-bar button {
+        background: #3a3a3a;
+        color: #ccc;
+        border: 1px solid #555;
+        padding: 2px 8px;
+        font-family: 'Consolas', 'Monaco', monospace;
+        font-size: 11px;
+        cursor: pointer;
+        border-radius: 2px;
+      }
+      #shader-viewport-bar button:hover {
+        background: #4a4a4a;
+      }
+      #shader-viewport-info {
+        color: #777;
+        font-family: 'Consolas', 'Monaco', monospace;
+        font-size: 11px;
+        user-select: none;
+      }
+      #shader-canvas-wrap {
+        flex: 1 1 0;
+        position: relative;
+        overflow: hidden;
+        cursor: grab;
+      }
+      #shader-canvas-wrap.dragging {
+        cursor: grabbing;
+      }
+      #shader-canvas {
         display: block;
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
       }
 
       /* --- Right: Code editor --- */
       #panel-editor {
-        width: 400px;
+        flex: 1 1 0%;
         min-width: 150px;
         background: rgba(30, 30, 30, 0.95);
         display: flex;
@@ -166,13 +234,24 @@
 
       <!-- Middle: Output -->
       <div id="panel-output">
-        <select id="entry-select"></select>
-        <div class="toggle-row">
-          <label><input type="checkbox" id="glsl-toggle"> GLSL</label>
-          <label><input type="checkbox" id="shader-toggle"> Shader</label>
+        <div id="output-top">
+          <select id="entry-select"></select>
+          <div class="toggle-row">
+            <label><input type="checkbox" id="glsl-toggle"> GLSL</label>
+            <label><input type="checkbox" id="shader-toggle" checked> Shader</label>
+          </div>
+          <div id="eval-result"></div>
         </div>
-        <div id="eval-result"></div>
-        <canvas id="shader-canvas"></canvas>
+        <div id="handle-output-v"></div>
+        <div id="shader-viewport">
+          <div id="shader-viewport-bar">
+            <button id="shader-reset">Reset</button>
+            <span id="shader-viewport-info"></span>
+          </div>
+          <div id="shader-canvas-wrap">
+            <canvas id="shader-canvas"></canvas>
+          </div>
+        </div>
       </div>
 
       <!-- Resize handle 2 -->

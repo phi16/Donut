@@ -1,6 +1,7 @@
 import { createEditor, EditorHandle } from "./editor/editor";
 import { setupResizeHandles } from "./layout";
-import type { WasmModule, WasmEngine, WasmShaderView, EntryDesc, AnalysisResult } from "./wasm-api";
+import { ShaderViewport } from "./shader-viewport";
+import type { WasmModule, WasmEngine, EntryDesc, AnalysisResult } from "./wasm-api";
 
 export class App {
   private wasm: WasmModule;
@@ -11,13 +12,13 @@ export class App {
   private entrySelect: HTMLSelectElement;
   private evalResultEl: HTMLElement;
   private diagnosticsEl: HTMLElement;
-  private shaderView: WasmShaderView | null = null;
+  private shaderViewport: ShaderViewport | null = null;
 
   private mouseX = 0;
   private mouseY = 0;
   private pressing = false;
   private showGlsl = false;
-  private showShader = false;
+  private showShader = true;
 
   private debounceTimer: number | null = null;
   private readonly DEBOUNCE_MS = 300;
@@ -34,19 +35,15 @@ export class App {
     this.evalResultEl = document.getElementById("eval-result") as HTMLElement;
     this.diagnosticsEl = document.getElementById("diagnostics") as HTMLElement;
 
-    // Shader view
+    // Shader viewport
     const shaderCanvas = document.getElementById(
       "shader-canvas"
     ) as HTMLCanvasElement | null;
     if (shaderCanvas) {
-      const outputPanel = document.getElementById("panel-output")!;
-      const pw = outputPanel.getBoundingClientRect().width - 16;
-      const size = Math.max(100, Math.min(pw, 380));
-      shaderCanvas.width = size;
-      shaderCanvas.height = size;
-      shaderCanvas.style.width = size + "px";
-      shaderCanvas.style.height = size + "px";
-      this.shaderView = wasm.create_shader_view(shaderCanvas) ?? null;
+      const sv = wasm.create_shader_view(shaderCanvas);
+      if (sv) {
+        this.shaderViewport = new ShaderViewport(sv);
+      }
     }
 
     // Initialize engine with default code
@@ -162,7 +159,7 @@ export class App {
     if (!evalText) {
       this.evalResultEl.textContent = "";
       this.evalResultEl.classList.remove("evaluable");
-      this.shaderView?.hide();
+      this.shaderViewport?.hide();
       return;
     }
 
@@ -177,13 +174,12 @@ export class App {
         text += "\n\n--- GLSL ---\n" + glsl;
       }
 
-      if (this.showShader && this.shaderView) {
-        const fragSrc = this.engine.compile_fragment_shader();
-        if (fragSrc) {
+      if (this.showShader && this.shaderViewport) {
+        const parts = this.engine.compile_fragment_parts();
+        if (parts) {
           try {
-            this.shaderView.set_shader(fragSrc);
-            this.shaderView.render();
-            this.shaderView.show();
+            this.shaderViewport.setShader(parts[0], parts[1]);
+            this.shaderViewport.show();
             shaderShown = true;
           } catch (e: any) {
             text += `\nshader error: ${e}`;
@@ -193,7 +189,7 @@ export class App {
     }
 
     if (!shaderShown) {
-      this.shaderView?.hide();
+      this.shaderViewport?.hide();
     }
 
     this.evalResultEl.textContent = text;
