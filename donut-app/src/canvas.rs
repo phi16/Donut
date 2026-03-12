@@ -1,4 +1,5 @@
-use donut_renderer::geometry::R;
+use donut_renderer::geometry::{Geometry, R};
+use donut_renderer::prim_table::PrimTable;
 use donut_renderer::render::Renderer;
 
 use crate::engine::Engine;
@@ -49,6 +50,8 @@ pub fn step(
         }
     }
 
+    let table = engine.table();
+
     // --- Squashed views ---
     for i in 0..n_views {
         let d = 2 + 2 * i;
@@ -56,40 +59,11 @@ pub fn step(
         let vw = size[d];
         let vh = size[d + 1];
 
-        context.set_fill_style_str("rgb(50 50 50)");
-        context.fill_rect(ox - 25.0, oy - 25.0, vw + 50.0, vh + 50.0);
-
-        context.save();
-        context.translate(ox, oy).unwrap();
-
         let rc = engine.build_squash_view(i);
-        let lmx = mouse_x - ox;
-        let lmy = mouse_y - oy;
-        let hit = if lmx >= 0.0 && lmx <= vw && lmy >= 0.0 && lmy <= vh {
-            renderer.hit_test(&rc, lmx, lmy)
-        } else {
-            None
-        };
+        draw_view(table, &renderer, context, &rc, ox, oy, vw, vh, mouse_x, mouse_y);
 
-        renderer.cell(&rc, engine.table(), hit.as_ref());
-
-        let sx = engine.slice_pos[2 * i];
-        let sy = engine.slice_pos[2 * i + 1];
-        context.set_stroke_style_str("rgba(255 255 255 / 0.4)");
-        context.set_line_width(1.0);
-        context.begin_path();
-        context.move_to(sx, 0.0);
-        context.line_to(sx, vh);
-        context.move_to(0.0, sy);
-        context.line_to(vw, sy);
-        context.stroke();
-
-        if let Some(prim) = &hit {
-            let label = engine.table().format_prim(prim);
-            draw_tooltip(context, &label, lmx + 12.0, lmy - 8.0);
-        }
-
-        context.restore();
+        draw_crosshair(context, ox, oy, vw, vh,
+            engine.slice_pos[2 * i], engine.slice_pos[2 * i + 1]);
     }
 
     // --- Params label ---
@@ -98,33 +72,59 @@ pub fn step(
     // --- Slice view ---
     {
         let (ox, oy) = slice_origin;
-        let vw = size[0];
-        let vh = size[1];
-
-        context.set_fill_style_str("rgb(50 50 50)");
-        context.fill_rect(ox - 25.0, oy - 25.0, vw + 50.0, vh + 50.0);
-
-        context.save();
-        context.translate(ox, oy).unwrap();
-
         let rc = engine.build_slice_view();
-        let lmx = mouse_x - ox;
-        let lmy = mouse_y - oy;
-        let hit = if lmx >= 0.0 && lmx <= vw && lmy >= 0.0 && lmy <= vh {
-            renderer.hit_test(&rc, lmx, lmy)
-        } else {
-            None
-        };
-
-        renderer.cell(&rc, engine.table(), hit.as_ref());
-
-        if let Some(prim) = &hit {
-            let label = engine.table().format_prim(prim);
-            draw_tooltip(context, &label, lmx + 12.0, lmy - 8.0);
-        }
-
-        context.restore();
+        draw_view(table, &renderer, context, &rc, ox, oy, size[0], size[1], mouse_x, mouse_y);
     }
+}
+
+fn draw_view(
+    table: &PrimTable,
+    renderer: &Renderer,
+    context: &web_sys::CanvasRenderingContext2d,
+    geom: &Geometry,
+    ox: R, oy: R, vw: R, vh: R,
+    mouse_x: R, mouse_y: R,
+) {
+    context.set_fill_style_str("rgb(50 50 50)");
+    context.fill_rect(ox - 25.0, oy - 25.0, vw + 50.0, vh + 50.0);
+
+    context.save();
+    context.translate(ox, oy).unwrap();
+
+    let lmx = mouse_x - ox;
+    let lmy = mouse_y - oy;
+    let hit = if lmx >= 0.0 && lmx <= vw && lmy >= 0.0 && lmy <= vh {
+        renderer.hit_test(geom, lmx, lmy)
+    } else {
+        None
+    };
+
+    renderer.cell(geom, table, hit.as_ref());
+
+    if let Some(prim) = &hit {
+        let label = table.format_prim(prim);
+        draw_tooltip(context, &label, lmx + 12.0, lmy - 8.0);
+    }
+
+    context.restore();
+}
+
+fn draw_crosshair(
+    context: &web_sys::CanvasRenderingContext2d,
+    ox: R, oy: R, vw: R, vh: R,
+    sx: R, sy: R,
+) {
+    context.save();
+    context.translate(ox, oy).unwrap();
+    context.set_stroke_style_str("rgba(255 255 255 / 0.4)");
+    context.set_line_width(1.0);
+    context.begin_path();
+    context.move_to(sx, 0.0);
+    context.line_to(sx, vh);
+    context.move_to(0.0, sy);
+    context.line_to(vw, sy);
+    context.stroke();
+    context.restore();
 }
 
 fn draw_tooltip(context: &web_sys::CanvasRenderingContext2d, text: &str, x: R, y: R) {
@@ -141,9 +141,7 @@ fn draw_params(engine: &Engine, context: &web_sys::CanvasRenderingContext2d, x: 
     if let Some(color) = engine.selected_color() {
         context.set_fill_style_str(&format!(
             "rgba({}, {}, {}, 0.8)",
-            color.r(),
-            color.g(),
-            color.b()
+            color.r(), color.g(), color.b()
         ));
     }
     context.set_font("20px monospace");

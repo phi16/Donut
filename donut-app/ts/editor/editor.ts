@@ -85,7 +85,7 @@ export function createEditor(
       updateHoverIndex(result.tokens, result.hover, view.state.doc);
 
       // Update completion data
-      updateCompletionData(result.completion, result.tokens);
+      updateCompletionData(result.completion);
     },
   };
 }

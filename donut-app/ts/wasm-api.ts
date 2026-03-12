@@ -53,9 +53,28 @@ export interface EntryDesc {
   color: [number, number, number];
 }
 
+// Opaque handle for shader view (created via create_shader_view)
+export interface WasmShaderView {
+  set_shader(fragmentSource: string): void;
+  render(): void;
+  show(): void;
+  hide(): void;
+}
+
 // WASM module interface — filled by dynamic import
 export interface WasmModule {
   analyze(code: string): AnalysisResult;
+  default_code(): string;
+  canvas_step(
+    engine: WasmEngine,
+    context: CanvasRenderingContext2D,
+    width: number,
+    height: number,
+    mouseX: number,
+    mouseY: number,
+    pressing: boolean,
+  ): void;
+  create_shader_view(canvas: HTMLCanvasElement): WasmShaderView | undefined;
   WasmEngine: {
     new(code: string): WasmEngine;
   };

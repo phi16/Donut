@@ -5,13 +5,14 @@ export const donutTheme = EditorView.theme(
     "&": {
       backgroundColor: "#2d2d2d",
       color: "#d4d4d4",
-      fontFamily: "'Consolas', 'Monaco', monospace",
+      fontFamily: "'Noto Sans Mono', 'Consolas', 'Monaco', monospace",
       fontSize: "14px",
       height: "100%",
     },
     ".cm-content": {
       caretColor: "#d4d4d4",
       padding: "10px 0",
+      fontFamily: "'Noto Sans Mono', 'Consolas', 'Monaco', monospace",
     },
     ".cm-cursor, .cm-dropCursor": {
       borderLeftColor: "#d4d4d4",
@@ -37,6 +38,7 @@ export const donutTheme = EditorView.theme(
       backgroundColor: "#2d2d2d",
       color: "#858585",
       borderRight: "1px solid #444",
+      fontFamily: "'Noto Sans Mono', 'Consolas', 'Monaco', monospace",
     },
     ".cm-activeLineGutter": {
       backgroundColor: "#2a2d2e",

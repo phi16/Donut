@@ -3,17 +3,12 @@ import {
   type CompletionContext,
   type CompletionResult,
 } from "@codemirror/autocomplete";
-import type { CompletionData, TokenData } from "../wasm-api";
+import type { CompletionData } from "../wasm-api";
 
 let currentCompletion: CompletionData = { scopes: {}, dot_prefixes: {} };
-let currentTokens: TokenData[] = [];
 
-export function updateCompletionData(
-  completion: CompletionData,
-  tokens: TokenData[]
-): void {
+export function updateCompletionData(completion: CompletionData): void {
   currentCompletion = completion;
-  currentTokens = tokens;
 }
 
 function donutCompletionSource(
@@ -22,7 +17,6 @@ function donutCompletionSource(
   const { state, pos } = context;
   const line = state.doc.lineAt(pos);
   const textBefore = line.text.slice(0, pos - line.from);
-
 
   // Dot completion: check if cursor is right after a dot
   const dotMatch = textBefore.match(/(\w[\w.]*)\.$/);

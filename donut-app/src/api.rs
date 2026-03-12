@@ -162,14 +162,6 @@ pub fn analyze(code: &str) -> JsValue {
 
 // --- Engine API ---
 
-#[derive(Serialize)]
-pub struct JsEntryDesc {
-    pub index: usize,
-    pub name: String,
-    pub dimension: u8,
-    pub color: [u8; 3],
-}
-
 #[wasm_bindgen]
 pub struct WasmEngine {
     inner: engine::Engine,
@@ -193,17 +185,7 @@ impl WasmEngine {
     }
 
     pub fn root_entries(&self) -> JsValue {
-        let descs: Vec<JsEntryDesc> = self
-            .inner
-            .root_entry_descs()
-            .into_iter()
-            .map(|d| JsEntryDesc {
-                index: d.index,
-                name: d.name,
-                dimension: d.dimension,
-                color: d.color,
-            })
-            .collect();
+        let descs = self.inner.root_entry_descs();
         serde_wasm_bindgen::to_value(&descs).unwrap()
     }
 

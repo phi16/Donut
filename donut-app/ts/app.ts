@@ -1,6 +1,6 @@
 import { createEditor, EditorHandle } from "./editor/editor";
 import { setupResizeHandles } from "./layout";
-import type { WasmModule, WasmEngine, EntryDesc, AnalysisResult } from "./wasm-api";
+import type { WasmModule, WasmEngine, WasmShaderView, EntryDesc, AnalysisResult } from "./wasm-api";
 
 export class App {
   private wasm: WasmModule;
@@ -11,16 +11,7 @@ export class App {
   private entrySelect: HTMLSelectElement;
   private evalResultEl: HTMLElement;
   private diagnosticsEl: HTMLElement;
-  private shaderView: any; // WasmShaderView
-  private canvasStep: (
-    engine: WasmEngine,
-    context: CanvasRenderingContext2D,
-    width: number,
-    height: number,
-    mouseX: number,
-    mouseY: number,
-    pressing: boolean
-  ) => void;
+  private shaderView: WasmShaderView | null = null;
 
   private mouseX = 0;
   private mouseY = 0;
@@ -31,9 +22,8 @@ export class App {
   private debounceTimer: number | null = null;
   private readonly DEBOUNCE_MS = 300;
 
-  constructor(wasm: WasmModule & Record<string, any>) {
+  constructor(wasm: WasmModule) {
     this.wasm = wasm;
-    this.canvasStep = wasm.canvas_step;
 
     // Get DOM elements
     this.canvas = document.getElementById("canvas") as HTMLCanvasElement;
@@ -75,6 +65,7 @@ export class App {
 
     // Initial UI update
     this.populateSelect();
+    this.updateDiagnostics();
     this.updateEvalResult();
 
     // Initial analysis
@@ -86,17 +77,6 @@ export class App {
   }
 
   private setupEvents() {
-    // Canvas size tracks its parent panel
-    const canvasPanel = document.getElementById("panel-canvas")!;
-    const syncCanvasSize = () => {
-      const rect = canvasPanel.getBoundingClientRect();
-      this.canvas.width = rect.width;
-      this.canvas.height = rect.height;
-    };
-    syncCanvasSize();
-    const ro = new ResizeObserver(syncCanvasSize);
-    ro.observe(canvasPanel);
-
     // Mouse tracking
     window.addEventListener("mousemove", (e) => {
       this.mouseX = e.clientX;
@@ -145,6 +125,7 @@ export class App {
       this.debounceTimer = null;
       this.engine.update_code(code);
       this.populateSelect();
+      this.updateDiagnostics();
       this.updateEvalResult();
 
       // Run analysis and apply editor intelligence
@@ -170,31 +151,22 @@ export class App {
     }
   }
 
-  private updateEvalResult() {
-    // Diagnostics
+  private updateDiagnostics() {
     const diags: string[] = this.engine.diagnostics();
-    if (diags.length === 0) {
-      this.diagnosticsEl.classList.remove("has-errors");
-      this.diagnosticsEl.textContent = "";
-    } else {
-      this.diagnosticsEl.classList.add("has-errors");
-      this.diagnosticsEl.textContent = diags.join("\n");
-    }
+    this.diagnosticsEl.classList.toggle("has-errors", diags.length > 0);
+    this.diagnosticsEl.textContent = diags.join("\n");
+  }
 
-    // Eval result
+  private updateEvalResult() {
     const evalText = this.engine.eval_result();
     if (!evalText) {
       this.evalResultEl.textContent = "";
       this.evalResultEl.classList.remove("evaluable");
-      this.hideShader();
+      this.shaderView?.hide();
       return;
     }
 
-    if (this.engine.is_evaluable()) {
-      this.evalResultEl.classList.add("evaluable");
-    } else {
-      this.evalResultEl.classList.remove("evaluable");
-    }
+    this.evalResultEl.classList.toggle("evaluable", this.engine.is_evaluable());
 
     let text = evalText;
     let shaderShown = false;
@@ -221,21 +193,27 @@ export class App {
     }
 
     if (!shaderShown) {
-      this.hideShader();
+      this.shaderView?.hide();
     }
 
     this.evalResultEl.textContent = text;
   }
 
-  private hideShader() {
-    if (this.shaderView) {
-      this.shaderView.hide();
+  private syncCanvasSize() {
+    const panel = document.getElementById("panel-canvas")!;
+    const rect = panel.getBoundingClientRect();
+    const w = Math.floor(rect.width);
+    const h = Math.floor(rect.height);
+    if (this.canvas.width !== w || this.canvas.height !== h) {
+      this.canvas.width = w;
+      this.canvas.height = h;
     }
   }
 
   private animate() {
     const loop_ = () => {
-      this.canvasStep(
+      this.syncCanvasSize();
+      this.wasm.canvas_step(
         this.engine,
         this.context,
         this.canvas.width,

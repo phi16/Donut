@@ -9,6 +9,7 @@ use donut_layout::layout_solver::LayoutSolver;
 use donut_renderer::geometry::{Geometry, R};
 use donut_renderer::prim_table::PrimTable;
 use donut_runtime::Runtime;
+use serde::Serialize;
 
 pub struct Engine {
     pub(crate) table: PrimTable,
@@ -18,8 +19,10 @@ pub struct Engine {
     pub(crate) cell: Option<Geometry>,
     pub(crate) slice_pos: Vec<R>,
     pub(crate) diagnostics: Vec<String>,
+    prim_names: HashMap<PrimId, String>,
 }
 
+#[derive(Serialize)]
 pub struct EntryDesc {
     pub index: usize,
     pub name: String,
@@ -43,42 +46,32 @@ fn root_entries(env: &Env) -> Vec<DefId> {
         .collect()
 }
 
-fn prim_lookup(env: &Env) -> HashMap<String, PrimId> {
-    env.prim_item
-        .iter()
-        .map(|(&prim_id, &item_id)| (env.items[item_id.0].cname.clone(), prim_id))
-        .collect()
-}
-
-fn prim_names(env: &Env) -> HashMap<PrimId, String> {
-    env.prim_item
-        .iter()
-        .map(|(&prim_id, &item_id)| (prim_id, env.items[item_id.0].cname.clone()))
-        .collect()
+fn build_prim_maps(env: &Env) -> (HashMap<String, PrimId>, HashMap<PrimId, String>) {
+    let mut lookup = HashMap::new();
+    let mut names = HashMap::new();
+    for (&prim_id, &item_id) in &env.prim_item {
+        let cname = env.items[item_id.0].cname.clone();
+        lookup.insert(cname.clone(), prim_id);
+        names.insert(prim_id, cname);
+    }
+    (lookup, names)
 }
 
 impl Engine {
     pub fn new(code: &str) -> Self {
-        let (table, runtime, diagnostics) = Self::load(code);
-        let root_entries = root_entries(table.env());
-        let selected = Self::find_last_cell(table.env(), &root_entries);
-        let cell = selected.and_then(|id| {
-            def_cell(table.env(), id).map(|c| Self::build_geometry(&c))
-        });
-        let slice_pos = cell
-            .as_ref()
-            .map(|c| Self::init_slice_pos(&c.size))
-            .unwrap_or_default();
-
-        Self {
+        let (table, runtime, prim_names, diagnostics) = Self::load(code);
+        let mut engine = Self {
             table,
             runtime,
-            root_entries,
-            selected,
-            cell,
-            slice_pos,
+            root_entries: Vec::new(),
+            selected: None,
+            cell: None,
+            slice_pos: Vec::new(),
             diagnostics,
-        }
+            prim_names,
+        };
+        engine.refresh_selection();
+        engine
     }
 
     pub fn env(&self) -> &Env {
@@ -91,11 +84,7 @@ impl Engine {
 
     fn find_last_cell(env: &Env, root_entries: &[DefId]) -> Option<DefId> {
         root_entries.iter().rev().find_map(|&def_id| {
-            let def = &env.defs[def_id.0];
-            if def.origin.is_some() {
-                return None;
-            }
-            if let PureVal::Cell(_) = &def.val {
+            if matches!(&env.defs[def_id.0].val, PureVal::Cell(_)) {
                 Some(def_id)
             } else {
                 None
@@ -103,7 +92,7 @@ impl Engine {
         })
     }
 
-    fn load(code: &str) -> (PrimTable, Runtime, Vec<String>) {
+    fn load(code: &str) -> (PrimTable, Runtime, HashMap<PrimId, String>, Vec<String>) {
         let user_code = donut_core::common::dedent(code);
         let (env, errors) = donut_lang::load::load(&user_code);
         let diagnostics: Vec<String> = errors
@@ -111,7 +100,7 @@ impl Engine {
             .map(|(pos, msg)| format!("{}:{}: {}", pos.line + 1, pos.col + 1, msg))
             .collect();
 
-        let lookup = prim_lookup(&env);
+        let (lookup, names) = build_prim_maps(&env);
         let def_subs = env.def_subs.clone();
         let table = PrimTable::new(env);
 
@@ -119,7 +108,21 @@ impl Engine {
         donut_runtime::env::register_sys(&mut runtime, &lookup);
         runtime.set_def_subs(def_subs);
 
-        (table, runtime, diagnostics)
+        (table, runtime, names, diagnostics)
+    }
+
+    /// Rebuild root_entries, selected, cell, and slice_pos from current env.
+    fn refresh_selection(&mut self) {
+        self.root_entries = root_entries(self.env());
+        self.selected = Self::find_last_cell(self.env(), &self.root_entries);
+        self.cell = self.selected.and_then(|id| {
+            def_cell(self.env(), id).map(|c| Self::build_geometry(&c))
+        });
+        self.slice_pos = self
+            .cell
+            .as_ref()
+            .map(|c| Self::init_slice_pos(&c.size))
+            .unwrap_or_default();
     }
 
     pub fn build_geometry(free_cell: &FreeCell) -> Geometry {
@@ -139,20 +142,12 @@ impl Engine {
     }
 
     pub fn update_code(&mut self, code: &str) {
-        let (table, runtime, diagnostics) = Self::load(code);
+        let (table, runtime, prim_names, diagnostics) = Self::load(code);
         self.table = table;
         self.runtime = runtime;
         self.diagnostics = diagnostics;
-        self.root_entries = root_entries(self.env());
-        self.selected = Self::find_last_cell(self.env(), &self.root_entries);
-        self.cell = self.selected.and_then(|id| {
-            def_cell(self.env(), id).map(|c| Self::build_geometry(&c))
-        });
-        self.slice_pos = self
-            .cell
-            .as_ref()
-            .map(|c| Self::init_slice_pos(&c.size))
-            .unwrap_or_default();
+        self.prim_names = prim_names;
+        self.refresh_selection();
     }
 
     pub fn select_entry(&mut self, index: usize) {
@@ -189,21 +184,27 @@ impl Engine {
         descs
     }
 
+    /// Get the selected definition's cell expanded for runtime use.
+    fn selected_expanded(&self) -> Option<(DefId, FreeCell)> {
+        let selected = self.selected?;
+        let free = def_cell(self.env(), selected)?;
+        let expanded = self.runtime.expand(&free.pure);
+        Some((selected, expanded))
+    }
+
     pub fn eval_result_text(&self) -> String {
         let Some(selected) = self.selected else {
             return String::new();
         };
         let env = self.env();
         let def = &env.defs[selected.0];
-        let Some(free) = def_cell(env, selected) else {
+        let Some((_, expanded)) = self.selected_expanded() else {
             return format!("{}: meta", def.lname);
         };
         let sig = env.display_def_signature(def);
-        let expanded = self.runtime.expand(&free.pure);
-        let names = prim_names(env);
-        let eval_str = match self.runtime.eval_check(&expanded, &names) {
+        let eval_str = match self.runtime.eval_check(&expanded, &self.prim_names) {
             Some(reason) => reason,
-            None => match self.runtime.eval(&expanded, &[], &names) {
+            None => match self.runtime.eval(&expanded, &[], &self.prim_names) {
                 Ok(values) => format!("= {}", donut_runtime::format_values(&values)),
                 Err(e) => format!("BUG: {}", e),
             },
@@ -212,41 +213,24 @@ impl Engine {
     }
 
     pub fn is_evaluable(&self) -> bool {
-        let Some(selected) = self.selected else {
+        let Some((_, expanded)) = self.selected_expanded() else {
             return false;
         };
-        let env = self.env();
-        let Some(free) = def_cell(env, selected) else {
-            return false;
-        };
-        let expanded = self.runtime.expand(&free.pure);
-        let names = prim_names(env);
-        self.runtime.is_evaluable(&expanded) && self.runtime.eval_check(&expanded, &names).is_none()
+        self.runtime.is_evaluable(&expanded)
+            && self.runtime.eval_check(&expanded, &self.prim_names).is_none()
     }
 
     pub fn compile_glsl(&self) -> Option<String> {
-        let selected = self.selected?;
-        let env = self.env();
-        let free = def_cell(env, selected)?;
-        let def = &env.defs[selected.0];
-        let expanded = self.runtime.expand(&free.pure);
-        let names = prim_names(env);
-        let func = donut_runtime::glsl::compile_to_glsl(&expanded, &names).ok()?;
+        let (selected, expanded) = self.selected_expanded()?;
+        let def = &self.env().defs[selected.0];
+        let func = donut_runtime::glsl::compile_to_glsl(&expanded, &self.prim_names).ok()?;
         Some(func.to_function(&def.lname))
     }
 
     pub fn compile_fragment_shader(&self) -> Option<std::result::Result<String, String>> {
-        let selected = self.selected?;
-        let env = self.env();
-        let free = def_cell(env, selected)?;
-        let expanded = self.runtime.expand(&free.pure);
-        let names = prim_names(env);
-        let func = donut_runtime::glsl::compile_to_glsl(&expanded, &names).ok()?;
+        let (_, expanded) = self.selected_expanded()?;
+        let func = donut_runtime::glsl::compile_to_glsl(&expanded, &self.prim_names).ok()?;
         Some(func.to_fragment_shader().map_err(|e| e.to_string()))
-    }
-
-    pub fn format_css_color(c: &Color) -> String {
-        format!("rgb({}, {}, {})", c.r(), c.g(), c.b())
     }
 
     pub fn selected_color(&self) -> Option<&Color> {
