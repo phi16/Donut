@@ -32,6 +32,7 @@ f: x x → x = x x; x
 | `*` | 0-cell | `u: *` |
 | `A → B` | 1-cell 以上（射） | `x: u → u` |
 | `A ~ B` | equivalence | `e: x ~ y` |
+| `A ~> B` | functor | `F: src.C ~> tgt.D` |
 | `meta` | メタ値（nat, rat, color 等） | `n: nat` |
 
 ### Arrow の次元

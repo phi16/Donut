@@ -35,10 +35,14 @@ m: x x → x
 
 ## 仕組み
 
-0-cell `A` が n-cell の位置で使われた場合、`A` は以下のように解釈されます:
+k-cell が n-cell（n > k）の位置で使われた場合、identity cell で包んで次元を合わせます。
+
+例えば 0-cell `A` の場合:
 
 - 1-cell の位置: `A` 上の identity 1-cell（`A → A`）
 - 2-cell の位置: identity 1-cell の identity 2-cell
 - 以降同様
+
+1-cell `x: u → u` が 3-cell の位置で使われた場合は、`x` → `id(x)` → `id(id(x))` と2回リフトされます。
 
 リフトは必要な回数だけ自動的に適用されます。

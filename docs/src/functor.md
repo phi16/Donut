@@ -7,8 +7,6 @@ Functor は2つの構造間のマッピングを定義します。プリミテ�
 `~>` で functor の型を宣言し、各プリミティブの対応を `F(src) = tgt` の形で記述します。
 
 ```
-import "ui"
-
 nat = {
     C: *
     Nat: C → C
@@ -37,12 +35,15 @@ compile(nat.add)  = u8.add
 functor を定義すると、プリミティブセルの合成で作られたセルにも自動的に適用できます。
 
 ```
-double = nat.dup; nat.add
+// nat のプリミティブだけで構成されたセル
+two = nat.zero; nat.succ; nat.succ
 
-// compile(double) は自動的に u8.dup; u8.add になる
-compiled_double = compile(double)
+// compile(two) は自動的に u8.zero; u8.succ; u8.succ になる
+compiled_two = compile(two)
 ```
+
+functor はソース構造のプリミティブの合成を再帰的に辿り、各プリミティブを対応するターゲットに置き換えます。ソース構造に属さないプリミティブが含まれている場合はエラーになります。
 
 ## functoriality チェック
 
-functor のマッピングは整合性がチェックされます。source/target の境界が一致しない場合はエラーになります。
+functor のマッピングは整合性がチェックされます。各マッピング `F(X) = Y` に対して、`X` の source/target を functor で変換した結果が `Y` の source/target と一致するか検証されます。一致しない場合はエラーになります。
