@@ -23,12 +23,6 @@ function donutCompletionSource(
   const line = state.doc.lineAt(pos);
   const textBefore = line.text.slice(0, pos - line.from);
 
-  console.log("[completion] called", {
-    explicit: context.explicit,
-    textBefore,
-    scopeKeys: Object.keys(currentCompletion.scopes),
-    topLevelCount: currentCompletion.scopes[""]?.length ?? 0,
-  });
 
   // Dot completion: check if cursor is right after a dot
   const dotMatch = textBefore.match(/(\w[\w.]*)\.$/);

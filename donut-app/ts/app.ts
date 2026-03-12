@@ -1,4 +1,5 @@
 import { createEditor, EditorHandle } from "./editor/editor";
+import { setupResizeHandles } from "./layout";
 import type { WasmModule, WasmEngine, EntryDesc, AnalysisResult } from "./wasm-api";
 
 export class App {
@@ -48,8 +49,13 @@ export class App {
       "shader-canvas"
     ) as HTMLCanvasElement | null;
     if (shaderCanvas) {
-      shaderCanvas.width = 380;
-      shaderCanvas.height = 380;
+      const outputPanel = document.getElementById("panel-output")!;
+      const pw = outputPanel.getBoundingClientRect().width - 16;
+      const size = Math.max(100, Math.min(pw, 380));
+      shaderCanvas.width = size;
+      shaderCanvas.height = size;
+      shaderCanvas.style.width = size + "px";
+      shaderCanvas.style.height = size + "px";
       this.shaderView = wasm.create_shader_view(shaderCanvas) ?? null;
     }
 
@@ -63,7 +69,8 @@ export class App {
       this.onCodeChange(code);
     });
 
-    // Set up event listeners
+    // Set up layout and event listeners
+    setupResizeHandles();
     this.setupEvents();
 
     // Initial UI update
@@ -79,13 +86,16 @@ export class App {
   }
 
   private setupEvents() {
-    // Resize
-    const resize = () => {
-      this.canvas.width = window.innerWidth;
-      this.canvas.height = window.innerHeight;
+    // Canvas size tracks its parent panel
+    const canvasPanel = document.getElementById("panel-canvas")!;
+    const syncCanvasSize = () => {
+      const rect = canvasPanel.getBoundingClientRect();
+      this.canvas.width = rect.width;
+      this.canvas.height = rect.height;
     };
-    resize();
-    window.addEventListener("resize", resize);
+    syncCanvasSize();
+    const ro = new ResizeObserver(syncCanvasSize);
+    ro.observe(canvasPanel);
 
     // Mouse tracking
     window.addEventListener("mousemove", (e) => {
