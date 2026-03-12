@@ -40,11 +40,11 @@ impl<'a> HoverBuilder<'a> {
         let span = self.program.val_span(val_id);
         match val {
             Val::Path(path) => {
-                // Find name tokens in the span (before any '[')
+                // Find name tokens in the span (before any '[' or '(')
                 let mut name_tokens = Vec::new();
                 for i in span.start..span.end {
                     if let Some(t) = self.tokens.get(i) {
-                        if t.str == "[" {
+                        if t.str == "[" || t.str == "(" {
                             break;
                         }
                         if t.ty == token::TokenTy::Name

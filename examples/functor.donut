@@ -1,0 +1,20 @@
+D: *
+x: D → D
+one: D → x
+add: x x → x
+
+import "sys"
+
+f: D ~> C
+f(x) = i32
+f(one) = i32.lit[1]
+f(add) = i32.add
+
+L: C → D
+R: D → C
+T: C → L R
+B: L x R → f(x)
+
+sphere = T; L (one one; add) R; B
+
+h[u: D → x] = f(u)

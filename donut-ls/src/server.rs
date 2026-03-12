@@ -517,6 +517,7 @@ fn candidate_to_item(c: &CompletionCandidate, cursor_line: u32) -> CompletionIte
             EntryKind::Cell(_) => Some(CompletionItemKind::VARIABLE),
             EntryKind::Meta => Some(CompletionItemKind::CONSTANT),
             EntryKind::Type => Some(CompletionItemKind::CLASS),
+            EntryKind::Functor => Some(CompletionItemKind::FUNCTION),
         }
     };
 

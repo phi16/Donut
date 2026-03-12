@@ -77,6 +77,7 @@ fn entry_kind_str(k: &donut_analysis::EntryKind) -> String {
         donut_analysis::EntryKind::Cell(d) => format!("cell-{}", d),
         donut_analysis::EntryKind::Meta => "meta".to_string(),
         donut_analysis::EntryKind::Type => "type".to_string(),
+        donut_analysis::EntryKind::Functor => "functor".to_string(),
     }
 }
 

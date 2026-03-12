@@ -46,6 +46,7 @@ pub enum EntryKind {
     Cell(u8),
     Meta,
     Type,
+    Functor,
 }
 
 impl EntryKind {
@@ -54,6 +55,7 @@ impl EntryKind {
             EntryKind::Cell(dim) => format!("{}-cell", dim),
             EntryKind::Meta => "meta".to_string(),
             EntryKind::Type => "type".to_string(),
+            EntryKind::Functor => "functor".to_string(),
         }
     }
 }
@@ -63,7 +65,7 @@ fn ty_to_kind(ty: &Ty) -> EntryKind {
         Ty::Star => EntryKind::Cell(0),
         Ty::Arrow(level, _, _, _) => EntryKind::Cell(*level as u8),
         Ty::Nat | Ty::Rat | Ty::Color | Ty::Deco | Ty::Meta => EntryKind::Meta,
-        Ty::Functor(_, _) => EntryKind::Type,
+        Ty::Functor(_, _) => EntryKind::Functor,
         Ty::Hole => EntryKind::Cell(0),
     }
 }
@@ -402,7 +404,7 @@ mod tests {
             .map(|t| &t.token_type)
     }
 
-    fn diag_sources(r: &AnalysisResult) -> Vec<&str> {
+fn diag_sources(r: &AnalysisResult) -> Vec<&str> {
         r.diagnostics.iter().map(|d| d.source).collect()
     }
 
@@ -812,5 +814,19 @@ mod tests {
         let r = analyze("m = {\n  a: *\n}\nx = m.a");
         assert!(!r.completion.dot_prefixes.is_empty());
         assert!(r.completion.dot_prefixes.values().any(|v| v == "m"));
+    }
+
+    #[test]
+    fn hover_functor() {
+        let r = analyze("C D: *\nF: C ~> D\ny = F(C)");
+        // Definition site
+        let f_def = find_hover(&r, "F").unwrap();
+        assert_eq!(f_def.entry.kind, EntryKind::Functor);
+        assert!(!f_def.entry.is_module(), "functor should not be a module");
+        // Usage site: "y = F(C)" — F should not be Namespace
+        assert!(
+            !matches!(token_type_at(&r, 2, 4), Some(TokenType::Namespace)),
+            "functor usage should not be Namespace"
+        );
     }
 }
