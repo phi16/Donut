@@ -47,7 +47,7 @@ pub struct JsCompletionCandidate {
 #[derive(Serialize)]
 pub struct JsCompletionData {
     pub scopes: std::collections::HashMap<String, Vec<JsCompletionCandidate>>,
-    pub dot_prefixes: std::collections::HashMap<usize, String>,
+    pub dot_prefixes: std::collections::HashMap<String, String>,
 }
 
 #[derive(Serialize)]
@@ -147,11 +147,17 @@ pub fn analyze(code: &str) -> JsValue {
         hover,
         completion: JsCompletionData {
             scopes,
-            dot_prefixes: result.completion.dot_prefixes,
+            dot_prefixes: result
+                .completion
+                .dot_prefixes
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.clone()))
+                .collect(),
         },
     };
 
-    serde_wasm_bindgen::to_value(&js_result).unwrap()
+    let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
+    js_result.serialize(&serializer).unwrap()
 }
 
 // --- Engine API ---

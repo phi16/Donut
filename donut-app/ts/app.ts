@@ -1,5 +1,5 @@
 import { createEditor, EditorHandle } from "./editor/editor";
-import type { WasmModule, WasmEngine, EntryDesc } from "./wasm-api";
+import type { WasmModule, WasmEngine, EntryDesc, AnalysisResult } from "./wasm-api";
 
 export class App {
   private wasm: WasmModule;
@@ -70,6 +70,10 @@ export class App {
     this.populateSelect();
     this.updateEvalResult();
 
+    // Initial analysis
+    const analysis: AnalysisResult = wasm.analyze(defaultCode);
+    this.editor.applyAnalysis(analysis);
+
     // Start animation loop
     this.animate();
   }
@@ -132,6 +136,10 @@ export class App {
       this.engine.update_code(code);
       this.populateSelect();
       this.updateEvalResult();
+
+      // Run analysis and apply editor intelligence
+      const analysis: AnalysisResult = this.wasm.analyze(code);
+      this.editor.applyAnalysis(analysis);
     }, this.DEBOUNCE_MS);
   }
 

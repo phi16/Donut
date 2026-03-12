@@ -36,7 +36,7 @@ export interface CompletionCandidate {
 
 export interface CompletionData {
   scopes: Record<string, CompletionCandidate[]>;
-  dot_prefixes: Record<number, string>;
+  dot_prefixes: Record<string, string>;
 }
 
 export interface AnalysisResult {
