@@ -1,0 +1,36 @@
+// Monad
+//
+// endofunctor T と multiplication mu、unit eta から成る構造。
+// モノイドの圏論版。
+//
+// pentagon の例 (モノイド) に unit law を加えた形。
+
+u: *
+T: u → u
+
+// Multiplication: T∘T → T
+mu: T T → T
+
+// Unit: id → T
+eta: u → T
+
+// Associativity (3-cell)
+//   mu(mu(a,b), c) = mu(a, mu(b,c))
+//
+//   mu T; mu : T T T → T  (左から結合)
+//   T mu; mu : T T T → T  (右から結合)
+assoc: mu T; mu ~ T mu; mu
+
+// Left unit law (3-cell)
+//   mu(eta(·), a) = a
+//
+//   eta T; mu : T → T  (unit を左に挿入してから乗算)
+//   T           : T → T  (恒等)
+l_unit: eta T; mu ~ T
+
+// Right unit law (3-cell)
+//   mu(a, eta(·)) = a
+//
+//   T eta; mu : T → T  (unit を右に挿入してから乗算)
+//   T           : T → T  (恒等)
+r_unit: T eta; mu ~ T

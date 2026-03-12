@@ -272,6 +272,60 @@ fn test_display_def_signature_nested() {
 }
 
 #[test]
+fn test_adjunction() {
+    let input = r#"
+        C D: *
+        F: C → D
+        G: D → C
+        eta: C → F G
+        eps: G F → D
+        zig: eta F; F eps → F
+        zag: G eta; eps G → G
+    "#;
+    let env = load(input);
+    assert!(has_def(&env, "zig"));
+    assert!(has_def(&env, "zag"));
+    assert_eq!(def_cell(&env, "zig").dim().in_space, 3);
+    assert_eq!(def_cell(&env, "zag").dim().in_space, 3);
+}
+
+#[test]
+fn test_monad() {
+    let input = r#"
+        u: *
+        T: u → u
+        mu: T T → T
+        eta: u → T
+        assoc: mu T; mu → T mu; mu
+        l_unit: eta T; mu → T
+        r_unit: T eta; mu → T
+    "#;
+    let env = load(input);
+    assert!(has_def(&env, "assoc"));
+    assert!(has_def(&env, "l_unit"));
+    assert!(has_def(&env, "r_unit"));
+    assert_eq!(def_cell(&env, "assoc").dim().in_space, 3);
+    assert_eq!(def_cell(&env, "l_unit").dim().in_space, 3);
+    assert_eq!(def_cell(&env, "r_unit").dim().in_space, 3);
+}
+
+#[test]
+fn test_yang_baxter() {
+    let input = r#"
+        u: *
+        x: u → u
+        b: x x → x x
+
+        lhs = b x; x b; b x
+        rhs = x b; b x; x b
+        yang_baxter: lhs → rhs
+    "#;
+    let env = load(input);
+    assert!(has_def(&env, "yang_baxter"));
+    assert_eq!(def_cell(&env, "yang_baxter").dim().in_space, 3);
+}
+
+#[test]
 fn test_load_default_donut() {
     let input = include_str!("../../../../donut-app/src/default.donut");
     load(input);

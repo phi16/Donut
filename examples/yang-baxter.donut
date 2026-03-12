@@ -1,0 +1,29 @@
+// Yang-Baxter equation
+//
+// braiding b: x x → x x に対する
+// braid group の基本関係式。
+//
+// braided monoidal category の hexagon identity を
+// 単一の生成元で記述すると、この形になる。
+//
+//   (b⊗id)(id⊗b)(b⊗id) = (id⊗b)(b⊗id)(id⊗b)
+//
+// 3本の strand を持つ braid の2つの交差パターンが
+// 等しいことを 3-cell として表現する。
+
+u: *
+x: u → u
+b: x x → x x
+
+// 2つの経路 (x x x → x x x)
+//
+// lhs: 左から交差 → 右から交差 → 左から交差
+//   b x : x x x → x x x  (左2本を交差、右は通過)
+//   x b : x x x → x x x  (右2本を交差、左は通過)
+lhs = b x; x b; b x
+
+// rhs: 右から交差 → 左から交差 → 右から交差
+rhs = x b; b x; x b
+
+// Yang-Baxter equation: 2つの経路が等しい (3-cell)
+yang_baxter: lhs ~ rhs

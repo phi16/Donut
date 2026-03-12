@@ -1,0 +1,33 @@
+// Adjunction
+//
+// F ⊣ G の随伴を、unit/counit と
+// triangle identity (zig-zag identity) で表現する。
+//
+// F: C → D, G: D → C に対して:
+//   eta (unit):   id_C → GF
+//   eps (counit): FG → id_D
+//
+// Triangle identities (3-cell):
+//   zig: (F·η)(ε·F) = id_F
+//   zag: (η·G)(G·ε) = id_G
+
+C D: *
+F: C → D
+G: D → C
+
+// Unit and counit
+eta: C → F G
+eps: G F → D
+
+// Triangle identities
+//
+// zig:
+//   F →[eta F]→ F G F →[F eps]→ F
+//   この合成が F 上の恒等射に等しい
+//
+// zag:
+//   G →[G eta]→ G F G →[eps G]→ G
+//   この合成が G 上の恒等射に等しい
+
+zig: eta F; F eps ~ F
+zag: G eta; eps G ~ G
