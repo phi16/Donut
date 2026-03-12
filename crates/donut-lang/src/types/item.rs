@@ -141,7 +141,10 @@ pub struct Module {
 #[derive(Debug, Clone)]
 pub struct DefTree {
     pub def_id: DefId,
-    pub children: Vec<DefTree>,
+    /// Checked before this def (where clauses).
+    pub before: Vec<DefTree>,
+    /// Checked after this def (module members, with clauses).
+    pub after: Vec<DefTree>,
 }
 
 // --- Program ---
@@ -423,6 +426,9 @@ impl Program {
     }
 
     fn display_tree(&self, tree: &DefTree, indent: usize, s: &mut String) {
+        for child in &tree.before {
+            self.display_tree(child, indent + 1, s);
+        }
         let def = self.def(tree.def_id);
         s.push_str(&format!(
             "{}Def({}) {}\n",
@@ -430,7 +436,7 @@ impl Program {
             tree.def_id.0,
             def.qname,
         ));
-        for child in &tree.children {
+        for child in &tree.after {
             self.display_tree(child, indent + 1, s);
         }
     }

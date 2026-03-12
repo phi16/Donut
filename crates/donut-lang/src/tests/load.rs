@@ -261,3 +261,31 @@ fn test_load_default_donut() {
     let input = include_str!("../../../../donut-app/src/default.donut");
     load(input);
 }
+
+#[test]
+fn test_where_clause() {
+    load(
+        r#"
+        import "sys"
+
+        r[C: *, x: C → C, f: x → x]: x → x = g where {
+            g = f; f
+        }
+        "#,
+    );
+}
+
+#[test]
+fn test_where_nested_clauses() {
+    load(
+        r#"
+        import "sys"
+
+        r[C: *, x: C → C, f: x → x]: x → x = k where {
+            k = g; g
+        } where {
+            g = f; f
+        }
+        "#,
+    );
+}

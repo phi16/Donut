@@ -782,6 +782,29 @@ mod tests {
     }
 
     #[test]
+    fn hover_where_clause() {
+        let r = analyze("u: *\nx: u → u\nf: x → x\ng = h where {\n  h = f; f\n}");
+        let names = hover_names(&r);
+        eprintln!("hover names: {:?}", names);
+        // h should have hover
+        let h = find_hover(&r, "h");
+        eprintln!("h hover: {:?}", h.map(|h| &h.name));
+        // f reference in where body should have hover
+        assert!(find_hover(&r, "f").is_some(), "f should have hover");
+        // g should have hover
+        assert!(find_hover(&r, "g").is_some(), "g should have hover");
+    }
+
+    #[test]
+    fn param_in_where_clause() {
+        let code = "import \"sys\"\nr[C: *, x: C → C, f: x → x]: x → x = g where {\n  g = f; f\n}";
+        let r = analyze(code);
+        let names = hover_names(&r);
+        eprintln!("hover names: {:?}", names);
+        eprintln!("diagnostics: {:?}", r.diagnostics.iter().map(|d| &d.message).collect::<Vec<_>>());
+    }
+
+    #[test]
     fn completion_with_clause() {
         let r = analyze("u: *\ncat = {\n  x: u → u\n} with {\n  m: x → x\n}");
         let labels = completion_labels(&r, "cat");

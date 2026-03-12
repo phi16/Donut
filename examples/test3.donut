@@ -1,3 +1,5 @@
-import "sys"
-
-r[C: *, x: C → C, f: x → x]: x → x = f
+C: *
+x: C → C
+g[f: x → x] = h where {
+  h = f; f
+}

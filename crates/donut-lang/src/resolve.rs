@@ -553,30 +553,31 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn emit_def_with_scope(&mut self, def_id: DefId, children: Vec<DefTree>) {
-        self.emit_def_tree(DefTree { def_id, children });
+    fn emit_def_with_scope(&mut self, def_id: DefId, before: Vec<DefTree>, after: Vec<DefTree>) {
+        self.emit_def_tree(DefTree { def_id, before, after });
     }
 
     fn emit_module_as_trees(&mut self, module: &Module) {
         for &def_id in &module.entries {
             let children_module = self.def(def_id).members.clone();
-            let mut children = Vec::new();
+            let mut after = Vec::new();
             for &child_id in &children_module.entries {
                 let grandchildren_module = self.def(child_id).members.clone();
-                children.push(DefTree {
+                after.push(DefTree {
                     def_id: child_id,
-                    children: self.collect_module_trees(&grandchildren_module),
+                    before: vec![],
+                    after: self.collect_module_trees(&grandchildren_module),
                 });
             }
-            self.emit_def_tree(DefTree { def_id, children });
+            self.emit_def_tree(DefTree { def_id, before: vec![], after });
         }
     }
 
     fn collect_module_trees(&self, module: &Module) -> Vec<DefTree> {
         let mut trees = Vec::new();
         for &def_id in &module.entries {
-            let children = self.collect_module_trees(&self.def(def_id).members);
-            trees.push(DefTree { def_id, children });
+            let after = self.collect_module_trees(&self.def(def_id).members);
+            trees.push(DefTree { def_id, before: vec![], after });
         }
         trees
     }
@@ -799,7 +800,10 @@ impl<'a> Checker<'a> {
 
     // --- Where/With clauses ---
 
-    fn resolve_where_clauses(&mut self, where_clauses: Vec<S<semtree::Module>>) {
+    /// Resolve where clauses. Returns the DefTrees they produced,
+    /// which must be placed in the parent def's `before` list.
+    fn resolve_where_clauses(&mut self, where_clauses: Vec<S<semtree::Module>>) -> Vec<DefTree> {
+        let before_len = self.def_order_stack.last().map_or(0, |v| v.len());
         for wm in where_clauses.into_iter().rev() {
             let S(module, _) = wm;
             if let semtree::Module::Block(decls) = module {
@@ -807,6 +811,11 @@ impl<'a> Checker<'a> {
                     self.resolve_decl(d);
                 }
             }
+        }
+        if let Some(stack) = self.def_order_stack.last_mut() {
+            stack.split_off(before_len)
+        } else {
+            vec![]
         }
     }
 
@@ -1077,8 +1086,8 @@ impl<'a> Checker<'a> {
             });
         }
 
-        // Where clauses
-        self.resolve_where_clauses(where_clauses);
+        // Where clauses — trees emitted before parent def
+        let where_trees = self.resolve_where_clauses(where_clauses);
 
         // --- Resolve type ---
         let ty_resolved = ty.map(|t| t.resolve(self));
@@ -1344,14 +1353,15 @@ impl<'a> Checker<'a> {
                     .define(DEF_MEMBER_NAME.to_string(), member_def_id);
                 inner_children.push(DefTree {
                     def_id: member_def_id,
-                    children: vec![],
+                    before: vec![],
+                    after: vec![],
                 });
             }
 
             for ni in &name_infos {
                 self.register_path(&ni.seg_names, def_id);
             }
-            self.emit_def_with_scope(def_id, inner_children);
+            self.emit_def_with_scope(def_id, where_trees, inner_children);
         }
     }
 
@@ -1506,7 +1516,8 @@ impl<'a> Checker<'a> {
                 if let Some(def_id) = self.lookup_path(&names) {
                     self.emit_def_tree(DefTree {
                         def_id,
-                        children: inner_children.clone(),
+                        before: vec![],
+                        after: inner_children.clone(),
                     });
                 }
             }
@@ -1523,15 +1534,15 @@ impl<'a> Checker<'a> {
         let span = mod_s.1.clone();
 
         self.enter_inner_scope("", &deco_param_defs);
-        self.resolve_where_clauses(where_clauses);
+        let where_trees = self.resolve_where_clauses(where_clauses);
 
         let result = self.resolve_module(mod_s);
         let result = self.merge_with_clauses(result, with_clauses);
 
         let inner_children = self.exit_inner_scope();
 
-        // DefTrees already emitted to inner scope level; promote them to current level
-        for tree in inner_children {
+        // Where trees first, then promote inner children
+        for tree in where_trees.into_iter().chain(inner_children) {
             self.emit_def_tree(tree);
         }
 

@@ -182,6 +182,36 @@ fn where_ordering() {
 }
 
 #[test]
+fn where_with_outer_refs() {
+    check_ok(
+        r#"
+C: *
+x: C → C
+f: x → x
+g = h where {
+  h = f; f
+}
+"#,
+    );
+}
+
+#[test]
+fn where_nested_clauses() {
+    check_ok(
+        r#"
+C: *
+x: C → C
+f: x → x
+g = k where {
+  k = h; h
+} where {
+  h = f; f
+}
+"#,
+    );
+}
+
+#[test]
 fn where_reverse_order() {
     check_ok(
         r#"
@@ -1649,17 +1679,22 @@ fn def_origin_set_for_import() {
 // ============================================================
 
 /// Format def_order as a compact string for assertion.
-/// Def(id) → "name", Scope { def_id, children } → "name { ... }"
+/// Before children shown as `[b1, b2] name { after1, after2 }`
 fn format_def_order(p: &Program, trees: &[DefTree]) -> String {
     let parts: Vec<String> = trees
         .iter()
         .map(|t| {
             let name = p.def(t.def_id).lname.clone();
-            if t.children.is_empty() {
-                name
+            let before_str = if t.before.is_empty() {
+                String::new()
             } else {
-                let inner = format_def_order(p, &t.children);
-                format!("{} {{ {} }}", name, inner)
+                format!("[{}] ", format_def_order(p, &t.before))
+            };
+            if t.after.is_empty() {
+                format!("{}{}", before_str, name)
+            } else {
+                let inner = format_def_order(p, &t.after);
+                format!("{}{} {{ {} }}", before_str, name, inner)
             }
         })
         .collect();

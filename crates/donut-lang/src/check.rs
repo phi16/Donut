@@ -159,11 +159,14 @@ impl<'a> Checker<'a> {
             self.check_item(param.item, &ty, &def_span);
         }
 
+        // Process `before` trees (where clauses) — must be checked before this def
+        let mut lookup = self.process_trees(&tree.before);
+
         // Process this def
         self.check_def(def_id);
 
-        // Process children → build lookup
-        let lookup = self.process_trees(&tree.children);
+        // Process `after` trees (module members, with clauses)
+        lookup.extend(self.process_trees(&tree.after));
 
         self.prefixes.pop();
 
