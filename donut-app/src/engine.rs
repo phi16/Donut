@@ -131,7 +131,7 @@ impl Engine {
         let sol = f.solve(&cell);
         let cell = sol.convert(&cell);
         let mut cell = cell.render();
-        while cell.max.len() < 4 || cell.max.len() % 2 != 0 {
+        while cell.max.len() < 2 || cell.max.len() % 2 != 0 {
             cell.shift(&Q::from(0), &Q::from(1));
         }
         Geometry::from(&cell)
@@ -292,9 +292,8 @@ impl Engine {
 
     pub fn build_slice_view(&self) -> Geometry {
         let cell = self.cell.as_ref().unwrap();
-        let n_extra = cell.size.len() - 2;
-        let mut rc = cell.sliced(self.slice_pos[n_extra - 1]);
-        for k in (0..n_extra - 1).rev() {
+        let mut rc = cell.clone();
+        for k in (0..self.slice_pos.len()).rev() {
             rc = rc.sliced(self.slice_pos[k]);
         }
         rc
