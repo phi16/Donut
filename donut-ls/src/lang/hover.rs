@@ -3,12 +3,9 @@ use donut_lang::types::item::*;
 use donut_lang::types::token;
 use std::collections::HashMap;
 
-use super::{build_entry_info, build_module_info, EntryInfo, FlatEnv, HoverInfo, TokenType};
-
-/// Check if a path target refers to a parameter item.
-fn is_param_ref(program: &Program, target: &Ref) -> bool {
-    matches!(target, Ref::Item(item_id) if matches!(program.item(*item_id).kind, ItemKind::Param))
-}
+use super::{
+    build_entry_info_by_id, build_module_info, EntryInfo, FlatEnv, HoverInfo, TokenType,
+};
 
 pub(super) struct HoverBuilder<'a> {
     program: &'a Program,
@@ -36,145 +33,41 @@ impl<'a> HoverBuilder<'a> {
         }
     }
 
-    /// Get the qname for a Ref target.
-    fn ref_qname(&self, target: &Ref) -> &str {
-        match target {
-            Ref::Def(def_id) => &self.program.def(*def_id).qname,
-            Ref::Item(item_id) => &self.program.item(*item_id).cname,
-        }
-    }
+    // --- Val walking ---
 
     fn walk_val(&mut self, val_id: ValId) {
         let val = self.program.val(val_id);
         let span = self.program.val_span(val_id);
         match val {
             Val::Path(path) => {
-                let qname = self.ref_qname(&path.target).to_string();
-
-                if qname == "*" {
-                    // Star literal
-                    let entry = EntryInfo {
-                        kind: super::EntryKind::Meta,
-                        module_kind: None,
-                        type_expr: Some("meta".to_string()),
-                        params: String::new(),
-                    };
-                    let tags = entry.tags();
-                    self.map.insert(
-                        span.start,
-                        HoverInfo {
-                            name: "*".to_string(),
-                            entry,
-                            tags,
-                        },
-                    );
-                } else {
-                    // Find name tokens in the span (before any '[')
-                    let mut name_tokens = Vec::new();
-                    for i in span.start..span.end {
-                        if let Some(t) = self.tokens.get(i) {
-                            if t.str == "[" {
-                                break;
-                            }
-                            if t.ty == token::TokenTy::Name
-                                && !donut_lang::convert::is_number_str(t.str)
-                            {
-                                name_tokens.push(i);
-                            }
+                // Find name tokens in the span (before any '[')
+                let mut name_tokens = Vec::new();
+                for i in span.start..span.end {
+                    if let Some(t) = self.tokens.get(i) {
+                        if t.str == "[" {
+                            break;
                         }
-                    }
-
-                    if !name_tokens.is_empty() {
-                        let last = name_tokens.len() - 1;
-
-                        // Last token → hover for the resolved target
-                        let is_param = is_param_ref(self.program, &path.target);
-                        if is_param {
-                            // Parameter: build hover from env Item + parent def context
-                            if let Ref::Item(item_id) = &path.target {
-                                let item = &self.env.items[item_id.0];
-                                let parent_def = self.env.defs.iter().find(|d| {
-                                    d.params.contains(item_id)
-                                });
-                                let type_expr = if let Some(def) = parent_def {
-                                    self.env.display_ty_in_def(&item.ty, def)
-                                } else {
-                                    self.env.display_ty(&item.ty)
-                                };
-                                let entry = EntryInfo {
-                                    kind: super::item_to_kind(item),
-                                    module_kind: None,
-                                    type_expr: Some(type_expr),
-                                    params: String::new(),
-                                };
-                                let mut tags = entry.tags();
-                                tags.push(if let Some(def) = parent_def {
-                                    format!("parameter of {}", def.lname)
-                                } else {
-                                    "parameter".to_string()
-                                });
-                                self.map.insert(
-                                    name_tokens[last],
-                                    HoverInfo {
-                                        name: item.lname.clone(),
-                                        entry,
-                                        tags,
-                                    },
-                                );
-                            }
-                            self.styles
-                                .insert(name_tokens[last], TokenType::Parameter);
-                        } else if let Some(entry) =
-                            build_entry_info(&qname, self.env, self.flat)
+                        if t.ty == token::TokenTy::Name
+                            && !donut_lang::convert::is_number_str(t.str)
                         {
-                            let tags = entry.tags();
-                            self.map.insert(
-                                name_tokens[last],
-                                HoverInfo {
-                                    name: qname.clone(),
-                                    entry,
-                                    tags,
-                                },
-                            );
-                        } else if !self.flat.defs.contains_key(&qname)
-                            && self.flat.modules.contains_key(&qname)
-                        {
-                            // Unresolved as def but known as module
-                            self.insert_module_hover(name_tokens[last], &qname);
-                        }
-
-                        // Intermediate tokens → namespace marking
-                        // Reconstruct prefix from source token strings
-                        let mut prefix_parts = Vec::new();
-                        for i in 0..last {
-                            prefix_parts.push(self.tokens[name_tokens[i]].str);
-                            let prefix = prefix_parts.join(".");
-                            if let Some(entry) =
-                                build_entry_info(&prefix, self.env, self.flat)
-                            {
-                                let tags = entry.tags();
-                                self.map.insert(
-                                    name_tokens[i],
-                                    HoverInfo {
-                                        name: prefix,
-                                        entry,
-                                        tags,
-                                    },
-                                );
-                            } else {
-                                self.insert_module_hover(name_tokens[i], &prefix);
-                            }
-                            self.styles
-                                .insert(name_tokens[i], TokenType::Namespace);
+                            name_tokens.push(i);
                         }
                     }
                 }
 
-                // Walk args
+                // Map name tokens to segments 1:1
+                let last = name_tokens.len().saturating_sub(1);
+                for (i, &tok_idx) in name_tokens.iter().enumerate() {
+                    if let Some(seg_ref) = path.segments.get(i) {
+                        let is_last = i == last;
+                        self.insert_ref_hover(tok_idx, seg_ref, !is_last);
+                    }
+                }
+
+                // Walk args and applicand
                 for &arg in &path.args {
                     self.walk_val(arg);
                 }
-                // Walk applicand
                 if let Some(app) = path.applicand {
                     self.walk_val(app);
                 }
@@ -198,6 +91,84 @@ impl<'a> HoverBuilder<'a> {
         }
     }
 
+    // --- Hover insertion ---
+
+    fn insert_ref_hover(&mut self, token_index: usize, target: &Ref, is_namespace: bool) {
+        match target {
+            Ref::Item(item_id) => {
+                let prog_item = self.program.item(*item_id);
+                if matches!(prog_item.kind, ItemKind::Param) {
+                    self.insert_param_hover(token_index, *item_id);
+                    self.styles.insert(token_index, TokenType::Parameter);
+                } else {
+                    // Non-param item (e.g., star literal)
+                    let item = &self.env.items[item_id.0];
+                    let entry = EntryInfo {
+                        kind: super::item_to_kind(item),
+                        module_kind: None,
+                        type_expr: Some(self.env.display_ty(&item.ty)),
+                        params: String::new(),
+                    };
+                    let tags = entry.tags();
+                    self.map.insert(
+                        token_index,
+                        HoverInfo {
+                            name: item.lname.clone(),
+                            entry,
+                            tags,
+                        },
+                    );
+                }
+            }
+            Ref::Def(def_id) => {
+                let qname = &self.program.def(*def_id).qname;
+                let entry = build_entry_info_by_id(*def_id, self.env, self.flat);
+                let tags = entry.tags();
+                self.map.insert(
+                    token_index,
+                    HoverInfo {
+                        name: qname.clone(),
+                        entry,
+                        tags,
+                    },
+                );
+                if is_namespace {
+                    self.styles.insert(token_index, TokenType::Namespace);
+                }
+            }
+        }
+    }
+
+    fn insert_param_hover(&mut self, token_index: usize, item_id: ItemId) {
+        let item = &self.env.items[item_id.0];
+        let parent_def = self.env.defs.iter().find(|d| d.params.contains(&item_id));
+        let type_expr = if let Some(def) = parent_def {
+            self.env.display_ty_in_def(&item.ty, def)
+        } else {
+            self.env.display_ty(&item.ty)
+        };
+        let entry = EntryInfo {
+            kind: super::item_to_kind(item),
+            module_kind: None,
+            type_expr: Some(type_expr),
+            params: String::new(),
+        };
+        let mut tags = entry.tags();
+        tags.push(if let Some(def) = parent_def {
+            format!("parameter of {}", def.lname)
+        } else {
+            "parameter".to_string()
+        });
+        self.map.insert(
+            token_index,
+            HoverInfo {
+                name: item.lname.clone(),
+                entry,
+                tags,
+            },
+        );
+    }
+
     fn insert_module_hover(&mut self, token_index: usize, qname: &str) {
         let entry = build_module_info();
         let tags = entry.tags();
@@ -211,11 +182,12 @@ impl<'a> HoverBuilder<'a> {
         );
     }
 
+    // --- Def processing ---
+
     fn walk_def(&mut self, def_id: DefId) {
         let def = self.program.def(def_id);
 
-        // Skip imported defs — their spans refer to the source file's token indices,
-        // not the current file's tokens.
+        // Skip imported defs — their spans refer to the source file's token indices.
         if def.origin.is_some() {
             return;
         }
@@ -227,7 +199,8 @@ impl<'a> HoverBuilder<'a> {
         // Definition site hover
         if is_module_def {
             self.insert_module_hover(def.span.start, &qname);
-        } else if let Some(entry) = build_entry_info(&qname, self.env, self.flat) {
+        } else {
+            let entry = build_entry_info_by_id(def_id, self.env, self.flat);
             let tags = entry.tags();
             self.map.insert(
                 def.span.start,
@@ -270,16 +243,14 @@ impl<'a> HoverBuilder<'a> {
             }
         }
 
-        // Walk members (nested module)
-        for &child_def_id in &def.members.entries {
-            self.walk_def(child_def_id);
-        }
+        // No members recursion — build() iterates all defs directly.
     }
 
+    // --- Entry point ---
+
     pub fn build(mut self) -> (HashMap<usize, HoverInfo>, HashMap<usize, TokenType>) {
-        // Walk all root defs
-        for &def_id in &self.program.root.entries {
-            self.walk_def(def_id);
+        for i in 0..self.program.defs.len() {
+            self.walk_def(DefId(i));
         }
         (self.map, self.styles)
     }

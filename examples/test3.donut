@@ -1,5 +1,3 @@
-C: *
-x: C → C
-g[f: x → x] = h where {
-  h = f; f
+M[x: *] = {
+  a: *
 }

@@ -31,6 +31,9 @@ pub enum ArrowKind {
 
 #[derive(Debug)]
 pub struct Path {
+    /// Per-segment resolution: [first_ref, ..., final_ref].
+    /// Corresponds 1:1 with the name tokens in the path (before `[`).
+    pub segments: Vec<Ref>,
     pub target: Ref,
     pub args: Vec<ValId>,
     pub applicand: Option<ValId>,

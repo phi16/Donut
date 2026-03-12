@@ -56,6 +56,21 @@ fn val_as_path_name<'a>(p: &'a Program, val_id: ValId) -> Option<&'a str> {
     }
 }
 
+/// Extract segment lnames from a path Val.
+fn val_segment_names<'a>(p: &'a Program, val_id: ValId) -> Vec<&'a str> {
+    match p.val(val_id) {
+        Val::Path(path) => path
+            .segments
+            .iter()
+            .map(|r| match r {
+                Ref::Def(id) => p.def(*id).lname.as_str(),
+                Ref::Item(id) => p.item(*id).lname.as_str(),
+            })
+            .collect(),
+        _ => vec![],
+    }
+}
+
 /// Extract the string literal value from a Val.
 fn val_as_string<'a>(p: &'a Program, val_id: ValId) -> Option<&'a str> {
     match p.val(val_id) {
@@ -257,6 +272,42 @@ fn module_inner_not_visible() {
 #[test]
 fn dotted_ref_member() {
     check_ok("m = {\n    x = \"a\"\n}\ny = m.x");
+}
+
+#[test]
+fn path_segments_simple() {
+    let p = check_module("x = \"a\"\ny = x");
+    let y = get_def(&p, "y");
+    let segs = val_segment_names(&p, y.val().unwrap());
+    assert_eq!(segs, vec!["x"]);
+}
+
+#[test]
+fn path_segments_dotted() {
+    let p = check_module("m = {\n  x = \"a\"\n}\ny = m.x");
+    let y = get_def(&p, "y");
+    let segs = val_segment_names(&p, y.val().unwrap());
+    assert_eq!(segs, vec!["m", "x"]);
+}
+
+#[test]
+fn path_segments_deep() {
+    let p = check_module("a = {\n  b = {\n    c = \"x\"\n  }\n}\ny = a.b.c");
+    let y = get_def(&p, "y");
+    let segs = val_segment_names(&p, y.val().unwrap());
+    assert_eq!(segs, vec!["a", "b", "c"]);
+}
+
+#[test]
+fn path_segments_param_ref() {
+    let p = check_module("C: *\nx[f: C]: C = f");
+    let x = get_def(&p, "x");
+    let segs = val_segment_names(&p, x.val().unwrap());
+    assert_eq!(segs, vec!["f"]);
+    // param ref should be Ref::Item
+    if let Val::Path(path) = p.val(x.val().unwrap()) {
+        assert!(matches!(path.segments[0], Ref::Item(_)));
+    }
 }
 
 #[test]

@@ -12,3 +12,8 @@ B = {
     c[y: *] = *
   }
 }
+
+x: C → C
+g[f: x → x] = h where {
+  h = f; f
+}

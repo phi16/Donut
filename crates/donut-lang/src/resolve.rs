@@ -124,7 +124,7 @@ impl Resolve for S<semtree::Path<semtree::ParamVal>> {
                 (seg.0.0.as_str(), span)
             })
             .collect();
-        let resolved = ctx.resolve_segments(&name_spans);
+        let (segments, resolved) = ctx.resolve_segments(&name_spans);
 
         // Flatten param args from all segments
         let mut args: Vec<ValId> = Vec::new();
@@ -141,6 +141,7 @@ impl Resolve for S<semtree::Path<semtree::ParamVal>> {
         let target = resolved.unwrap_or(Ref::Def(DefId(0)));
 
         Path {
+            segments,
             target,
             args,
             applicand,
@@ -358,6 +359,7 @@ impl<'a> Checker<'a> {
         // We know meta will be ItemId(0), so we can create the self-referencing Val
         let meta_ty_val = self.alloc_val(
             Val::Path(Path {
+                segments: vec![],
                 target: Ref::Item(ItemId(0)),
                 args: vec![],
                 applicand: None,
@@ -376,6 +378,7 @@ impl<'a> Checker<'a> {
         // *: meta
         let star_ty_val = self.alloc_val(
             Val::Path(Path {
+                segments: vec![],
                 target: Ref::Item(meta_id),
                 args: vec![],
                 applicand: None,
@@ -462,6 +465,7 @@ impl<'a> Checker<'a> {
                 let s = span.clone();
                 let path_val = self.alloc_val(
                     Val::Path(Path {
+                        segments: vec![],
                         target: Ref::Item(item),
                         args: vec![],
                         applicand: None,
@@ -695,15 +699,17 @@ impl<'a> Checker<'a> {
 
     // --- Name resolution ---
 
-    fn resolve_segments(&mut self, segments: &[(&str, &TokenSpan)]) -> Option<Ref> {
+    /// Resolve a dotted path segment-by-segment.
+    /// Returns the per-segment Refs (for Path.segments) and the final Ref.
+    fn resolve_segments(&mut self, segments: &[(&str, &TokenSpan)]) -> (Vec<Ref>, Option<Ref>) {
         let Some((&(first_name, first_span), rest)) = segments.split_first() else {
-            return None;
+            return (vec![], None);
         };
         let Some(first_ref) = self.lookup(first_name) else {
             if !crate::convert::is_number_str(first_name) {
                 self.error_at(first_span, format!("undefined name `{}`", first_name));
             }
-            return None;
+            return (vec![], None);
         };
         // Track deco param usage in applicand context
         if let Ref::Item(item_id) = first_ref {
@@ -713,7 +719,8 @@ impl<'a> Checker<'a> {
                 }
             }
         }
-        // Follow member path
+        // Follow member path, collecting per-segment refs
+        let mut seg_refs = vec![first_ref];
         let mut current_ref = first_ref;
         for &(name, span) in rest {
             let current_def = match current_ref {
@@ -722,14 +729,17 @@ impl<'a> Checker<'a> {
             };
             let next = current_def.and_then(|id| self.def(id).members.get(name));
             match next {
-                Some(id) => current_ref = Ref::Def(id),
+                Some(id) => {
+                    current_ref = Ref::Def(id);
+                    seg_refs.push(current_ref);
+                }
                 None => {
                     self.error_at(span, format!("undefined member `{}`", name));
-                    return None;
+                    return (seg_refs, None);
                 }
             }
         }
-        Some(current_ref)
+        (seg_refs, Some(current_ref))
     }
 
     fn lookup_path(&self, names: &[impl AsRef<str>]) -> Option<DefId> {
@@ -1303,6 +1313,7 @@ impl<'a> Checker<'a> {
                 let body_val = *body_val;
                 let x_val = self.alloc_val(
                     Val::Path(Path {
+                        segments: vec![],
                         target: Ref::Item(main_item_id),
                         args: vec![],
                         applicand: None,

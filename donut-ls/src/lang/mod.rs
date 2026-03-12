@@ -241,6 +241,19 @@ fn build_entry_info(qname: &str, env: &Env, flat: &FlatEnv) -> Option<EntryInfo>
     })
 }
 
+/// Build EntryInfo directly from a DefId (works for defs not in FlatEnv, e.g. where bindings).
+fn build_entry_info_by_id(def_id: DefId, env: &Env, flat: &FlatEnv) -> EntryInfo {
+    let def = &env.defs[def_id.0];
+    let module_kind = flat.modules.get(&def.qname).copied();
+    let kind = def_to_kind(def);
+    EntryInfo {
+        kind,
+        module_kind,
+        type_expr: Some(env.display_def_ty(def)),
+        params: env.display_params(def),
+    }
+}
+
 /// Build EntryInfo for a module (not a def, but known as a module).
 fn build_module_info() -> EntryInfo {
     EntryInfo {
@@ -784,14 +797,8 @@ mod tests {
     #[test]
     fn hover_where_clause() {
         let r = analyze("u: *\nx: u → u\nf: x → x\ng = h where {\n  h = f; f\n}");
-        let names = hover_names(&r);
-        eprintln!("hover names: {:?}", names);
-        // h should have hover
-        let h = find_hover(&r, "h");
-        eprintln!("h hover: {:?}", h.map(|h| &h.name));
-        // f reference in where body should have hover
+        assert!(find_hover(&r, "h").is_some(), "h should have hover");
         assert!(find_hover(&r, "f").is_some(), "f should have hover");
-        // g should have hover
         assert!(find_hover(&r, "g").is_some(), "g should have hover");
     }
 
@@ -799,9 +806,11 @@ mod tests {
     fn param_in_where_clause() {
         let code = "import \"sys\"\nr[C: *, x: C → C, f: x → x]: x → x = g where {\n  g = f; f\n}";
         let r = analyze(code);
-        let names = hover_names(&r);
-        eprintln!("hover names: {:?}", names);
-        eprintln!("diagnostics: {:?}", r.diagnostics.iter().map(|d| &d.message).collect::<Vec<_>>());
+        assert!(r.diagnostics.is_empty(), "no diagnostics expected");
+        assert!(find_hover(&r, "r").is_some(), "r should have hover");
+        assert!(find_hover(&r, "g").is_some(), "g should have hover");
+        assert!(find_hover(&r, "C").is_some(), "C should have hover");
+        assert!(find_hover(&r, "f").is_some(), "f should have hover");
     }
 
     #[test]
