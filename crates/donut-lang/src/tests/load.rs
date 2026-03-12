@@ -257,6 +257,21 @@ fn test_display_def_signature() {
 }
 
 #[test]
+fn test_display_def_signature_nested() {
+    let input = r#"
+        B = {
+            M[x: *] = {
+                c[y: x → x]: x → x
+            }
+        }
+    "#;
+    let env = load(input);
+    let def_id = find_def(&env, "B.M.c");
+    let def = &env.defs[def_id.0];
+    assert_eq!(env.display_def_signature(def), "B.M[x: *].c[y: x → x]: x → x");
+}
+
+#[test]
 fn test_load_default_donut() {
     let input = include_str!("../../../../donut-app/src/default.donut");
     load(input);

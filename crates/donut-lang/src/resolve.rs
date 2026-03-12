@@ -590,9 +590,7 @@ impl<'a> Checker<'a> {
 
     fn current_param_counts(&self, own_count: usize) -> Vec<usize> {
         let mut counts = self.param_count_stack.clone();
-        if own_count > 0 {
-            counts.push(own_count);
-        }
+        counts.push(own_count);
         counts
     }
 

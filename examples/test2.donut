@@ -9,9 +9,12 @@ A = {
 B = {
   M[x: *] = {
     b: *
-    c[y: *] = *
+    c[y: x → x] = y
   }
 }
+
+z: *
+B.M[z].
 
 x: C → C
 g[f: x → x] = h where {

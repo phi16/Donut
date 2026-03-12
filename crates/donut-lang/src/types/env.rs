@@ -242,13 +242,19 @@ impl DisplayContext for Env {
 
 struct DefDisplayContext<'a> {
     env: &'a Env,
-    def: &'a Def,
+    params: &'a [ItemId],
+}
+
+impl<'a> DefDisplayContext<'a> {
+    fn from_def(env: &'a Env, def: &'a Def) -> Self {
+        Self { env, params: &def.params }
+    }
 }
 
 impl<'a> DisplayContext for DefDisplayContext<'a> {
     fn item_cname(&self, ext_id: ExtId) -> &str {
         let item_id = ItemId(ext_id.0 as usize);
-        if self.def.params.contains(&item_id) {
+        if self.params.contains(&item_id) {
             &self.env.items[item_id.0].lname
         } else {
             &self.env.items[item_id.0].cname
@@ -257,7 +263,7 @@ impl<'a> DisplayContext for DefDisplayContext<'a> {
 
     fn prim_name(&self, prim_id: PrimId) -> &str {
         if let Some(&item_id) = self.env.prim_item.get(&prim_id) {
-            if self.def.params.contains(&item_id) {
+            if self.params.contains(&item_id) {
                 &self.env.items[item_id.0].lname
             } else {
                 &self.env.items[item_id.0].cname
@@ -281,11 +287,12 @@ impl Env {
         display_ty(self, ty)
     }
 
+    /// Display a def's own parameters: `[x: C → C, f: x → x]`
     pub fn display_params(&self, def: &Def) -> String {
         if def.params.is_empty() {
             return String::new();
         }
-        let ctx = DefDisplayContext { env: self, def };
+        let ctx = DefDisplayContext::from_def(self, def);
         let params: Vec<String> = def.params.iter().map(|&item_id| {
             let item = &self.items[item_id.0];
             format!("{}: {}", item.lname, display_ty(&ctx, &item.ty))
@@ -293,22 +300,72 @@ impl Env {
         format!("[{}]", params.join(", "))
     }
 
+    /// Display qname with ancestor parameters at correct positions: `M[x: *].a`
+    pub fn display_def_name(&self, def: &Def) -> String {
+        let all_params = self.collect_ancestor_params(def);
+        let ctx = DefDisplayContext { env: self, params: &all_params };
+        let segments: Vec<&str> = def.qname.split('.').collect();
+        let mut result = String::new();
+        let mut current = &self.root;
+        for (i, &seg) in segments.iter().enumerate() {
+            if i > 0 {
+                result.push('.');
+            }
+            result.push_str(seg);
+            if let Some(child) = current.lookup.get(seg) {
+                if let Some(def_id) = child.this {
+                    let ancestor = &self.defs[def_id.0];
+                    if !ancestor.params.is_empty() {
+                        let params: Vec<String> = ancestor.params.iter().map(|&item_id| {
+                            let item = &self.items[item_id.0];
+                            format!("{}: {}", item.lname, display_ty(&ctx, &item.ty))
+                        }).collect();
+                        result.push_str(&format!("[{}]", params.join(", ")));
+                    }
+                }
+                current = child;
+            }
+        }
+        result
+    }
+
     /// Display type using def's parameter context (lname for params)
     pub fn display_def_ty(&self, def: &Def) -> String {
-        let ctx = DefDisplayContext { env: self, def };
+        let ctx = DefDisplayContext::from_def(self, def);
         display_ty(&ctx, &def.ty)
     }
 
     /// Display any Ty using def's parameter context
     pub fn display_ty_in_def(&self, ty: &Ty, def: &Def) -> String {
-        let ctx = DefDisplayContext { env: self, def };
+        let ctx = DefDisplayContext::from_def(self, def);
         display_ty(&ctx, ty)
     }
 
+    /// Display full def signature: `M[x: *].a: *`
+    /// Uses ancestor params for both name and type display.
     pub fn display_def_signature(&self, def: &Def) -> String {
-        let params_str = self.display_params(def);
-        let ty_str = self.display_def_ty(def);
-        format!("{}{}: {}", def.lname, params_str, ty_str)
+        // Collect all ancestor params + own params
+        let all_params = self.collect_ancestor_params(def);
+        let name = self.display_def_name(def);
+        let ctx = DefDisplayContext { env: self, params: &all_params };
+        let ty_str = display_ty(&ctx, &def.ty);
+        format!("{}: {}", name, ty_str)
+    }
+
+    /// Collect params from all ancestors (via Module tree) plus own params.
+    fn collect_ancestor_params(&self, def: &Def) -> Vec<ItemId> {
+        let segments: Vec<&str> = def.qname.split('.').collect();
+        let mut all_params = Vec::new();
+        let mut current = &self.root;
+        for &seg in &segments {
+            if let Some(child) = current.lookup.get(seg) {
+                if let Some(def_id) = child.this {
+                    all_params.extend_from_slice(&self.defs[def_id.0].params);
+                }
+                current = child;
+            }
+        }
+        all_params
     }
 
     pub fn def_color<'a>(&self, def: &'a Def) -> &'a Color {

@@ -4,7 +4,7 @@ use donut_lang::types::token;
 use std::collections::HashMap;
 
 use super::{
-    build_entry_info_by_id, build_module_info, EntryInfo, FlatEnv, HoverInfo, TokenType,
+    build_entry_info_by_id, EntryInfo, FlatEnv, HoverInfo, TokenType,
 };
 
 pub(super) struct HoverBuilder<'a> {
@@ -103,10 +103,11 @@ impl<'a> HoverBuilder<'a> {
                 } else {
                     // Non-param item (e.g., star literal)
                     let item = &self.env.items[item_id.0];
+                    let ty_str = self.env.display_ty(&item.ty);
                     let entry = EntryInfo {
                         kind: super::item_to_kind(item),
                         module_kind: None,
-                        type_expr: Some(self.env.display_ty(&item.ty)),
+                        type_expr: Some(ty_str.clone()),
                         params: String::new(),
                     };
                     let tags = entry.tags();
@@ -114,6 +115,7 @@ impl<'a> HoverBuilder<'a> {
                         token_index,
                         HoverInfo {
                             name: item.lname.clone(),
+                            signature: format!("{}: {}", item.lname, ty_str),
                             entry,
                             tags,
                         },
@@ -121,13 +123,15 @@ impl<'a> HoverBuilder<'a> {
                 }
             }
             Ref::Def(def_id) => {
-                let qname = &self.program.def(*def_id).qname;
+                let env_def = &self.env.defs[def_id.0];
+                let signature = self.env.display_def_signature(env_def);
                 let entry = build_entry_info_by_id(*def_id, self.env, self.flat);
                 let tags = entry.tags();
                 self.map.insert(
                     token_index,
                     HoverInfo {
-                        name: qname.clone(),
+                        name: env_def.qname.clone(),
+                        signature,
                         entry,
                         tags,
                     },
@@ -150,7 +154,7 @@ impl<'a> HoverBuilder<'a> {
         let entry = EntryInfo {
             kind: super::item_to_kind(item),
             module_kind: None,
-            type_expr: Some(type_expr),
+            type_expr: Some(type_expr.clone()),
             params: String::new(),
         };
         let mut tags = entry.tags();
@@ -163,19 +167,7 @@ impl<'a> HoverBuilder<'a> {
             token_index,
             HoverInfo {
                 name: item.lname.clone(),
-                entry,
-                tags,
-            },
-        );
-    }
-
-    fn insert_module_hover(&mut self, token_index: usize, qname: &str) {
-        let entry = build_module_info();
-        let tags = entry.tags();
-        self.map.insert(
-            token_index,
-            HoverInfo {
-                name: qname.to_string(),
+                signature: format!("{}: {}", item.lname, type_expr),
                 entry,
                 tags,
             },
@@ -192,25 +184,25 @@ impl<'a> HoverBuilder<'a> {
             return;
         }
 
-        let qname = def.qname.clone();
-        let has_members = !def.members.entries.is_empty();
-        let is_module_def = has_members && def.ty.is_none();
+        // Skip auto-generated DeclDef members (x.def) — they share the parent's span.
+        if def.lname == donut_lang::types::item::DEF_MEMBER_NAME {
+            return;
+        }
 
         // Definition site hover
-        if is_module_def {
-            self.insert_module_hover(def.span.start, &qname);
-        } else {
-            let entry = build_entry_info_by_id(def_id, self.env, self.flat);
-            let tags = entry.tags();
-            self.map.insert(
-                def.span.start,
-                HoverInfo {
-                    name: qname.clone(),
-                    entry,
-                    tags,
-                },
-            );
-        }
+        let env_def = &self.env.defs[def_id.0];
+        let signature = self.env.display_def_signature(env_def);
+        let entry = build_entry_info_by_id(def_id, self.env, self.flat);
+        let tags = entry.tags();
+        self.map.insert(
+            def.span.start,
+            HoverInfo {
+                name: env_def.qname.clone(),
+                signature,
+                entry,
+                tags,
+            },
+        );
 
         // Walk type expression
         if let Some(ty_id) = def.ty {
@@ -218,8 +210,10 @@ impl<'a> HoverBuilder<'a> {
         }
 
         // Walk body value
-        if let Some(val_id) = def.val() {
-            self.walk_val(val_id);
+        match &def.body {
+            DefBody::Alias { val } => self.walk_val(*val),
+            DefBody::Decl { def_val: Some(val), .. } => self.walk_val(*val),
+            _ => {}
         }
 
         // Walk decorators

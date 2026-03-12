@@ -125,8 +125,12 @@ impl EntryInfo {
 }
 
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct HoverInfo {
+    /// Bare qname for identification (e.g. `M.a`)
     pub name: String,
+    /// Pre-computed display signature (e.g. `M[x: *].a: *`)
+    pub signature: String,
     pub entry: EntryInfo,
     /// Tags describing the entry (e.g. ["1-cell", "parameter of rep4"])
     pub tags: Vec<String>,
@@ -135,17 +139,7 @@ pub struct HoverInfo {
 impl HoverInfo {
     pub fn display_markdown(&self) -> String {
         let detail = self.tags.join(", ");
-        if let Some(ty) = &self.entry.type_expr {
-            format!(
-                "```donut\n{}{}: {}\n```\n{}",
-                self.name, self.entry.params, ty, detail
-            )
-        } else {
-            format!(
-                "```donut\n{}{}\n```\n{}",
-                self.name, self.entry.params, detail
-            )
-        }
+        format!("```donut\n{}\n```\n{}", self.signature, detail)
     }
 }
 
@@ -470,6 +464,17 @@ mod tests {
     }
 
     #[test]
+    fn hover_parametric_module() {
+        let r = analyze("M[x: *] = {\n  a: *\n}");
+        let m = find_hover(&r, "M").unwrap();
+        assert!(m.entry.is_module());
+        assert_eq!(m.signature, "M[x: *]: *");
+
+        let a = find_hover(&r, "M.a").unwrap();
+        assert_eq!(a.signature, "M[x: *].a: *");
+    }
+
+    #[test]
     fn hover_nested_path() {
         let r = analyze("cat = {\n  u: *\n  x: u → u\n}\ny = cat.x");
         let cat = find_hover(&r, "cat").unwrap();
@@ -480,11 +485,10 @@ mod tests {
 
     #[test]
     fn hover_parametric() {
-        // Parameters are attached to name: x[u: *], not [u: *] x
         let r = analyze("x[u: *]: u → u");
         let x = find_hover(&r, "x").unwrap();
         assert_eq!(x.entry.kind, EntryKind::Cell(1));
-        assert!(!x.entry.params.is_empty());
+        assert_eq!(x.signature, "x[u: *]: u → u");
     }
 
     #[test]
@@ -507,6 +511,14 @@ mod tests {
         let m = find_hover(&r, "m").unwrap();
         assert_eq!(m.entry.kind, EntryKind::Cell(2));
         assert_eq!(m.entry.type_expr.as_deref(), Some("x → y"));
+    }
+
+    #[test]
+    fn hover_decldef() {
+        let r = analyze("import \"sys\"\nu: *\nx: u → u\ny: u → u := x");
+        let y = find_hover(&r, "y").unwrap();
+        assert_eq!(y.name, "y", "should show y, not y.def");
+        assert_eq!(y.entry.kind, EntryKind::Cell(1));
     }
 
     #[test]
@@ -826,6 +838,14 @@ mod tests {
         let r = analyze("x[u: *]: u → u");
         let x = find_completion(&r, "", "x").unwrap();
         assert!(!x.entry.params.is_empty());
+    }
+
+    #[test]
+    fn completion_nested_params() {
+        let r = analyze("A = {\n  B[x: *] = {\n    C[y: *] = *\n  }\n}");
+        let c = find_completion(&r, "A.B", "C").unwrap();
+        eprintln!("C params: {:?}", c.entry.params);
+        assert_eq!(c.entry.params, "[y: *]", "should only show own params");
     }
 
     #[test]
