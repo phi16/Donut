@@ -110,8 +110,16 @@ impl GlslCompiler {
             "sys::f32.mul" => Ok(self.binary(GlslTy::Float, "*", &inputs[0], &inputs[1])),
             "sys::f32.div" => Ok(self.binary(GlslTy::Float, "/", &inputs[0], &inputs[1])),
             "sys::f32.neg" => Ok(self.unary(GlslTy::Float, "-", &inputs[0])),
-            "sys::f32.floor" => Ok(self.func_call(GlslTy::Float, "floor", &inputs[0])),
-            "sys::f32.ceil" => Ok(self.func_call(GlslTy::Float, "ceil", &inputs[0])),
+            "sys::f32.floor" => {
+                let v = self.fresh(GlslTy::Int);
+                self.emit(format!("{} {} = int(floor({}));", v.ty.decl(), v.name, inputs[0].name));
+                Ok(vec![v])
+            }
+            "sys::f32.ceil" => {
+                let v = self.fresh(GlslTy::Int);
+                self.emit(format!("{} {} = int(ceil({}));", v.ty.decl(), v.name, inputs[0].name));
+                Ok(vec![v])
+            }
             "sys::f32.eq" => Ok(self.compare(GlslTy::Float, "==", &inputs[0], &inputs[1])),
             "sys::f32.ne" => Ok(self.compare(GlslTy::Float, "!=", &inputs[0], &inputs[1])),
             "sys::f32.lt" => Ok(self.compare(GlslTy::Float, "<", &inputs[0], &inputs[1])),

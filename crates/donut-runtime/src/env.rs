@@ -124,11 +124,11 @@ fn ops() -> Vec<Op> {
             _ => type_error(),
         }},
         Op { name: "sys::f32.floor", f: |_, v| match &v[0] {
-            Value::F32(a) => Ok(vec![Value::F32(a.floor())]),
+            Value::F32(a) => Ok(vec![Value::I32(a.floor() as i32)]),
             _ => type_error(),
         }},
         Op { name: "sys::f32.ceil", f: |_, v| match &v[0] {
-            Value::F32(a) => Ok(vec![Value::F32(a.ceil())]),
+            Value::F32(a) => Ok(vec![Value::I32(a.ceil() as i32)]),
             _ => type_error(),
         }},
         Op { name: "sys::f32.eq", f: |_, v| match (&v[0], &v[1]) {

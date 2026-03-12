@@ -68,8 +68,8 @@ f32 += {
     mul: f32 f32 → f32
     div: f32 f32 → f32
     neg: f32 → f32
-    floor: f32 → f32
-    ceil: f32 → f32
+    floor: f32 → i32
+    ceil: f32 → i32
     eq: f32 f32 → bool
     ne: f32 f32 → bool
     lt: f32 f32 → bool

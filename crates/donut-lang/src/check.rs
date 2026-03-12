@@ -839,7 +839,7 @@ impl<'a> Checker<'a> {
                         match PureCell::prim(prim, src, tgt) {
                             Ok(pc) => (PureVal::Cell(pc), Some(prim_id)),
                             Err(e) => {
-                                self.error_at(span, format!("cell construction error: {}", e));
+                                self.error_at(span, format!("cell construction error: {}", self.format_comp_error(&e)));
                                 (Meta::Error.into(), Some(prim_id))
                             }
                         }

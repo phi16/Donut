@@ -17,7 +17,7 @@ export class App {
   private mouseX = 0;
   private mouseY = 0;
   private pressing = false;
-  private showShader = true;
+  private showShader = localStorage.getItem("donut:shader") !== "false";
 
   private debounceTimer: number | null = null;
   private readonly DEBOUNCE_MS = 300;
@@ -112,8 +112,10 @@ export class App {
     // Shader toggle
     const shaderToggle = document.getElementById("shader-toggle") as HTMLInputElement | null;
     if (shaderToggle) {
+      shaderToggle.checked = this.showShader;
       shaderToggle.addEventListener("change", () => {
         this.showShader = shaderToggle.checked;
+        localStorage.setItem("donut:shader", String(this.showShader));
         this.updateEvalResult();
       });
     }
@@ -121,8 +123,12 @@ export class App {
     // Vim toggle
     const vimToggle = document.getElementById("vim-toggle") as HTMLInputElement | null;
     if (vimToggle) {
+      const savedVim = localStorage.getItem("donut:vim") === "true";
+      vimToggle.checked = savedVim;
+      if (savedVim) this.editor.toggleVim();
       vimToggle.addEventListener("change", () => {
-        this.editor.toggleVim();
+        const enabled = this.editor.toggleVim();
+        localStorage.setItem("donut:vim", String(enabled));
       });
     }
   }
