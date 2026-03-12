@@ -112,6 +112,14 @@ export class App {
         this.updateEvalResult();
       });
     }
+
+    // Vim toggle
+    const vimToggle = document.getElementById("vim-toggle") as HTMLInputElement | null;
+    if (vimToggle) {
+      vimToggle.addEventListener("change", () => {
+        this.editor.toggleVim();
+      });
+    }
   }
 
   private onCodeChange(code: string) {

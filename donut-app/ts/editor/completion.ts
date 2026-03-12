@@ -1,9 +1,14 @@
 import {
   autocompletion,
+  acceptCompletion,
+  completionStatus,
+  currentCompletions,
   type CompletionContext,
   type CompletionResult,
 } from "@codemirror/autocomplete";
+import { keymap, type EditorView } from "@codemirror/view";
 import type { CompletionData } from "../wasm-api";
+import dictText from "./unicode-dict.txt";
 
 let currentCompletion: CompletionData = { scopes: {}, dot_prefixes: {} };
 
@@ -11,12 +16,100 @@ export function updateCompletionData(completion: CompletionData): void {
   currentCompletion = completion;
 }
 
+// --- Unicode dictionary ---
+
+interface UnicodeEntry {
+  key: string; // e.g. "alpha"
+  symbol: string; // e.g. "α"
+}
+
+const unicodeDict: UnicodeEntry[] = [];
+
+{
+  const lines = dictText.split("\n");
+  for (let i = 4; i < lines.length; i++) {
+    const line = lines[i];
+    const spaceIdx = line.indexOf(" ");
+    if (spaceIdx <= 0) continue;
+    const key = line.slice(0, spaceIdx).trim();
+    const symbol = line.slice(spaceIdx + 1).trim();
+    if (key && symbol) unicodeDict.push({ key, symbol });
+  }
+}
+
+function unicodeCompletionSource(
+  context: CompletionContext
+): CompletionResult | null {
+  const { state, pos } = context;
+  const line = state.doc.lineAt(pos);
+  const textBefore = line.text.slice(0, pos - line.from);
+
+  // Match \something at the end
+  const match = textBefore.match(/\\([^\s\\]*)$/);
+  if (!match) return null;
+
+  const typed = match[1]; // text after backslash
+  const from = pos - match[0].length; // include the backslash
+
+  if (typed.length === 0) return null;
+
+  // Collect and rank candidates
+  const exact: typeof options = [];
+  const prefix: typeof options = [];
+  const contains: typeof options = [];
+  type Option = {
+    label: string;
+    displayLabel: string;
+    apply: string;
+    boost: number;
+  };
+  const options: Option[] = [];
+
+  for (const entry of unicodeDict) {
+    if (entry.key === typed) {
+      exact.push(entry);
+    } else if (entry.key.startsWith(typed)) {
+      prefix.push(entry);
+    } else if (entry.key.includes(typed)) {
+      contains.push(entry);
+    }
+  }
+
+  // Sort prefix and contains by key length (shorter = more relevant)
+  prefix.sort((a, b) => a.key.length - b.key.length);
+  contains.sort((a, b) => a.key.length - b.key.length);
+
+  const ranked = [...exact, ...prefix, ...contains];
+  for (let i = 0; i < ranked.length && i < 200; i++) {
+    const entry = ranked[i];
+    options.push({
+      label: "\\" + entry.key,
+      displayLabel: `${entry.symbol} \\${entry.key}`,
+      apply: entry.symbol + " ",
+      boost: -i,
+    });
+  }
+
+  if (options.length === 0) return null;
+
+  return {
+    from,
+    options,
+    filter: false,
+  };
+}
+
+// --- Donut language completion ---
+
 function donutCompletionSource(
   context: CompletionContext
 ): CompletionResult | null {
   const { state, pos } = context;
   const line = state.doc.lineAt(pos);
   const textBefore = line.text.slice(0, pos - line.from);
+
+  // Don't trigger language completion if we're in a backslash sequence
+  if (textBefore.match(/\\[^\s\\]*$/)) return null;
 
   // Dot completion: check if cursor is right after a dot
   const dotMatch = textBefore.match(/(\w[\w.]*)\.$/);
@@ -98,7 +191,22 @@ function sortBoost(
   return 0;
 }
 
-export const donutCompletion = autocompletion({
-  override: [donutCompletionSource],
-  activateOnTyping: true,
-});
+export const donutCompletion = [
+  autocompletion({
+    override: [unicodeCompletionSource, donutCompletionSource],
+    activateOnTyping: true,
+  }),
+  keymap.of([
+    {
+      key: " ",
+      run: (view: EditorView) => {
+        if (completionStatus(view.state) !== "active") return false;
+        const completions = currentCompletions(view.state);
+        if (completions.length > 0 && completions[0].label.startsWith("\\")) {
+          return acceptCompletion(view);
+        }
+        return false;
+      },
+    },
+  ]),
+];

@@ -27,6 +27,10 @@ module.exports = {
         },
         exclude: /node_modules/,
       },
+      {
+        test: /unicode-dict\.txt$/,
+        type: "asset/source",
+      },
     ],
   },
   devServer: {

@@ -17,6 +17,16 @@ export const donutTheme = EditorView.theme(
     ".cm-cursor, .cm-dropCursor": {
       borderLeftColor: "#d4d4d4",
     },
+    "&.cm-focused .cm-fat-cursor": {
+      background: "rgba(180, 180, 180, 0.5)",
+    },
+    ".cm-fat-cursor": {
+      background: "rgba(180, 180, 180, 0.3)",
+    },
+    "&:not(.cm-focused) .cm-fat-cursor": {
+      background: "transparent !important",
+      outline: "none !important",
+    },
     "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection":
       {
         backgroundColor: "#264f78",

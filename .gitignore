@@ -4,5 +4,7 @@ target/
 *.pdb
 
 node_modules/
+donut-app/dist/
+docs/book/
 
 .claude/

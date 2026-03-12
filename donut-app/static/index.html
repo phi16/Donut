@@ -195,6 +195,19 @@
         flex-direction: column;
         overflow: hidden;
       }
+      #editor-toolbar {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 4px 8px;
+        flex-shrink: 0;
+      }
+      #editor-toolbar label {
+        color: #888;
+        font-family: 'Consolas', 'Monaco', monospace;
+        font-size: 12px;
+        cursor: pointer;
+      }
       #code-editor-cm {
         flex: 1 1 0;
         overflow: auto;
@@ -259,6 +272,9 @@
 
       <!-- Right: Code editor -->
       <div id="panel-editor">
+        <div id="editor-toolbar">
+          <label><input type="checkbox" id="vim-toggle"> Vim</label>
+        </div>
         <div id="code-editor-cm"></div>
         <div id="diagnostics"></div>
       </div>

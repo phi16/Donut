@@ -1,9 +1,10 @@
-import { EditorState } from "@codemirror/state";
+import { EditorState, Compartment } from "@codemirror/state";
 import { EditorView, keymap, lineNumbers } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { bracketMatching, indentOnInput } from "@codemirror/language";
 import { acceptCompletion, closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
 import { lintGutter } from "@codemirror/lint";
+import { vim } from "@replit/codemirror-vim";
 import { donutTheme } from "./theme";
 import { highlightField, setTokens } from "./highlighting";
 import { applyDiagnostics } from "./diagnostics";
@@ -16,13 +17,18 @@ export interface EditorHandle {
   getCode(): string;
   setCode(code: string): void;
   applyAnalysis(result: AnalysisResult): void;
+  toggleVim(): boolean;
 }
+
+const vimCompartment = new Compartment();
 
 export function createEditor(
   container: HTMLElement,
   initialCode: string,
   onChange: (code: string) => void
 ): EditorHandle {
+  let vimEnabled = false;
+
   const updateListener = EditorView.updateListener.of((update) => {
     if (update.docChanged) {
       onChange(update.state.doc.toString());
@@ -32,6 +38,7 @@ export function createEditor(
   const state = EditorState.create({
     doc: initialCode,
     extensions: [
+      vimCompartment.of([]),
       lineNumbers(),
       history(),
       indentOnInput(),
@@ -86,6 +93,13 @@ export function createEditor(
 
       // Update completion data
       updateCompletionData(result.completion);
+    },
+    toggleVim(): boolean {
+      vimEnabled = !vimEnabled;
+      view.dispatch({
+        effects: vimCompartment.reconfigure(vimEnabled ? vim() : []),
+      });
+      return vimEnabled;
     },
   };
 }
