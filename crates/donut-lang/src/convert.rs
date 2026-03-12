@@ -1,7 +1,6 @@
 use crate::types::common::*;
 use crate::types::semtree;
 use crate::types::syntree;
-use crate::types::token::Token;
 
 // --- From impls (syntree → semtree) ---
 
@@ -42,11 +41,11 @@ impl From<syntree::Op> for semtree::Op {
 // --- Parametric trait ---
 
 trait Parametric: Sized {
-    fn convert_params(c: &mut Converter<'_>, params: syntree::Params) -> semtree::Params<Self>;
+    fn convert_params(c: &mut Converter, params: syntree::Params) -> semtree::Params<Self>;
 }
 
 impl Parametric for semtree::ParamDecl {
-    fn convert_params(c: &mut Converter<'_>, params: syntree::Params) -> semtree::Params<Self> {
+    fn convert_params(c: &mut Converter, params: syntree::Params) -> semtree::Params<Self> {
         let syntree::Params(_open, param_list, _close) = params;
         let mut result = Vec::new();
         for param_a in param_list {
@@ -77,7 +76,7 @@ impl Parametric for semtree::ParamDecl {
 }
 
 impl Parametric for semtree::ParamVal {
-    fn convert_params(c: &mut Converter<'_>, params: syntree::Params) -> semtree::Params<Self> {
+    fn convert_params(c: &mut Converter, params: syntree::Params) -> semtree::Params<Self> {
         let syntree::Params(_open, param_list, _close) = params;
         let mut result = Vec::new();
         for param_a in param_list {
@@ -114,23 +113,21 @@ impl Parametric for semtree::ParamVal {
 
 // --- Converter ---
 
-struct Converter<'a> {
-    tokens: &'a [Token<'a>],
+type Error = SpanError;
+
+struct Converter {
     errors: Vec<Error>,
 }
 
-impl<'a> Converter<'a> {
-    fn new(tokens: &'a [Token<'a>]) -> Self {
+impl Converter {
+    fn new() -> Self {
         Self {
-            tokens,
             errors: Vec::new(),
         }
     }
 
     fn error_at(&mut self, span: &TokenSpan, msg: impl Into<String>) {
-        if let Some(token) = self.tokens.get(span.start) {
-            self.errors.push((token.pos.clone(), msg.into()));
-        }
+        self.errors.push((span.clone(), msg.into()));
     }
 
     // --- Param helpers ---
@@ -684,11 +681,10 @@ fn try_as_number_literal(path: &syntree::Path) -> Option<String> {
     }
 }
 
-pub fn convert<'a>(
+pub fn convert(
     program: A<syntree::Program>,
-    tokens: &[Token<'a>],
-) -> (semtree::Program, Vec<Error>) {
-    let mut converter = Converter::new(tokens);
+) -> (semtree::Program, Vec<SpanError>) {
+    let mut converter = Converter::new();
     let result = match program {
         A::Accepted(prog, _) => semtree::Program(converter.convert_decls(prog.0)),
         A::Error(_) => semtree::Program(vec![]),

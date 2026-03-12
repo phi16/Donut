@@ -1,9 +1,8 @@
 use std::collections::HashMap;
 
-use crate::types::common::{Error, TokenSpan};
+use crate::types::common::{SpanError, TokenSpan};
 use crate::types::env::{self, ArrowTy, DisplayContext, Meta, Ty};
 use crate::types::item::*;
-use crate::types::token::Token;
 use donut_core::cell::Diagram;
 use donut_core::cell::Globular;
 use donut_core::common::{Axis, ExtId, Level, Prim, PrimId, PureVal};
@@ -20,9 +19,10 @@ struct FunctorMap {
     dim_shift: i32,
 }
 
+type Error = SpanError;
+
 struct Checker<'a> {
     program: &'a Program,
-    tokens: &'a [Token<'a>],
 
     // Output
     env_items: Vec<Option<env::Item>>,
@@ -56,12 +56,11 @@ impl<'a> DisplayContext for Checker<'a> {
 }
 
 impl<'a> Checker<'a> {
-    fn new(program: &'a Program, tokens: &'a [Token<'a>]) -> Self {
+    fn new(program: &'a Program) -> Self {
         let n_items = program.items.len();
         let n_defs = program.defs.len();
         let mut checker = Checker {
             program,
-            tokens,
             env_items: (0..n_items).map(|_| None).collect(),
             env_defs: (0..n_defs).map(|_| None).collect(),
             prim_item: HashMap::new(),
@@ -96,9 +95,7 @@ impl<'a> Checker<'a> {
     }
 
     fn error_at(&mut self, span: &TokenSpan, msg: impl Into<String>) {
-        if let Some(token) = self.tokens.get(span.start) {
-            self.errors.push((token.pos.clone(), msg.into()));
-        }
+        self.errors.push((span.clone(), msg.into()));
     }
 
     fn fresh_prim_id(&mut self) -> PrimId {
@@ -1208,8 +1205,8 @@ fn apply_functor(
 
 // --- Public API ---
 
-pub fn check(program: &Program, tokens: &[Token]) -> (env::Env, Vec<Error>) {
-    let mut checker = Checker::new(program, tokens);
+pub fn check(program: &Program) -> (env::Env, Vec<SpanError>) {
+    let mut checker = Checker::new(program);
     let root_lookup = checker.process_trees(&program.def_order);
     checker.into_result(root_lookup)
 }

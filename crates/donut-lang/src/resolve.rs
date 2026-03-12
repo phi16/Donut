@@ -1,7 +1,6 @@
 use crate::types::common::*;
 use crate::types::item::*;
 use crate::types::semtree;
-use crate::types::token::Token;
 use std::collections::{HashMap, HashSet};
 
 // --- Number path detection ---
@@ -288,9 +287,9 @@ fn item_kind_from_op(op: &semtree::AssignOp, has_body: bool) -> Option<ItemKind>
 
 // --- Checker ---
 
-struct Checker<'a> {
-    tokens: &'a [Token<'a>],
+type Error = SpanError;
 
+struct Checker {
     // Arenas
     items: Vec<Item>,
     defs: Vec<Def>,
@@ -326,10 +325,9 @@ struct Checker<'a> {
     def_order_stack: Vec<Vec<DefTree>>,
 }
 
-impl<'a> Checker<'a> {
-    fn new(tokens: &'a [Token<'a>]) -> Self {
+impl Checker {
+    fn new() -> Self {
         let mut checker = Checker {
-            tokens,
             items: Vec::new(),
             defs: Vec::new(),
             vals: Vec::new(),
@@ -646,9 +644,7 @@ impl<'a> Checker<'a> {
     // --- Error reporting ---
 
     fn error_at(&mut self, span: &TokenSpan, msg: impl Into<String>) {
-        if let Some(token) = self.tokens.get(span.start) {
-            self.errors.push((token.pos.clone(), msg.into()));
-        }
+        self.errors.push((span.clone(), msg.into()));
     }
 
     // --- Scope management ---
@@ -933,7 +929,7 @@ impl<'a> Checker<'a> {
     fn resolve_import(&mut self, source: &str) -> Module {
         let (tokens, _, _) = crate::tokenize::tokenize(source);
         let (program, _) = crate::parse::parse(&tokens);
-        let (sem_prog, _) = crate::convert::convert(program, &tokens);
+        let (sem_prog, _) = crate::convert::convert(program);
         self.resolve_decls(sem_prog.0)
     }
 
@@ -1622,16 +1618,15 @@ fn builtin_source(name: &str) -> Option<&'static str> {
 
 // --- Public API ---
 
-pub fn resolve(program: semtree::Program, tokens: &[Token]) -> (Program, Vec<Error>) {
-    resolve_with_sources(program, tokens, HashMap::new())
+pub fn resolve(program: semtree::Program) -> (Program, Vec<SpanError>) {
+    resolve_with_sources(program, HashMap::new())
 }
 
 pub fn resolve_with_sources(
     program: semtree::Program,
-    tokens: &[Token],
     extra_sources: HashMap<String, String>,
-) -> (Program, Vec<Error>) {
-    let mut checker = Checker::new(tokens);
+) -> (Program, Vec<SpanError>) {
+    let mut checker = Checker::new();
     checker.extra_sources = extra_sources;
     let (root, def_order) = checker.resolve_decls_root(program.0);
     let prog = Program {

@@ -267,6 +267,18 @@ fn collect_diags(
     diags.extend(errors.iter().map(|(pos, msg)| to_diag(pos, msg, source)));
 }
 
+fn collect_span_diags(
+    diags: &mut Vec<Diagnostic>,
+    errors: &[(types::common::TokenSpan, String)],
+    tokens: &[types::token::Token],
+    source: &'static str,
+) {
+    diags.extend(errors.iter().filter_map(|(span, msg)| {
+        let pos = &tokens.get(span.start)?.pos;
+        Some(to_diag(pos, msg, source))
+    }));
+}
+
 // --- Main analysis (UTF-8 positions) ---
 
 pub fn analyze(code: &str) -> AnalysisResult {
@@ -311,16 +323,16 @@ pub fn analyze(code: &str) -> AnalysisResult {
     let (token_data, dot_prefixes) = ctx.into_parts();
 
     // convert（意味解析）を実行
-    let (sem_program, convert_errors) = donut_lang::convert::convert(program, &tokens);
-    collect_diags(&mut diags, &convert_errors, "[convert]");
+    let (sem_program, convert_errors) = donut_lang::convert::convert(program);
+    collect_span_diags(&mut diags, &convert_errors, &tokens, "[convert]");
 
     // resolve（名前解決）を実行
-    let (resolved, resolve_errors) = donut_lang::resolve::resolve(sem_program, &tokens);
-    collect_diags(&mut diags, &resolve_errors, "[resolve]");
+    let (resolved, resolve_errors) = donut_lang::resolve::resolve(sem_program);
+    collect_span_diags(&mut diags, &resolve_errors, &tokens, "[resolve]");
 
     // check（型検査）を実行
-    let (env, check_errors) = donut_lang::check::check(&resolved, &tokens);
-    collect_diags(&mut diags, &check_errors, "[check]");
+    let (env, check_errors) = donut_lang::check::check(&resolved);
+    collect_span_diags(&mut diags, &check_errors, &tokens, "[check]");
 
     // hover map とスタイルオーバーライドを構築
     let flat = FlatEnv::build(&env);

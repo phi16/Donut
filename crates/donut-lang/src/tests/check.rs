@@ -11,20 +11,23 @@ use donut_core::pure_cell::PureCell;
 fn run_check(code: &str) -> (env::Env, Vec<String>) {
     let (tokens, _, _) = tokenize(code.trim());
     let (program, _) = parse(&tokens);
-    let (sem_prog, conv_errors) = convert(program, &tokens);
+    let (sem_prog, conv_errors) = convert(program);
     assert!(
         conv_errors.is_empty(),
         "unexpected convert errors: {conv_errors:?}"
     );
-    let (program, res_errors) = resolve(sem_prog, &tokens);
+    let (program, res_errors) = resolve(sem_prog);
     assert!(
         res_errors.is_empty(),
         "unexpected resolve errors: {res_errors:?}"
     );
-    let (env, errors) = check(&program, &tokens);
+    let (env, errors) = check(&program);
     let error_msgs: Vec<String> = errors
         .into_iter()
-        .map(|(pos, msg)| format!("{}:{}: {}", pos.line, pos.col, msg))
+        .map(|(span, msg)| {
+            let pos = &tokens[span.start].pos;
+            format!("{}:{}: {}", pos.line, pos.col, msg)
+        })
         .collect();
     (env, error_msgs)
 }

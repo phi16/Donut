@@ -191,7 +191,7 @@ fn c(code: &str) -> String {
     assert!(tok_errors.is_empty(), "tokenize errors: {tok_errors:?}");
     let (program, parse_errors) = parse(&tokens);
     assert!(parse_errors.is_empty(), "parse errors: {parse_errors:?}");
-    let (result, conv_errors) = convert(program, &tokens);
+    let (result, conv_errors) = convert(program);
     assert!(conv_errors.is_empty(), "convert errors: {conv_errors:?}");
     pretty_sem(&result)
 }
@@ -199,7 +199,7 @@ fn c(code: &str) -> String {
 fn conv_errs(code: &str) -> Vec<String> {
     let (tokens, _, _) = tokenize(code.trim());
     let (program, _) = parse(&tokens);
-    let (_, errors) = convert(program, &tokens);
+    let (_, errors) = convert(program);
     errors.into_iter().map(|(_, msg)| msg).collect()
 }
 

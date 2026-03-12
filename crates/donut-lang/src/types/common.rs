@@ -6,6 +6,7 @@ pub struct TokenPos {
 }
 
 pub type Error = (TokenPos, String);
+pub type SpanError = (TokenSpan, String);
 
 #[derive(Debug, Clone)]
 pub struct TokenSpan {

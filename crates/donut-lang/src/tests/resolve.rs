@@ -6,12 +6,12 @@ use crate::types::item::*;
 fn check_errs(code: &str) -> Vec<String> {
     let (tokens, _, _) = tokenize(code.trim());
     let (program, _) = parse(&tokens);
-    let (sem_prog, conv_errors) = convert(program, &tokens);
+    let (sem_prog, conv_errors) = convert(program);
     assert!(
         conv_errors.is_empty(),
         "unexpected convert errors: {conv_errors:?}"
     );
-    let (_program, errors) = crate::resolve::resolve(sem_prog, &tokens);
+    let (_program, errors) = crate::resolve::resolve(sem_prog);
     errors.into_iter().map(|(_, msg)| msg).collect()
 }
 
@@ -23,12 +23,12 @@ fn check_ok(code: &str) {
 fn check_module(code: &str) -> Program {
     let (tokens, _, _) = tokenize(code.trim());
     let (program, _) = parse(&tokens);
-    let (sem_prog, conv_errors) = convert(program, &tokens);
+    let (sem_prog, conv_errors) = convert(program);
     assert!(
         conv_errors.is_empty(),
         "unexpected convert errors: {conv_errors:?}"
     );
-    let (program, errors) = crate::resolve::resolve(sem_prog, &tokens);
+    let (program, errors) = crate::resolve::resolve(sem_prog);
     assert!(errors.is_empty(), "unexpected errors: {errors:?}");
     program
 }
@@ -805,7 +805,7 @@ fn multi_name_with_assignment_error() {
     let code = "T = \"t\"\na b = \"x\"";
     let (tokens, _, _) = crate::tokenize::tokenize(code.trim());
     let (program, _) = crate::parse::parse(&tokens);
-    let (_, conv_errors) = crate::convert::convert(program, &tokens);
+    let (_, conv_errors) = crate::convert::convert(program);
     assert!(
         !conv_errors.is_empty(),
         "expected convert error for multi-name assignment"

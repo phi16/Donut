@@ -50,8 +50,8 @@ fn main() {
         // Tokenize → Parse → Convert → Resolve
         let (tokens, _, tok_errors) = donut_lang::tokenize::tokenize(&code);
         let (program, parse_errors) = donut_lang::parse::parse(&tokens);
-        let (sem_prog, conv_errors) = donut_lang::convert::convert(program, &tokens);
-        let (resolved, resolve_errors) = donut_lang::resolve::resolve(sem_prog, &tokens);
+        let (sem_prog, conv_errors) = donut_lang::convert::convert(program);
+        let (resolved, resolve_errors) = donut_lang::resolve::resolve(sem_prog);
 
         // Show resolve output if requested
         if show_resolve {
@@ -59,18 +59,20 @@ fn main() {
         }
 
         // Check
-        let (env, check_errors) = donut_lang::check::check(&resolved, &tokens);
+        let (env, check_errors) = donut_lang::check::check(&resolved);
 
         // Collect all errors
+        let span_to_pos = |span: &donut_lang::types::common::TokenSpan| {
+            tokens.get(span.start).map(|t| t.pos.clone())
+        };
         let mut errors = Vec::new();
-        for (pos, msg) in tok_errors
-            .into_iter()
-            .chain(parse_errors)
-            .chain(conv_errors)
-            .chain(resolve_errors)
-            .chain(check_errors)
-        {
+        for (pos, msg) in tok_errors.into_iter().chain(parse_errors) {
             errors.push(format!("{}:{}: {}", pos.line + 1, pos.col + 1, msg));
+        }
+        for (span, msg) in conv_errors.into_iter().chain(resolve_errors).chain(check_errors) {
+            if let Some(pos) = span_to_pos(&span) {
+                errors.push(format!("{}:{}: {}", pos.line + 1, pos.col + 1, msg));
+            }
         }
 
         if !errors.is_empty() {
