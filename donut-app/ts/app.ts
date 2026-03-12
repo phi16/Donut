@@ -17,7 +17,6 @@ export class App {
   private mouseX = 0;
   private mouseY = 0;
   private pressing = false;
-  private showGlsl = false;
   private showShader = true;
 
   private debounceTimer: number | null = null;
@@ -95,12 +94,18 @@ export class App {
       }
     });
 
-    // GLSL toggle
-    const glslToggle = document.getElementById("glsl-toggle") as HTMLInputElement | null;
-    if (glslToggle) {
-      glslToggle.addEventListener("change", () => {
-        this.showGlsl = glslToggle.checked;
-        this.updateEvalResult();
+    // Settings popup
+    const settingsBtn = document.getElementById("settings-btn");
+    const settingsPopup = document.getElementById("settings-popup");
+    if (settingsBtn && settingsPopup) {
+      settingsBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        settingsPopup.classList.toggle("visible");
+      });
+      window.addEventListener("click", (e) => {
+        if (!settingsPopup.contains(e.target as Node)) {
+          settingsPopup.classList.remove("visible");
+        }
       });
     }
 
@@ -176,22 +181,15 @@ export class App {
     let text = evalText;
     let shaderShown = false;
 
-    if (this.showGlsl || this.showShader) {
-      const glsl = this.engine.compile_glsl();
-      if (glsl && this.showGlsl) {
-        text += "\n\n--- GLSL ---\n" + glsl;
-      }
-
-      if (this.showShader && this.shaderViewport) {
-        const parts = this.engine.compile_fragment_parts();
-        if (parts) {
-          try {
-            this.shaderViewport.setShader(parts[0], parts[1]);
-            this.shaderViewport.show();
-            shaderShown = true;
-          } catch (e: any) {
-            text += `\nshader error: ${e}`;
-          }
+    if (this.showShader && this.shaderViewport) {
+      const parts = this.engine.compile_fragment_parts();
+      if (parts) {
+        try {
+          this.shaderViewport.setShader(parts[0], parts[1]);
+          this.shaderViewport.show();
+          shaderShown = true;
+        } catch (e: any) {
+          text += `\nshader error: ${e}`;
         }
       }
     }
