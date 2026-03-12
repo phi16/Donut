@@ -129,7 +129,7 @@ fn draw_crosshair(
 
 fn draw_tooltip(context: &web_sys::CanvasRenderingContext2d, text: &str, x: R, y: R) {
     context.set_fill_style_str("rgb(255 255 255)");
-    context.set_font("14px monospace");
+    context.set_font("14px Noto Sans Mono, monospace");
     let _ = context.fill_text(text, x, y);
 }
 
@@ -138,12 +138,7 @@ fn draw_params(engine: &Engine, context: &web_sys::CanvasRenderingContext2d, x: 
     if text.is_empty() {
         return;
     }
-    if let Some(color) = engine.selected_color() {
-        context.set_fill_style_str(&format!(
-            "rgba({}, {}, {}, 0.8)",
-            color.r(), color.g(), color.b()
-        ));
-    }
-    context.set_font("20px monospace");
+    context.set_fill_style_str("rgba(200, 200, 200, 0.8)");
+    context.set_font("20px Noto Sans Mono, monospace");
     let _ = context.fill_text(&text, x, y);
 }

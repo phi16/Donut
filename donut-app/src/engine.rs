@@ -202,6 +202,9 @@ impl Engine {
             return format!("{}: meta", def.lname);
         };
         let sig = env.display_def_signature(def);
+        if !def.params.is_empty() {
+            return format!("{}\nparametric", sig);
+        }
         let eval_str = match self.runtime.eval_check(&expanded, &self.prim_names) {
             Some(reason) => reason,
             None => match self.runtime.eval(&expanded, &[], &self.prim_names) {
@@ -213,6 +216,10 @@ impl Engine {
     }
 
     pub fn is_evaluable(&self) -> bool {
+        let Some(selected) = self.selected else { return false };
+        if !self.env().defs[selected.0].params.is_empty() {
+            return false;
+        }
         let Some((_, expanded)) = self.selected_expanded() else {
             return false;
         };
