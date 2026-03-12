@@ -287,46 +287,22 @@ impl Env {
         display_ty(self, ty)
     }
 
-    /// Display a def's own parameters: `[x: C → C, f: x → x]`
-    pub fn display_params(&self, def: &Def) -> String {
-        if def.params.is_empty() {
+    /// Format params as `[x: *, y: x → x]` using a given display context.
+    fn format_params(&self, ctx: &impl DisplayContext, params: &[ItemId]) -> String {
+        if params.is_empty() {
             return String::new();
         }
-        let ctx = DefDisplayContext::from_def(self, def);
-        let params: Vec<String> = def.params.iter().map(|&item_id| {
+        let params: Vec<String> = params.iter().map(|&item_id| {
             let item = &self.items[item_id.0];
-            format!("{}: {}", item.lname, display_ty(&ctx, &item.ty))
+            format!("{}: {}", item.lname, display_ty(ctx, &item.ty))
         }).collect();
         format!("[{}]", params.join(", "))
     }
 
-    /// Display qname with ancestor parameters at correct positions: `M[x: *].a`
-    pub fn display_def_name(&self, def: &Def) -> String {
-        let all_params = self.collect_ancestor_params(def);
-        let ctx = DefDisplayContext { env: self, params: &all_params };
-        let segments: Vec<&str> = def.qname.split('.').collect();
-        let mut result = String::new();
-        let mut current = &self.root;
-        for (i, &seg) in segments.iter().enumerate() {
-            if i > 0 {
-                result.push('.');
-            }
-            result.push_str(seg);
-            if let Some(child) = current.lookup.get(seg) {
-                if let Some(def_id) = child.this {
-                    let ancestor = &self.defs[def_id.0];
-                    if !ancestor.params.is_empty() {
-                        let params: Vec<String> = ancestor.params.iter().map(|&item_id| {
-                            let item = &self.items[item_id.0];
-                            format!("{}: {}", item.lname, display_ty(&ctx, &item.ty))
-                        }).collect();
-                        result.push_str(&format!("[{}]", params.join(", ")));
-                    }
-                }
-                current = child;
-            }
-        }
-        result
+    /// Display a def's own parameters: `[x: C → C, f: x → x]`
+    pub fn display_params(&self, def: &Def) -> String {
+        let ctx = DefDisplayContext::from_def(self, def);
+        self.format_params(&ctx, &def.params)
     }
 
     /// Display type using def's parameter context (lname for params)
@@ -342,19 +318,11 @@ impl Env {
     }
 
     /// Display full def signature: `M[x: *].a: *`
-    /// Uses ancestor params for both name and type display.
+    /// Walks the Module tree once to collect ancestor params and build the name.
     pub fn display_def_signature(&self, def: &Def) -> String {
-        // Collect all ancestor params + own params
-        let all_params = self.collect_ancestor_params(def);
-        let name = self.display_def_name(def);
-        let ctx = DefDisplayContext { env: self, params: &all_params };
-        let ty_str = display_ty(&ctx, &def.ty);
-        format!("{}: {}", name, ty_str)
-    }
-
-    /// Collect params from all ancestors (via Module tree) plus own params.
-    fn collect_ancestor_params(&self, def: &Def) -> Vec<ItemId> {
         let segments: Vec<&str> = def.qname.split('.').collect();
+
+        // Walk Module tree: collect all ancestor params and build name with params
         let mut all_params = Vec::new();
         let mut current = &self.root;
         for &seg in &segments {
@@ -365,7 +333,26 @@ impl Env {
                 current = child;
             }
         }
-        all_params
+
+        let ctx = DefDisplayContext { env: self, params: &all_params };
+
+        // Build name: M[x: *].a
+        let mut name = String::new();
+        let mut current = &self.root;
+        for (i, &seg) in segments.iter().enumerate() {
+            if i > 0 {
+                name.push('.');
+            }
+            name.push_str(seg);
+            if let Some(child) = current.lookup.get(seg) {
+                if let Some(def_id) = child.this {
+                    name.push_str(&self.format_params(&ctx, &self.defs[def_id.0].params));
+                }
+                current = child;
+            }
+        }
+
+        format!("{}: {}", name, display_ty(&ctx, &def.ty))
     }
 
     pub fn def_color<'a>(&self, def: &'a Def) -> &'a Color {

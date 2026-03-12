@@ -4,7 +4,7 @@ use donut_lang::types::token;
 use std::collections::HashMap;
 
 use super::{
-    build_entry_info_by_id, EntryInfo, FlatEnv, HoverInfo, TokenType,
+    build_entry_info, EntryInfo, FlatEnv, HoverInfo, TokenType,
 };
 
 pub(super) struct HoverBuilder<'a> {
@@ -125,7 +125,7 @@ impl<'a> HoverBuilder<'a> {
             Ref::Def(def_id) => {
                 let env_def = &self.env.defs[def_id.0];
                 let signature = self.env.display_def_signature(env_def);
-                let entry = build_entry_info_by_id(*def_id, self.env, self.flat);
+                let entry = build_entry_info(*def_id, self.env, self.flat);
                 let tags = entry.tags();
                 self.map.insert(
                     token_index,
@@ -192,7 +192,7 @@ impl<'a> HoverBuilder<'a> {
         // Definition site hover
         let env_def = &self.env.defs[def_id.0];
         let signature = self.env.display_def_signature(env_def);
-        let entry = build_entry_info_by_id(def_id, self.env, self.flat);
+        let entry = build_entry_info(def_id, self.env, self.flat);
         let tags = entry.tags();
         self.map.insert(
             def.span.start,

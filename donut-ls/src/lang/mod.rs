@@ -221,22 +221,8 @@ impl FlatEnv {
 
 // --- Shared hover/completion info construction ---
 
-/// Build EntryInfo for an entry by qualified name.
-fn build_entry_info(qname: &str, env: &Env, flat: &FlatEnv) -> Option<EntryInfo> {
-    let &def_id = flat.defs.get(qname)?;
-    let def = &env.defs[def_id.0];
-    let module_kind = flat.modules.get(qname).copied();
-    let kind = def_to_kind(def);
-    Some(EntryInfo {
-        kind,
-        module_kind,
-        type_expr: Some(env.display_def_ty(def)),
-        params: env.display_params(def),
-    })
-}
-
-/// Build EntryInfo directly from a DefId (works for defs not in FlatEnv, e.g. where bindings).
-fn build_entry_info_by_id(def_id: DefId, env: &Env, flat: &FlatEnv) -> EntryInfo {
+/// Build EntryInfo from a DefId.
+fn build_entry_info(def_id: DefId, env: &Env, flat: &FlatEnv) -> EntryInfo {
     let def = &env.defs[def_id.0];
     let module_kind = flat.modules.get(&def.qname).copied();
     let kind = def_to_kind(def);

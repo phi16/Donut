@@ -25,8 +25,8 @@ pub(super) fn build_completion_data(
             .unwrap_or(0);
         let is_imported = def.origin.is_some();
 
-        let entry = if let Some(info) = build_entry_info(&def.qname, env, flat) {
-            Some(info)
+        let entry = if flat.defs.contains_key(&def.qname) {
+            Some(build_entry_info(def_id, env, flat))
         } else {
             let has_members = !def.members.entries.is_empty();
             let is_module = flat.modules.contains_key(&def.qname);
@@ -76,27 +76,14 @@ fn collect_module_members(
             let mut candidates = Vec::new();
             for (member_name, member_child) in &child.lookup {
                 let full_name = format!("{}.{}", qname, member_name);
-                let entry = if let Some(info) = build_entry_info(&full_name, env, flat) {
-                    let is_imported = env.defs[flat.defs[&full_name].0].origin.is_some();
-                    Some((info, is_imported))
-                } else if flat.modules.contains_key(&full_name) {
-                    Some((build_module_info(), true))
+                let entry = if let Some(&member_def_id) = flat.defs.get(&full_name) {
+                    let is_imported = env.defs[member_def_id.0].origin.is_some();
+                    Some((build_entry_info(member_def_id, env, flat), is_imported))
+                } else if let Some(member_def_id) = member_child.this {
+                    let def = &env.defs[member_def_id.0];
+                    Some((build_entry_info(member_def_id, env, flat), def.origin.is_some()))
                 } else {
-                    // Child has a this but no entry_info — try as module
-                    if member_child.this.is_some() {
-                        let def = &env.defs[member_child.this.unwrap().0];
-                        let is_imported = def.origin.is_some();
-                        let module_kind = flat.modules.get(&full_name).copied();
-                        let info = super::EntryInfo {
-                            kind: super::def_to_kind(def),
-                            module_kind,
-                            type_expr: Some(env.display_def_ty(def)),
-                            params: env.display_params(def),
-                        };
-                        Some((info, is_imported))
-                    } else {
-                        None
-                    }
+                    None
                 };
                 if let Some((entry, is_imported)) = entry {
                     candidates.push(CompletionCandidate {
