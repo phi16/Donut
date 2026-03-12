@@ -2,22 +2,22 @@ use donut_lang::types::common;
 use donut_lang::types::syntree;
 use std::collections::HashMap;
 
-use super::TokenType;
+use crate::TokenType;
 
-pub(super) struct Context {
-    tokens: Vec<super::TokenData>,
+pub struct Context {
+    tokens: Vec<crate::TokenData>,
     dot_prefixes: HashMap<usize, String>,
 }
 
 impl Context {
-    pub fn new(tokens: Vec<super::TokenData>) -> Self {
+    pub fn new(tokens: Vec<crate::TokenData>) -> Self {
         Self {
             tokens,
             dot_prefixes: HashMap::new(),
         }
     }
 
-    pub fn into_parts(self) -> (Vec<super::TokenData>, HashMap<usize, String>) {
+    pub fn into_parts(self) -> (Vec<crate::TokenData>, HashMap<usize, String>) {
         (self.tokens, self.dot_prefixes)
     }
 
@@ -53,7 +53,7 @@ impl Context {
     }
 }
 
-pub(super) trait Marking {
+pub trait Marking {
     fn mark(&self, x: &mut Context);
 }
 

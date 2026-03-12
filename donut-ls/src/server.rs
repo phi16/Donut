@@ -1,5 +1,5 @@
 use crate::doc::Doc;
-use crate::lang::{analyze, CompletionCandidate, TokenType};
+use crate::lang::{analyze_utf16, CompletionCandidate, TokenType};
 use colored::Colorize;
 use lsp_server::{Connection, Message, Notification, Request, Response};
 use lsp_types::*;
@@ -48,7 +48,7 @@ fn from_token_type(t: &TokenType) -> (u32, u32) {
 /// 分析を実行し、結果を Doc にキャッシュ。診断を返す。
 fn update_analysis(doc: &mut Doc) -> Vec<crate::lang::Diagnostic> {
     let contents = doc.to_string();
-    let result = analyze(&contents);
+    let result = analyze_utf16(&contents);
     doc.hover_map = result.hover_map;
     doc.completion = result.completion;
     doc.tokens = result.tokens;

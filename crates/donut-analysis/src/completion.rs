@@ -3,9 +3,9 @@ use donut_lang::types::item::Program;
 use donut_lang::types::token;
 use std::collections::HashMap;
 
-use super::{build_entry_info, build_module_info, CompletionCandidate, CompletionData, FlatEnv};
+use crate::{build_entry_info, build_module_info, CompletionCandidate, CompletionData, FlatEnv};
 
-pub(super) fn build_completion_data(
+pub(crate) fn build_completion_data(
     program: &Program,
     env: &Env,
     flat: &FlatEnv,
@@ -106,8 +106,8 @@ fn collect_module_members(
 mod tests {
     use donut_lang::types::token;
 
-    use super::super::marking::{Context, Marking};
-    use super::super::TokenType;
+    use crate::marking::{Context, Marking};
+    use crate::TokenType;
 
     fn collect_dot_prefixes(
         code: &str,
@@ -121,7 +121,7 @@ mod tests {
         let token_data: Vec<_> = tokens
             .iter()
             .enumerate()
-            .map(|(i, t)| super::super::TokenData {
+            .map(|(i, t)| crate::TokenData {
                 line: t.pos.line as u32,
                 column: t.pos.col as u32,
                 length: t.pos.len as u32,

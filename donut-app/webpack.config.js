@@ -8,11 +8,26 @@ module.exports = {
   mode: "development",
   devtool: "source-map",
   entry: {
-    index: "./js/index.js"
+    index: "./ts/index.ts"
   },
   output: {
     path: dist,
     filename: "[name].js"
+  },
+  resolve: {
+    extensions: [".ts", ".js"],
+  },
+  module: {
+    rules: [
+      {
+        test: /\.ts$/,
+        use: {
+          loader: "ts-loader",
+          options: { transpileOnly: true },
+        },
+        exclude: /node_modules/,
+      },
+    ],
   },
   devServer: {
     static: {

@@ -3,11 +3,11 @@ use donut_lang::types::item::*;
 use donut_lang::types::token;
 use std::collections::HashMap;
 
-use super::{
+use crate::{
     build_entry_info, EntryInfo, FlatEnv, HoverInfo, TokenType,
 };
 
-pub(super) struct HoverBuilder<'a> {
+pub(crate) struct HoverBuilder<'a> {
     program: &'a Program,
     env: &'a Env,
     flat: &'a FlatEnv,
@@ -105,7 +105,7 @@ impl<'a> HoverBuilder<'a> {
                     let item = &self.env.items[item_id.0];
                     let ty_str = self.env.display_ty(&item.ty);
                     let entry = EntryInfo {
-                        kind: super::item_to_kind(item),
+                        kind: crate::item_to_kind(item),
                         module_kind: None,
                         type_expr: Some(ty_str.clone()),
                         params: String::new(),
@@ -152,7 +152,7 @@ impl<'a> HoverBuilder<'a> {
             self.env.display_ty(&item.ty)
         };
         let entry = EntryInfo {
-            kind: super::item_to_kind(item),
+            kind: crate::item_to_kind(item),
             module_kind: None,
             type_expr: Some(type_expr.clone()),
             params: String::new(),

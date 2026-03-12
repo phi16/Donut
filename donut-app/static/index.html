@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <title>Donut</title>
     <style>
+      * { box-sizing: border-box; }
       #code-editor {
         position: absolute;
         top: 0;
@@ -16,17 +17,14 @@
         flex-direction: column;
         z-index: 10;
       }
-      #code-input {
+      #code-editor-cm {
         flex: 1;
         margin: 10px;
-        padding: 10px;
-        background: #2d2d2d;
-        color: #d4d4d4;
+        overflow: auto;
         border: 1px solid #444;
-        font-family: 'Consolas', 'Monaco', monospace;
-        font-size: 14px;
-        resize: none;
-        outline: none;
+      }
+      #code-editor-cm .cm-editor {
+        height: 100%;
       }
       #entry-select {
         margin: 0 10px 5px 10px;
@@ -83,7 +81,7 @@
   <body style="margin:0;padding:0;height:100%;overflow:hidden">
     <canvas id="canvas" style="display:block"></canvas>
     <div id="code-editor">
-      <textarea id="code-input" placeholder="Ctrl+Enter to update"></textarea>
+      <div id="code-editor-cm"></div>
       <select id="entry-select"></select>
       <div style="margin: 0 10px 5px 10px; display: flex; align-items: center; gap: 10px;">
         <label style="color: #888; font-family: 'Consolas', 'Monaco', monospace; font-size: 12px; cursor: pointer;">

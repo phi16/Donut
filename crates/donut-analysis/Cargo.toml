@@ -1,0 +1,7 @@
+[package]
+name = "donut-analysis"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+donut-lang = { path = "../donut-lang" }
