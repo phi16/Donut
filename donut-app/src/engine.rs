@@ -202,11 +202,11 @@ impl Engine {
             return format!("{}: meta", def.lname);
         };
         let sig = env.display_def_signature(def);
-        if !def.params.is_empty() {
-            return format!("{}\nparametric", sig);
+        if env.is_parametric(def) {
+            return format!("{}\nfailed to eval: parametric", sig);
         }
         let eval_str = match self.runtime.eval_check(&expanded, &self.prim_names) {
-            Some(reason) => reason,
+            Some(reason) => format!("failed to eval: {}", reason),
             None => match self.runtime.eval(&expanded, &[], &self.prim_names) {
                 Ok(values) => format!("= {}", donut_runtime::format_values(&values)),
                 Err(e) => format!("BUG: {}", e),
@@ -217,7 +217,7 @@ impl Engine {
 
     pub fn is_evaluable(&self) -> bool {
         let Some(selected) = self.selected else { return false };
-        if !self.env().defs[selected.0].params.is_empty() {
+        if self.env().is_parametric(&self.env().defs[selected.0]) {
             return false;
         }
         let Some((_, expanded)) = self.selected_expanded() else {
@@ -260,7 +260,7 @@ impl Engine {
         };
         let env = self.env();
         let def = &env.defs[selected.0];
-        env.display_params(def)
+        env.display_all_params(def)
     }
 
     // --- Geometry access for canvas ---

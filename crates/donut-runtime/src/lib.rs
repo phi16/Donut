@@ -117,7 +117,7 @@ impl Runtime {
         if !missing.is_empty() {
             missing.sort();
             missing.dedup();
-            return Some(format!("missing ops: {}", missing.join(", ")));
+            return Some(format!("missing runtime ops: {}", missing.join(", ")));
         }
         None
     }

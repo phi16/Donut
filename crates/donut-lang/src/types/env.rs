@@ -317,15 +317,12 @@ impl Env {
         display_ty(&ctx, ty)
     }
 
-    /// Display full def signature: `M[x: *].a: *`
-    /// Walks the Module tree once to collect ancestor params and build the name.
-    pub fn display_def_signature(&self, def: &Def) -> String {
-        let segments: Vec<&str> = def.qname.split('.').collect();
-
-        // Walk Module tree: collect all ancestor params and build name with params
+    /// Collect all parameters for a def, including ancestor params,
+    /// by walking the module tree along the def's qname path.
+    pub fn collect_all_params(&self, def: &Def) -> Vec<ItemId> {
         let mut all_params = Vec::new();
         let mut current = &self.root;
-        for &seg in &segments {
+        for seg in def.qname.split('.') {
             if let Some(child) = current.lookup.get(seg) {
                 if let Some(def_id) = child.this {
                     all_params.extend_from_slice(&self.defs[def_id.0].params);
@@ -333,6 +330,25 @@ impl Env {
                 current = child;
             }
         }
+        all_params
+    }
+
+    /// Display all parameters (own + ancestors): `[x: C → C]`
+    pub fn display_all_params(&self, def: &Def) -> String {
+        let all_params = self.collect_all_params(def);
+        let ctx = DefDisplayContext { env: self, params: &all_params };
+        self.format_params(&ctx, &all_params)
+    }
+
+    /// Whether a def is parametric (own or ancestor has parameters).
+    pub fn is_parametric(&self, def: &Def) -> bool {
+        !self.collect_all_params(def).is_empty()
+    }
+
+    /// Display full def signature: `M[x: *].a: *`
+    pub fn display_def_signature(&self, def: &Def) -> String {
+        let all_params = self.collect_all_params(def);
+        let segments: Vec<&str> = def.qname.split('.').collect();
 
         let ctx = DefDisplayContext { env: self, params: &all_params };
 
