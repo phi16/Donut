@@ -1200,23 +1200,8 @@ fn subst_any_handler(
     }
 }
 
-fn subst_pv(
-    pv: &PureVal,
-    map: &HashMap<ExtId, PureVal>,
-    prim_item: &HashMap<PrimId, ItemId>,
-) -> PureVal {
-    match pv {
-        PureVal::Cell(pc) => PureVal::Cell(subst_cell(pc, map, prim_item)),
-        _ => pv.subst_with(map, &|v, m| subst_any_handler(v, m, prim_item)),
-    }
-}
-
-fn subst_cell(
-    pc: &PureCell,
-    map: &HashMap<ExtId, PureVal>,
-    prim_item: &HashMap<PrimId, ItemId>,
-) -> PureCell {
-    let prim_handler = |prim_id: PrimId, mapping: &HashMap<ExtId, PureVal>| -> Option<PureCell> {
+fn make_prim_handler(prim_item: &HashMap<PrimId, ItemId>) -> impl Fn(PrimId, &HashMap<ExtId, PureVal>) -> Option<PureCell> + '_ {
+    move |prim_id: PrimId, mapping: &HashMap<ExtId, PureVal>| -> Option<PureCell> {
         let item_id = prim_item.get(&prim_id)?;
         let ext_id = ExtId(item_id.0 as u64);
         let replacement = mapping.get(&ext_id)?;
@@ -1224,11 +1209,30 @@ fn subst_cell(
             PureVal::Cell(cell) => Some(cell.clone()),
             _ => None,
         }
-    };
+    }
+}
+
+fn subst_pv(
+    pv: &PureVal,
+    map: &HashMap<ExtId, PureVal>,
+    prim_item: &HashMap<PrimId, ItemId>,
+) -> PureVal {
+    pv.subst_with_prim(
+        map,
+        &|v, m| subst_any_handler(v, m, prim_item),
+        &make_prim_handler(prim_item),
+    )
+}
+
+fn subst_cell(
+    pc: &PureCell,
+    map: &HashMap<ExtId, PureVal>,
+    prim_item: &HashMap<PrimId, ItemId>,
+) -> PureCell {
     pc.subst_with_prim(
         map,
         &|v, m| subst_any_handler(v, m, prim_item),
-        &prim_handler,
+        &make_prim_handler(prim_item),
     )
 }
 

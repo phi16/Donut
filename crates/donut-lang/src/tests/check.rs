@@ -213,7 +213,10 @@ fn arrow_eq_type() {
 #[test]
 fn nested_alias_to_meta() {
     let (_, errors) = run_check("A = meta\nx: A");
-    assert!(!errors.is_empty(), "user-defined meta type via alias should error");
+    assert!(
+        !errors.is_empty(),
+        "user-defined meta type via alias should error"
+    );
 }
 
 #[test]
@@ -557,21 +560,33 @@ fn incompatible_composition_errors() {
 fn param_count_too_many() {
     let (_, errors) = run_check("import \"sys\"\nx = f32.lit[1, 2]");
     assert!(!errors.is_empty(), "expected param count error");
-    assert!(errors[0].contains("expects 1 parameters, but 2 were given"), "wrong error: {}", errors[0]);
+    assert!(
+        errors[0].contains("expects 1 parameters, but 2 were given"),
+        "wrong error: {}",
+        errors[0]
+    );
 }
 
 #[test]
 fn param_count_too_few() {
     let (_, errors) = run_check("A[x: *, y: *] = { u: x → y }\nB: *\nc = A[B]");
     assert!(!errors.is_empty(), "expected param count error");
-    assert!(errors[0].contains("expects 2 parameters, but 1 were given"), "wrong error: {}", errors[0]);
+    assert!(
+        errors[0].contains("expects 2 parameters, but 1 were given"),
+        "wrong error: {}",
+        errors[0]
+    );
 }
 
 #[test]
 fn param_count_zero_given_nonzero_expected() {
     let (_, errors) = run_check("A[x: *]: * = x\nB: *\nc = A");
     assert!(!errors.is_empty(), "expected param count error");
-    assert!(errors[0].contains("expects 1 parameters, but 0 were given"), "wrong error: {}", errors[0]);
+    assert!(
+        errors[0].contains("expects 1 parameters, but 0 were given"),
+        "wrong error: {}",
+        errors[0]
+    );
 }
 
 #[test]
@@ -1056,9 +1071,7 @@ fn functor_base_case_explicit() {
 #[test]
 fn functor_negative_shift() {
     // F: D ~> C where dim(D) > dim(C)
-    check_ok(
-        "C: *\nD: C → C\nx: C → C\ny: D → D\nF: D ~> C\nF(y) = x",
-    );
+    check_ok("C: *\nD: C → C\nx: C → C\ny: D → D\nF: D ~> C\nF(y) = x");
 }
 
 // --- Qname / module name tests ---
@@ -1126,8 +1139,15 @@ fn module_body_with_ref() {
 // --- Parametric module instantiation ---
 
 fn get_member_def<'a>(env: &'a env::Env, parent: &str, child: &str) -> &'a env::Def {
-    let parent_mod = env.root.lookup.get(parent).unwrap_or_else(|| panic!("module `{}` not found", parent));
-    let child_mod = parent_mod.lookup.get(child).unwrap_or_else(|| panic!("member `{}.{}` not found", parent, child));
+    let parent_mod = env
+        .root
+        .lookup
+        .get(parent)
+        .unwrap_or_else(|| panic!("module `{}` not found", parent));
+    let child_mod = parent_mod
+        .lookup
+        .get(child)
+        .unwrap_or_else(|| panic!("member `{}.{}` not found", parent, child));
     &env.defs[child_mod.this.unwrap().0]
 }
 
@@ -1278,9 +1298,8 @@ fn nested_module_use_after_instantiation() {
 
 #[test]
 fn type_alias_in_parametric_module() {
-    let env = check_ok(
-        "cat[C: *] = {\n  T = C → C\n  x: T\n}\nu: *\nv: *\ncu = cat[u]\ncv = cat[v]",
-    );
+    let env =
+        check_ok("cat[C: *] = {\n  T = C → C\n  x: T\n}\nu: *\nv: *\ncu = cat[u]\ncv = cat[v]");
     let u = get_def(&env, "u");
     let v = get_def(&env, "v");
     let cu_x = get_member_def(&env, "cu", "x");
@@ -1378,7 +1397,9 @@ fn style_color_in_module() {
 
 #[test]
 fn nat_example_bisect() {
-    check_ok("import \"ui\"\nnat = {\n  [style.color[hue[0.33]]]\n  C: *\n  [style.color[hue[0.55]]]\n  Nat: C → C\n  [style.color[hue[0.08]]]\n  Bool: C → C\n  zero: C → Nat\n  succ: Nat → Nat\n  add: Nat Nat → Nat\n  foo: Nat → Nat\n}");
+    check_ok(
+        "import \"ui\"\nnat = {\n  [style.color[hue[0.33]]]\n  C: *\n  [style.color[hue[0.55]]]\n  Nat: C → C\n  [style.color[hue[0.08]]]\n  Bool: C → C\n  zero: C → Nat\n  succ: Nat → Nat\n  add: Nat Nat → Nat\n  foo: Nat → Nat\n}",
+    );
 }
 
 #[test]
@@ -1519,7 +1540,11 @@ fn functor_constraint_display() {
     let sig = env.display_params(h);
     eprintln!("sig = {}", sig);
     // Should contain "|" separator for constraints
-    assert!(sig.contains('|'), "display should contain '|' separator: {}", sig);
+    assert!(
+        sig.contains('|'),
+        "display should contain '|' separator: {}",
+        sig
+    );
     // Should mention F
     assert!(sig.contains("F("), "display should contain 'F(': {}", sig);
 }
@@ -1613,7 +1638,10 @@ fn functor_constraint_decl_type_at_call_site() {
     );
     let result = get_def(&env, "result");
     // result should be a cell (h[src.u] is an item with type F(src.u) ~ F(src.u) = tgt.v ~ tgt.v)
-    assert!(matches!(&result.val, PureVal::Cell(_)), "result should be a cell value");
+    assert!(
+        matches!(&result.val, PureVal::Cell(_)),
+        "result should be a cell value"
+    );
 }
 
 #[test]
@@ -1638,7 +1666,10 @@ fn functor_constraint_no_scope_leak() {
         "src = {\n  C: *\n  X: C → C\n}\ntgt = {\n  D: *\n  Y: D → D\n}\nF: src.C ~> tgt.D\nF(src.X) = tgt.Y\nh[m: src.C → src.X] = F(m)\ng = src.X",
     );
     let g = get_def(&env, "g");
-    assert!(g.reqs.is_empty(), "g should have no constraints (no scope leak)");
+    assert!(
+        g.reqs.is_empty(),
+        "g should have no constraints (no scope leak)"
+    );
 }
 
 #[test]
@@ -1647,5 +1678,41 @@ fn functor_constraint_concrete_unmapped_error() {
     let (_, errors) = run_check(
         "src = {\n  C: *\n  X: C → C\n  Y: C → C\n}\ntgt = {\n  D: *\n  A: D → D\n}\nF: src.C ~> tgt.D\nF(src.X) = tgt.A\ng = F(src.Y)",
     );
-    assert!(!errors.is_empty(), "F(src.Y) should error: Y has no mapping");
+    assert!(
+        !errors.is_empty(),
+        "F(src.Y) should error: Y has no mapping"
+    );
+}
+
+#[test]
+fn functor_constraint_decl_with_parameterized_type() {
+    // Reproducer for the user's bug report:
+    // k's type shows T[h#a]; L u R; B[h#b] ~ f(u) instead of being fully substituted
+    let (env, errors) = run_check(
+        r#"
+C D: *
+x: D → D
+
+f: D ~> C
+
+L: C → D
+R: D → C
+T[a: D → D]: f(a) → L a R
+B[a: D → D]: L a R → f(a)
+
+h[a b: D → D, u: a → b] = T[a]; L u R; B[b]
+k[a b: D → D, u: a → b]: h[a, b, u] ~ f(u)
+    "#,
+    );
+    for e in &errors {
+        eprintln!("  error: {}", e);
+    }
+    assert!(
+        errors.is_empty(),
+        "should have no errors, got: {:?}",
+        errors
+    );
+    let k = env.defs.iter().find(|d| d.lname == "k").unwrap();
+    let sig = env.display_def_signature(k);
+    eprintln!("k signature: {}", sig);
 }

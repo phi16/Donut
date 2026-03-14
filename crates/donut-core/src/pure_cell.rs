@@ -170,13 +170,22 @@ impl PureVal {
         mapping: &HashMap<ExtId, PureVal>,
         any_handler: &impl Fn(&PureVal, &HashMap<ExtId, PureVal>) -> PureVal,
     ) -> PureVal {
+        self.subst_with_prim(mapping, any_handler, &|_, _| None)
+    }
+
+    pub fn subst_with_prim(
+        &self,
+        mapping: &HashMap<ExtId, PureVal>,
+        any_handler: &impl Fn(&PureVal, &HashMap<ExtId, PureVal>) -> PureVal,
+        prim_handler: &impl Fn(PrimId, &HashMap<ExtId, PureVal>) -> Option<PureCell>,
+    ) -> PureVal {
         if mapping.is_empty() {
             return self.clone();
         }
         match self {
-            PureVal::Cell(pc) => PureVal::Cell(pc.subst_with(mapping, any_handler)),
+            PureVal::Cell(pc) => PureVal::Cell(pc.subst_with_prim(mapping, any_handler, prim_handler)),
             PureVal::App(id, args) => {
-                let new_args: Vec<PureVal> = args.iter().map(|a| a.subst_with(mapping, any_handler)).collect();
+                let new_args: Vec<PureVal> = args.iter().map(|a| a.subst_with_prim(mapping, any_handler, prim_handler)).collect();
                 if new_args.is_empty() {
                     if let Some(replacement) = mapping.get(id) {
                         return replacement.clone();
@@ -261,7 +270,7 @@ impl PureCell {
                 if let Some(replacement) = prim_handler(prim.id, mapping) {
                     return replacement;
                 }
-                let new_args = prim.args.iter().map(|a| a.subst_with(mapping, any_handler)).collect();
+                let new_args = prim.args.iter().map(|a| a.subst_with_prim(mapping, any_handler, prim_handler)).collect();
                 let new_prim = Prim::with_id_args(prim.id, new_args);
                 let new_shape = shape.subst_with_prim(mapping, any_handler, prim_handler);
                 PureCell::Prim(new_prim, new_shape, *dim)
