@@ -11,7 +11,7 @@ pub type CoordQ = Vec<Q>;
 pub type Vec1<T> = Vec<T>;
 pub type Vec2<T> = Vec<T>;
 
-/// External identifier — opaque ID used in substitution, PureVal::App, Prim, etc.
+/// External identifier — opaque ID used in substitution, PureVal::Ref/Param, Prim, etc.
 /// In donut-lang, this corresponds to GenId.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ExtId(pub u64);
@@ -93,7 +93,8 @@ impl std::fmt::Debug for AnyBox {
 #[derive(Debug, Clone, PartialEq)]
 pub enum PureVal {
     Cell(crate::pure_cell::PureCell),
-    App(ExtId, Vec<PureVal>),
+    Ref(ExtId, Vec<PureVal>),
+    Param(ExtId),
     Any(AnyBox),
 }
 
@@ -103,11 +104,12 @@ impl PureVal {
     pub fn validate(&self, any_handler: &impl Fn(&AnyBox)) {
         match self {
             PureVal::Cell(pc) => pc.validate(),
-            PureVal::App(_, args) => {
+            PureVal::Ref(_, args) => {
                 for arg in args {
                     arg.validate(any_handler);
                 }
             }
+            PureVal::Param(_) => {}
             PureVal::Any(v) => any_handler(v),
         }
     }

@@ -368,7 +368,7 @@ impl<'a> Checker<'a> {
                     )
                 }
             }
-            PureVal::App(ext_id, args) => {
+            PureVal::Ref(ext_id, args) => {
                 let idx = ext_id.0 as usize;
                 if let Some(Some(item)) = self.env_items.get(idx) {
                     if args.is_empty() {
@@ -387,6 +387,14 @@ impl<'a> Checker<'a> {
                             .collect();
                         subst_ty(&item.ty, &subst_map, &self.prim_item)
                     }
+                } else {
+                    Ty::Hole
+                }
+            }
+            PureVal::Param(ext_id) => {
+                let idx = ext_id.0 as usize;
+                if let Some(Some(item)) = self.env_items.get(idx) {
+                    item.ty.clone()
                 } else {
                     Ty::Hole
                 }
@@ -554,9 +562,9 @@ impl<'a> Checker<'a> {
                 subst_pv(&base, &subst_map, &self.prim_item)
             } else {
                 match base {
-                    PureVal::App(id, mut existing) => {
+                    PureVal::Ref(id, mut existing) => {
                         existing.extend(args);
-                        PureVal::App(id, existing)
+                        PureVal::Ref(id, existing)
                     }
                     _ => {
                         let param_entries = self.param_ext_entries(path.target);
@@ -730,7 +738,7 @@ impl<'a> Checker<'a> {
     fn level_of(&self, pv: &PureVal) -> Option<Level> {
         match pv {
             PureVal::Cell(pc) => Some(pc.dim().in_space),
-            PureVal::App(ext_id, _) => {
+            PureVal::Ref(ext_id, _) | PureVal::Param(ext_id) => {
                 let idx = ext_id.0 as usize;
                 self.env_items
                     .get(idx)?
@@ -965,7 +973,7 @@ impl<'a> Checker<'a> {
         let param_args: Vec<PureVal> = item
             .params
             .iter()
-            .map(|p| PureVal::App(ExtId(p.item.0 as u64), vec![]))
+            .map(|p| PureVal::Param(ExtId(p.item.0 as u64)))
             .collect();
 
         let (pv, prim_id) = match ty {
@@ -1014,7 +1022,12 @@ impl<'a> Checker<'a> {
                 (pv, None)
             }
             Ty::Nat | Ty::Rat | Ty::Color | Ty::Deco => {
-                (PureVal::App(ExtId(item_id.0 as u64), vec![]), None)
+                let pv = if item.kind == ItemKind::Param {
+                    PureVal::Param(ExtId(item_id.0 as u64))
+                } else {
+                    PureVal::Ref(ExtId(item_id.0 as u64), vec![])
+                };
+                (pv, None)
             }
             Ty::Functor(_, _) => {
                 unreachable!()

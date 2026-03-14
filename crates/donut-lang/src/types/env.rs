@@ -150,7 +150,7 @@ pub trait DisplayContext {
 pub fn display_pure_val(ctx: &impl DisplayContext, pv: &PureVal) -> String {
     match pv {
         PureVal::Cell(cell) => display_cell(ctx, cell),
-        PureVal::App(ext_id, args) => {
+        PureVal::Ref(ext_id, args) => {
             let name = ctx.item_cname(*ext_id);
             if args.is_empty() {
                 name.to_string()
@@ -159,6 +159,10 @@ pub fn display_pure_val(ctx: &impl DisplayContext, pv: &PureVal) -> String {
                     args.iter().map(|a| display_pure_val(ctx, a)).collect();
                 format!("{}[{}]", name, args_str.join(", "))
             }
+        }
+        PureVal::Param(ext_id) => {
+            let name = ctx.item_cname(*ext_id);
+            name.to_string()
         }
         PureVal::Any(any) => display_meta(ctx, any.inner::<Meta>()),
     }

@@ -76,7 +76,7 @@ pub struct Param {
 // --- Item ---
 // The actual entity. Identified by cname. ItemId ≈ ExtId.
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ItemKind {
     Decl,
     DeclDef, // TODO

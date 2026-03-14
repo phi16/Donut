@@ -168,30 +168,32 @@ impl PureVal {
         }
         match self {
             PureVal::Cell(pc) => Ok(PureVal::Cell(pc.subst(mapping, any_handler, prim_handler)?)),
-            PureVal::App(id, args) => {
+            PureVal::Ref(id, args) => {
                 let new_args: Vec<PureVal> = args.iter().map(|a| a.subst(mapping, any_handler, prim_handler)).collect::<Result<_>>()?;
-                if new_args.is_empty() {
-                    if let Some((replacement, ext_type)) = mapping.get(id) {
-                        return match ext_type {
-                            ExtType::Cell(level) => match replacement {
-                                PureVal::Cell(pc) => {
-                                    if pc.dim().in_space > *level {
-                                        Err(Error::IncompatibleDimension {
-                                            expected: *level,
-                                            got_dim: pc.dim().in_space,
-                                            got: pc.clone(),
-                                        })
-                                    } else {
-                                        Ok(PureVal::Cell(pc.clone().lift_to(*level)))
-                                    }
+                Ok(PureVal::Ref(*id, new_args))
+            }
+            PureVal::Param(id) => {
+                if let Some((replacement, ext_type)) = mapping.get(id) {
+                    match ext_type {
+                        ExtType::Cell(level) => match replacement {
+                            PureVal::Cell(pc) => {
+                                if pc.dim().in_space > *level {
+                                    Err(Error::IncompatibleDimension {
+                                        expected: *level,
+                                        got_dim: pc.dim().in_space,
+                                        got: pc.clone(),
+                                    })
+                                } else {
+                                    Ok(PureVal::Cell(pc.clone().lift_to(*level)))
                                 }
-                                _ => Ok(replacement.clone()),
-                            },
-                            ExtType::NonCell => Ok(replacement.clone()),
-                        };
+                            }
+                            _ => Ok(replacement.clone()),
+                        },
+                        ExtType::NonCell => Ok(replacement.clone()),
                     }
+                } else {
+                    Ok(PureVal::Param(*id))
                 }
-                Ok(PureVal::App(*id, new_args))
             }
             PureVal::Any(_) => Ok(any_handler(self, mapping)),
         }
@@ -328,8 +330,8 @@ impl fmt::Display for PureVal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             PureVal::Cell(pc) => write!(f, "{}", pc),
-            PureVal::App(id, args) => {
-                write!(f, "P{}", id)?;
+            PureVal::Ref(id, args) => {
+                write!(f, "R{}", id)?;
                 if !args.is_empty() {
                     write!(f, "[")?;
                     for (i, arg) in args.iter().enumerate() {
@@ -342,6 +344,7 @@ impl fmt::Display for PureVal {
                 }
                 Ok(())
             }
+            PureVal::Param(id) => write!(f, "P{}", id),
             PureVal::Any(v) => write!(f, "{:?}", v),
         }
     }

@@ -7,7 +7,7 @@ use donut_core::pure_cell::PureCell;
 
 /// Evaluate decorator expressions and assign auto colors.
 ///
-/// 1. Reduce all decorator PureVal::App trees to concrete Meta values
+/// 1. Reduce all decorator PureVal::Ref trees to concrete Meta values
 /// 2. For each def with a cell value, resolve final color (explicit or auto)
 pub fn decorate(env: &mut env::Env) {
     // Pass 1: reduce decorator expressions
@@ -155,13 +155,13 @@ fn golden_angle_hue(index: usize) -> f64 {
 
 fn reduce(pv: &PureVal, items: &[env::Item]) -> PureVal {
     match pv {
-        PureVal::App(ext_id, args) => {
+        PureVal::Ref(ext_id, args) => {
             let reduced: Vec<PureVal> = args.iter().map(|a| reduce(a, items)).collect();
             let cname = &items[ext_id.0 as usize].cname;
             if let Some(result) = eval_builtin(cname, &reduced) {
                 result
             } else {
-                PureVal::App(*ext_id, reduced)
+                PureVal::Ref(*ext_id, reduced)
             }
         }
         _ => pv.clone(),
