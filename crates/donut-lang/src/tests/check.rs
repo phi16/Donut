@@ -1763,29 +1763,38 @@ result = h[D, x, one]
 }
 
 #[test]
-fn dim_lift_in_param_substitution() {
-    // Simpler test: M[a: D→D]: a → a, called with M[D]
-    // D is a 0-cell, needs lifting to id(D) for param a: D→D
+fn functor_constraint_call_dim_lift() {
+    // T[a: D→D] has constraint f(a). Calling T[D] passes a 0-cell for a 1-cell param.
+    // The functor result must be dim-lifted to match the constraint prim's dimension.
     let (env, errors) = run_check(
-        "D: *\nx: D → D\nM[a: D → D]: a → a\nresult = M[D]",
+        r#"
+D: *
+x: D → D
+
+import "sys"
+
+f: D ~> C
+f(x) = i32
+
+L: C → D
+R: D → C
+T[a: D → D]: f(a) → L a R
+
+result = T[D]
+    "#,
     );
-    for e in &errors {
-        eprintln!("  error: {}", e);
-    }
     assert!(errors.is_empty(), "should have no errors, got: {:?}", errors);
     let result = get_def(&env, "result");
-    eprintln!("result val: {}", env.display_pure_val(&result.val));
     if let PureVal::Cell(pc) = &result.val {
-        eprintln!("result dim: {:?}", pc.dim());
         let expanded = env.expand_defs(pc);
-        eprintln!("expanded: {}", expanded);
         let _fc = donut_core::free_cell::FreeCell::from_pure(&expanded);
     }
 }
 
 #[test]
-fn functor_constraint_direct_call() {
-    // T[D] directly, without h wrapper
+fn functor_constraint_call_dim_lift_via_alias() {
+    // h[a b, u] = T[a]; L u R; B[b] — constraints propagate through alias.
+    // h[D, x, one] must dim-lift all constraint results properly.
     let (env, errors) = run_check(
         r#"
 D: *
@@ -1801,21 +1810,59 @@ f(one) = i32.lit[1]
 L: C → D
 R: D → C
 T[a: D → D]: f(a) → L a R
+B[a: D → D]: L a R → f(a)
 
-result = T[D]
+h[a b: D → D, u: a → b] = T[a]; L u R; B[b]
+
+result = h[D, x, one]
     "#,
     );
-    for e in &errors {
-        eprintln!("  error: {}", e);
-    }
     assert!(errors.is_empty(), "should have no errors, got: {:?}", errors);
     let result = get_def(&env, "result");
-    eprintln!("result type: {}", env.display_ty(&result.ty));
-    eprintln!("result val: {}", env.display_pure_val(&result.val));
     if let PureVal::Cell(pc) = &result.val {
-        eprintln!("result dim: {:?}", pc.dim());
         let expanded = env.expand_defs(pc);
-        eprintln!("expanded: {}", expanded);
         let _fc = donut_core::free_cell::FreeCell::from_pure(&expanded);
     }
+}
+
+#[test]
+fn functor_constraint_functor2_example() {
+    // Full functor2.donut example: f'[m] with constraint, result used concretely
+    let (env, errors) = run_check(
+        r#"
+D: *
+x: D → D
+one: D → x
+add: x x → x
+mul: x x → x
+
+import "sys"
+
+f: D ~> C
+f(x) = i32
+f(one) = i32.lit[3]
+f(add) = i32.mul
+
+L: C → D
+R: D → C
+T: C → L R
+B: L x R → f(x)
+
+f'[u: D → x] = T; L u R; B
+
+m = (one one; add) one; mul
+result = f'[m]
+
+k[m: D → x]: f'[m] ~ f(m)
+    "#,
+    );
+    assert!(errors.is_empty(), "should have no errors, got: {:?}", errors);
+    let result = get_def(&env, "result");
+    if let PureVal::Cell(pc) = &result.val {
+        let expanded = env.expand_defs(pc);
+        let _fc = donut_core::free_cell::FreeCell::from_pure(&expanded);
+    }
+    // k should have constraints for f
+    let k = env.defs.iter().find(|d| d.lname == "k").unwrap();
+    assert!(!k.reqs.is_empty(), "k should have functor constraints");
 }
