@@ -197,8 +197,11 @@ use crate::pure_cell::PureCell;
 #[derive(Debug, Clone)]
 pub enum Error {
     NotConvertible(PureCell, PureCell),
-    IncompatibleDimension,
-    EmptyComposition,
+    IncompatibleDimension {
+        expected: Level,
+        got_dim: Level,
+        got: PureCell,
+    },
 }
 
 impl std::fmt::Display for Error {
@@ -207,8 +210,9 @@ impl std::fmt::Display for Error {
             Error::NotConvertible(a, b) => {
                 write!(f, "{}\nis not convertible to\n{}", a, b)
             }
-            Error::IncompatibleDimension => write!(f, "incompatible dimension"),
-            Error::EmptyComposition => write!(f, "empty composition"),
+            Error::IncompatibleDimension { expected, got_dim, got } => {
+                write!(f, "expected {}-cell, got {}-cell `{}`", expected, got_dim, got)
+            }
         }
     }
 }

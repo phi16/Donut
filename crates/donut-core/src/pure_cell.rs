@@ -76,8 +76,9 @@ impl Diagram for PureCell {
 
     fn prim(prim: Prim, source: Self, target: Self) -> Result<Self> {
         check_prim(&source, &target)?;
-        let d = source.dim().in_space;
-        assert_eq!(d, target.dim().in_space);
+        let d = source.dim().in_space.max(target.dim().in_space);
+        let source = source.lift_to(d);
+        let target = target.lift_to(d);
         Ok(PureCell::Prim(
             prim,
             Shape::Succ {
@@ -101,21 +102,17 @@ impl Diagram for PureCell {
 
     fn comp(axis: Axis, children: Vec2<Self>) -> Result<Self> {
         let n = children.len();
-        if n == 0 {
-            return Err(Error::EmptyComposition);
-        }
+        assert!(n > 0, "comp requires at least one child");
 
-        let children = children
+        let max_dim = children
+            .iter()
+            .map(|c| c.dim().in_space.max(axis + 1))
+            .max()
+            .unwrap();
+        let children: Vec<_> = children
             .into_iter()
-            .map(|child| {
-                if child.dim().in_space <= axis {
-                    // handles `f; f` where `f` is a 1-cell
-                    Self::id(child)
-                } else {
-                    child
-                }
-            })
-            .collect::<Vec<_>>();
+            .map(|child| child.lift_to(max_dim))
+            .collect();
 
         let first_source_face = source_face(&children[0], axis);
         let last_target_face = target_face(&children[n - 1], axis);
@@ -179,7 +176,11 @@ impl PureVal {
                             ExtType::Cell(level) => match replacement {
                                 PureVal::Cell(pc) => {
                                     if pc.dim().in_space > *level {
-                                        Err(Error::IncompatibleDimension)
+                                        Err(Error::IncompatibleDimension {
+                                            expected: *level,
+                                            got_dim: pc.dim().in_space,
+                                            got: pc.clone(),
+                                        })
                                     } else {
                                         Ok(PureVal::Cell(pc.clone().lift_to(*level)))
                                     }
@@ -300,7 +301,11 @@ impl PureCell {
             PureCell::Prim(prim, shape, dim) => {
                 if let Some(replacement) = prim_handler(prim.id, mapping) {
                     if replacement.dim().in_space > dim.in_space {
-                        return Err(Error::IncompatibleDimension);
+                        return Err(Error::IncompatibleDimension {
+                            expected: dim.in_space,
+                            got_dim: replacement.dim().in_space,
+                            got: replacement,
+                        });
                     }
                     return Ok(replacement.lift_to(dim.in_space));
                 }

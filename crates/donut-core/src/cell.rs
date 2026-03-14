@@ -13,7 +13,10 @@ pub trait Globular {
     fn to_pure(&self) -> PureCell;
 
     fn is_convertible(&self, other: &Self) -> bool {
-        self.to_pure() == other.to_pure()
+        let a = self.to_pure();
+        let b = other.to_pure();
+        let max_dim = a.dim().in_space.max(b.dim().in_space);
+        a.lift_to(max_dim) == b.lift_to(max_dim)
     }
 }
 
@@ -81,13 +84,14 @@ pub fn compatible<T: Globular>(a: &T, b: &T) -> Result<()> {
 pub fn check_prim<T: Globular>(s: &T, t: &T) -> Result<()> {
     let sd = s.dim().in_space;
     let td = t.dim().in_space;
-    if sd == 0 && td == 0 {
+    let max_dim = sd.max(td);
+    if max_dim == 0 {
         Ok(())
-    } else if sd == 0 || td == 0 {
-        Err(Error::IncompatibleDimension)
     } else {
-        compatible(&s.s(), &t.s())?;
-        compatible(&s.t(), &t.t())?;
+        let sp = s.to_pure().lift_to(max_dim);
+        let tp = t.to_pure().lift_to(max_dim);
+        compatible(&sp.s(), &tp.s())?;
+        compatible(&sp.t(), &tp.t())?;
         Ok(())
     }
 }

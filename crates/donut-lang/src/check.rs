@@ -135,12 +135,18 @@ impl<'a> Checker<'a> {
         env::display_cell(self, pc)
     }
 
+    fn display_ty(&self, ty: &Ty) -> String {
+        env::display_ty(self, ty)
+    }
+
     fn format_comp_error(&self, e: &donut_core::common::Error) -> String {
         match e {
             donut_core::common::Error::NotConvertible(a, b) => {
-                format!("{} is not convertible to {}", self.display_cell(a), self.display_cell(b))
+                format!("`{}` is not convertible to `{}`", self.display_cell(a), self.display_cell(b))
             }
-            _ => format!("{}", e),
+            donut_core::common::Error::IncompatibleDimension { expected, got_dim, got } => {
+                format!("expected {}-cell, got {}-cell `{}`", expected, got_dim, self.display_cell(got))
+            }
         }
     }
 
@@ -294,7 +300,10 @@ impl<'a> Checker<'a> {
                 let pv = self.eval_val(d);
                 let deco_span = self.program.val_span(d);
                 if !self.check_meta_val(&pv, Ty::Deco) {
-                    self.error_at(deco_span, "decorator must be a decorator value");
+                    self.error_at(deco_span, format!(
+                        "expected decorator, got `{}`",
+                        self.display_pure_val(&pv),
+                    ));
                 }
                 pv
             })
@@ -579,9 +588,9 @@ impl<'a> Checker<'a> {
                         for req in &reqs {
                             let sub_arg = match subst_cell(&req.arg, &subst_map, &self.prim_item) {
                                 Ok(cell) => cell,
-                                Err(_) => {
+                                Err(e) => {
                                     let span = self.program.val_span(val_id);
-                                    self.error_at(span, "dimension mismatch in functor constraint substitution");
+                                    self.error_at(span, format!("functor constraint substitution failed: {}", self.format_comp_error(&e)));
                                     continue;
                                 }
                             };
@@ -616,7 +625,7 @@ impl<'a> Checker<'a> {
                 PureVal::Cell(pc) => pc,
                 _ => {
                     let span = self.program.val_span(val_id);
-                    self.error_at(span, "functor applicand must be a cell value");
+                    self.error_at(span, format!("functor applicand must be a cell, got `{}`", self.display_pure_val(&applicand)));
                     return result;
                 }
             };
@@ -642,7 +651,8 @@ impl<'a> Checker<'a> {
                 }
             } else {
                 let span = self.program.val_span(val_id);
-                self.error_at(span, "not a functor");
+                let name = &self.program.def(functor_def_id).lname;
+                self.error_at(span, format!("`{}` is not a functor", name));
                 result
             }
         } else {
@@ -677,24 +687,21 @@ impl<'a> Checker<'a> {
 
     fn eval_comp(&mut self, axis: Axis, children: &[ValId], val_id: ValId) -> PureVal {
         let child_vals: Vec<PureVal> = children.iter().map(|&c| self.eval_val(c)).collect();
+        let mut non_cell = None;
         let cells: Vec<PureCell> = child_vals
             .into_iter()
             .filter_map(|pv| match pv {
                 PureVal::Cell(pc) => Some(pc),
-                _ => None,
+                _ => { non_cell = Some(pv); None }
             })
             .collect();
         if cells.len() != children.len() {
             let span = self.program.val_span(val_id);
-            self.error_at(span, "composition requires cell values");
+            if let Some(bad) = non_cell {
+                self.error_at(span, format!("composition requires cell values, got `{}`", self.display_pure_val(&bad)));
+            }
             return Meta::Error.into();
         }
-        // Lift all cells to the max dimension
-        let max_dim = cells.iter().map(|c| c.dim().in_space).max().unwrap_or(0);
-        let cells: Vec<PureCell> = cells
-            .into_iter()
-            .map(|c| c.lift_to(max_dim))
-            .collect();
         match PureCell::comp(axis, cells) {
             Ok(pc) => PureVal::Cell(pc),
             Err(e) => {
@@ -745,7 +752,7 @@ impl<'a> Checker<'a> {
             Ty::Functor(s, t) => (s.clone(), t.clone()),
             _ => {
                 let span = self.program.def(def_id).span.clone();
-                self.error_at(&span, "functor must have type `A ~> B`");
+                self.error_at(&span, format!("functor must have type `A ~> B`, got `{}`", self.display_ty(ty)));
                 return;
             }
         };
@@ -755,7 +762,10 @@ impl<'a> Checker<'a> {
             (PureVal::Cell(s), PureVal::Cell(t)) => (s.clone(), t.clone()),
             _ => {
                 let span = self.program.def(def_id).span.clone();
-                self.error_at(&span, "functor source and target must be cell values");
+                self.error_at(&span, format!(
+                    "functor source and target must be cell values, got `{}` ~> `{}`",
+                    self.display_pure_val(&src_val), self.display_pure_val(&tgt_val),
+                ));
                 return;
             }
         };
@@ -767,7 +777,10 @@ impl<'a> Checker<'a> {
             Some(id) => id,
             None => {
                 let span = self.program.def(def_id).span.clone();
-                self.error_at(&span, "functor source must be a primitive cell");
+                self.error_at(&span, format!(
+                    "functor source must be a primitive cell, got `{}`",
+                    self.display_cell(&src_cell),
+                ));
                 return;
             }
         };
@@ -802,7 +815,10 @@ impl<'a> Checker<'a> {
                 PureVal::Cell(pc) => pc.clone(),
                 _ => {
                     let span = self.program.val_span(mapping.applicand);
-                    self.error_at(span, "functor mapping applicand must be a cell value");
+                    self.error_at(span, format!(
+                        "functor mapping applicand must be a cell, got `{}`",
+                        self.display_pure_val(&app_val),
+                    ));
                     continue;
                 }
             };
@@ -811,7 +827,10 @@ impl<'a> Checker<'a> {
                 Some(id) => id,
                 None => {
                     let span = self.program.val_span(mapping.applicand);
-                    self.error_at(span, "functor mapping applicand must be a primitive cell");
+                    self.error_at(span, format!(
+                        "functor mapping applicand must be a primitive cell, got `{}`",
+                        self.display_cell(&app_cell),
+                    ));
                     continue;
                 }
             };
@@ -822,7 +841,10 @@ impl<'a> Checker<'a> {
                 PureVal::Cell(pc) => pc.clone(),
                 _ => {
                     let span = self.program.val_span(mapping.val);
-                    self.error_at(span, "functor mapping value must be a cell value");
+                    self.error_at(span, format!(
+                        "functor mapping value must be a cell, got `{}`",
+                        self.display_pure_val(&val_val),
+                    ));
                     continue;
                 }
             };
@@ -833,7 +855,10 @@ impl<'a> Checker<'a> {
             if app_prim_id == src_prim_id {
                 if !val_cell.is_convertible(&tgt_cell) {
                     let span = self.program.val_span(mapping.val);
-                    self.error_at(span, "functor base mapping contradicts base case");
+                    self.error_at(span, format!(
+                        "functor base mapping contradicts base case: `{}` is not convertible to `{}`",
+                        self.display_cell(&val_cell), self.display_cell(&tgt_cell),
+                    ));
                 }
                 continue;
             }
@@ -842,7 +867,10 @@ impl<'a> Checker<'a> {
             let expected_dim = app_dim as i32 + dim_shift;
             if expected_dim < 0 {
                 let span = self.program.val_span(mapping.applicand);
-                self.error_at(span, "functor mapping applicand dimension is below functor source");
+                self.error_at(span, format!(
+                    "functor mapping `{}` ({}-cell) is below functor source dimension",
+                    self.display_cell(&app_cell), app_dim,
+                ));
                 continue;
             }
 
@@ -859,12 +887,18 @@ impl<'a> Checker<'a> {
                 (Ok(es), Ok(et)) => {
                     if !es.is_convertible(&val_cell.s()) {
                         let span = self.program.val_span(mapping.val);
-                        self.error_at(span, "functor mapping source mismatch");
+                        self.error_at(span, format!(
+                            "functor mapping source mismatch: expected `{}`, got `{}`",
+                            self.display_cell(&es), self.display_cell(&val_cell.s()),
+                        ));
                         continue;
                     }
                     if !et.is_convertible(&val_cell.t()) {
                         let span = self.program.val_span(mapping.val);
-                        self.error_at(span, "functor mapping target mismatch");
+                        self.error_at(span, format!(
+                            "functor mapping target mismatch: expected `{}`, got `{}`",
+                            self.display_cell(&et), self.display_cell(&val_cell.t()),
+                        ));
                         continue;
                     }
                 }
@@ -945,9 +979,6 @@ impl<'a> Checker<'a> {
                 let prim = Prim::with_id_args(PrimId(prim_id.0), param_args);
                 match (Self::extract_cell(src_val), Self::extract_cell(tgt_val)) {
                     (Some(src), Some(tgt)) => {
-                        let face_dim = *level - 1;
-                        let src = src.lift_to(face_dim);
-                        let tgt = tgt.lift_to(face_dim);
                         match PureCell::prim(prim, src, tgt) {
                             Ok(pc) => (PureVal::Cell(pc), Some(prim_id)),
                             Err(e) => {
@@ -957,7 +988,10 @@ impl<'a> Checker<'a> {
                         }
                     }
                     _ => {
-                        self.error_at(span, "arrow source/target must be cell values");
+                        self.error_at(span, format!(
+                            "arrow source/target must be cell values in type `{}`",
+                            self.display_ty(ty),
+                        ));
                         (Meta::Error.into(), Some(prim_id))
                     }
                 }
@@ -1022,12 +1056,22 @@ impl<'a> Checker<'a> {
                     if pc.dim().in_space != 0 {
                         self.error_at(
                             span,
-                            format!("expected 0-cell, got {}-cell", pc.dim().in_space),
+                            format!(
+                                "expected `*` (0-cell), got {}-cell `{}`",
+                                pc.dim().in_space,
+                                self.display_cell(pc),
+                            ),
                         );
                         return error_val();
                     }
                 } else if !matches!(env::as_meta(&pv), Some(Meta::Ty(Ty::Star))) {
-                    self.error_at(span, "expected a 0-cell value");
+                    self.error_at(
+                        span,
+                        format!(
+                            "expected `*` (0-cell), got `{}`",
+                            self.display_pure_val(&pv),
+                        ),
+                    );
                     return error_val();
                 }
                 pv
@@ -1038,69 +1082,105 @@ impl<'a> Checker<'a> {
                     if pc.dim().in_space != *level {
                         self.error_at(
                             span,
-                            format!("expected {}-cell, got {}-cell", level, pc.dim().in_space),
+                            format!(
+                                "expected `{}` ({}-cell), got {}-cell `{}`",
+                                self.display_ty(ty),
+                                level,
+                                pc.dim().in_space,
+                                self.display_cell(&pc),
+                            ),
                         );
                         return error_val();
                     }
-                    // Check source/target compatibility
                     let mut ok = true;
                     if let Some(src) = Self::extract_cell(src_val) {
-                        let expected_src = src.lift_to(*level - 1);
-                        if !pc.s().is_convertible(&expected_src) {
+                        if !pc.s().is_convertible(&src) {
                             self.error_at(
                                 span,
-                                "value source does not match declared type source",
+                                format!(
+                                    "source mismatch: `{}` has source `{}`, expected `{}`",
+                                    self.display_cell(&pc),
+                                    self.display_cell(&pc.s()),
+                                    self.display_cell(&src),
+                                ),
                             );
                             ok = false;
                         }
                     }
                     if let Some(tgt) = Self::extract_cell(tgt_val) {
-                        let expected_tgt = tgt.lift_to(*level - 1);
-                        if !pc.t().is_convertible(&expected_tgt) {
+                        if !pc.t().is_convertible(&tgt) {
                             self.error_at(
                                 span,
-                                "value target does not match declared type target",
+                                format!(
+                                    "target mismatch: `{}` has target `{}`, expected `{}`",
+                                    self.display_cell(&pc),
+                                    self.display_cell(&pc.t()),
+                                    self.display_cell(&tgt),
+                                ),
                             );
                             ok = false;
                         }
                     }
                     if ok { PureVal::Cell(pc) } else { error_val() }
                 } else {
-                    self.error_at(span, format!("expected a {}-cell value", level));
+                    self.error_at(
+                        span,
+                        format!(
+                            "expected `{}` ({}-cell), got `{}`",
+                            self.display_ty(ty),
+                            level,
+                            self.display_pure_val(&pv),
+                        ),
+                    );
                     error_val()
                 }
             }
             Ty::Meta => {
                 if env::as_meta(&pv).is_none() {
-                    self.error_at(span, "expected a meta value");
+                    self.error_at(
+                        span,
+                        format!("expected meta value, got `{}`", self.display_pure_val(&pv)),
+                    );
                     return error_val();
                 }
                 pv
             }
             Ty::Nat => {
                 if !self.check_meta_val(&pv, Ty::Nat) {
-                    self.error_at(span, "expected a nat value");
+                    self.error_at(
+                        span,
+                        format!("expected nat, got `{}`", self.display_pure_val(&pv)),
+                    );
                     return error_val();
                 }
                 pv
             }
             Ty::Rat => {
                 if !self.check_meta_val(&pv, Ty::Rat) && !self.check_meta_val(&pv, Ty::Nat) {
-                    self.error_at(span, "expected a rat value");
+                    self.error_at(
+                        span,
+                        format!("expected rat, got `{}`", self.display_pure_val(&pv)),
+                    );
                     return error_val();
                 }
                 pv
             }
             Ty::Color => {
                 if !self.check_meta_val(&pv, Ty::Color) {
-                    self.error_at(span, "expected a color value");
+                    self.error_at(
+                        span,
+                        format!("expected color, got `{}`", self.display_pure_val(&pv)),
+                    );
                     return error_val();
                 }
                 pv
             }
             Ty::Deco => {
                 if !self.check_meta_val(&pv, Ty::Deco) {
-                    self.error_at(span, "expected a decorator value");
+                    self.error_at(
+                        span,
+                        format!("expected decorator, got `{}`", self.display_pure_val(&pv)),
+                    );
                     return error_val();
                 }
                 pv
