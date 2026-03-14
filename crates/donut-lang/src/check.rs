@@ -560,7 +560,14 @@ impl<'a> Checker<'a> {
 
                         // Process reqs in order, growing subst_map with results
                         for req in &reqs {
-                            let sub_arg = subst_cell(&req.arg, &subst_map, &self.prim_item);
+                            let mut sub_arg = subst_cell(&req.arg, &subst_map, &self.prim_item);
+                            // Lift substituted arg to match original arg's dimension.
+                            // Param substitution can lower dimension (e.g. a:D→D replaced with D),
+                            // but the functor result must match the constraint prim's dimension.
+                            let original_dim = req.arg.dim().in_space;
+                            while sub_arg.dim().in_space < original_dim {
+                                sub_arg = PureCell::id(sub_arg);
+                            }
                             if let Some(fmap) = self.functor_maps.get(&req.functor) {
                                 let entries = fmap.entries.clone();
                                 let dim_shift = fmap.dim_shift;
