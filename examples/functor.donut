@@ -15,6 +15,7 @@ R: D → C
 T: C → L R
 B: L x R → f(x)
 
-sphere = T; L (one one; add) R; B
+f'[u: D → x] = T; L u R; B
 
-h[u: D → x] = f(u)
+h': f'[one] ~ f(one)
+h[u: D → x]: f'[u] ~ f(u)

@@ -1,0 +1,31 @@
+D: *
+x: D → D
+one: D → x
+add: x x → x
+mul: x x → x
+
+import "sys"
+
+f: D ~> C
+f(x) = i32
+f(one) = i32.lit[3]
+f(add) = i32.mul
+
+g: D ~> C
+g(x) = f32
+g(one) = f32.lit[0.5]
+g(add) = f32.add
+
+L: C → D
+R: D → C
+T: C → L R
+B: L x R → f(x)
+
+f'[u: D → x] = T; L u R; B
+
+
+m = (one one; add) one; mul
+result = f'[m]
+
+
+k[m: D → x, (m has definition on f)]: f'[m] ~ f(m)
