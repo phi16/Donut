@@ -493,22 +493,22 @@ impl<'a> Checker<'a> {
         let mut result = if path.args.is_empty() {
             base
         } else {
-            let args: Vec<PureVal> = path.args.iter().map(|&a| self.eval_val(a)).collect();
+            let mut args: Vec<PureVal> = path.args.iter().map(|&a| self.eval_val(a)).collect();
 
-            // Type-check args against parameter types
+            // Type-check args against parameter types (and lift dimensions)
             if let Ref::Def(def_id) = path.target {
                 let params: Vec<_> = self.program.def(def_id)
                     .params.iter().map(|p| (p.item, p.ty)).collect();
                 let span = self.program.val_span(val_id);
                 let err_count = self.errors.len();
                 let mut param_subst: HashMap<ExtId, PureVal> = HashMap::new();
-                for (i, arg) in args.iter().enumerate() {
+                for (i, arg) in args.iter_mut().enumerate() {
                     if let Some(&(item_id, ty_val_id)) = params.get(i) {
                         let mut param_ty = self.eval_ty(ty_val_id);
                         if !param_subst.is_empty() {
                             param_ty = subst_ty(&param_ty, &param_subst, &self.prim_item);
                         }
-                        self.coerce_val_to_ty(arg.clone(), &param_ty, &span);
+                        *arg = self.coerce_val_to_ty(arg.clone(), &param_ty, &span);
                         param_subst.insert(ExtId(item_id.0 as u64), arg.clone());
                     }
                 }
@@ -560,14 +560,8 @@ impl<'a> Checker<'a> {
 
                         // Process reqs in order, growing subst_map with results
                         for req in &reqs {
-                            let mut sub_arg = subst_cell(&req.arg, &subst_map, &self.prim_item);
-                            // Lift substituted arg to match original arg's dimension.
-                            // Param substitution can lower dimension (e.g. a:D→D replaced with D),
-                            // but the functor result must match the constraint prim's dimension.
-                            let original_dim = req.arg.dim().in_space;
-                            while sub_arg.dim().in_space < original_dim {
-                                sub_arg = PureCell::id(sub_arg);
-                            }
+                            let sub_arg = subst_cell(&req.arg, &subst_map, &self.prim_item)
+                                .lift_to(req.arg.dim().in_space);
                             if let Some(fmap) = self.functor_maps.get(&req.functor) {
                                 let entries = fmap.entries.clone();
                                 let dim_shift = fmap.dim_shift;
@@ -679,12 +673,7 @@ impl<'a> Checker<'a> {
         let max_dim = cells.iter().map(|c| c.dim().in_space).max().unwrap_or(0);
         let cells: Vec<PureCell> = cells
             .into_iter()
-            .map(|mut c| {
-                while c.dim().in_space < max_dim {
-                    c = PureCell::id(c);
-                }
-                c
-            })
+            .map(|c| c.lift_to(max_dim))
             .collect();
         match PureCell::comp(axis, cells) {
             Ok(pc) => PureVal::Cell(pc),
@@ -931,14 +920,10 @@ impl<'a> Checker<'a> {
                 let prim_id = self.fresh_prim_id();
                 let prim = Prim::with_id_args(PrimId(prim_id.0), param_args);
                 match (Self::extract_cell(src_val), Self::extract_cell(tgt_val)) {
-                    (Some(mut src), Some(mut tgt)) => {
-                        let target_dim = *level - 1;
-                        while src.dim().in_space < target_dim {
-                            src = PureCell::id(src);
-                        }
-                        while tgt.dim().in_space < target_dim {
-                            tgt = PureCell::id(tgt);
-                        }
+                    (Some(src), Some(tgt)) => {
+                        let face_dim = *level - 1;
+                        let src = src.lift_to(face_dim);
+                        let tgt = tgt.lift_to(face_dim);
                         match PureCell::prim(prim, src, tgt) {
                             Ok(pc) => (PureVal::Cell(pc), Some(prim_id)),
                             Err(e) => {
@@ -1024,11 +1009,8 @@ impl<'a> Checker<'a> {
                 pv
             }
             Ty::Arrow(level, _, src_val, tgt_val) => {
-                if let PureVal::Cell(mut pc) = pv {
-                    // Dim lift if needed
-                    while pc.dim().in_space < *level {
-                        pc = PureCell::id(pc);
-                    }
+                if let PureVal::Cell(pc) = pv {
+                    let pc = pc.lift_to(*level);
                     if pc.dim().in_space != *level {
                         self.error_at(
                             span,
@@ -1039,10 +1021,7 @@ impl<'a> Checker<'a> {
                     // Check source/target compatibility
                     let mut ok = true;
                     if let Some(src) = Self::extract_cell(src_val) {
-                        let mut expected_src = src;
-                        while expected_src.dim().in_space < *level - 1 {
-                            expected_src = PureCell::id(expected_src);
-                        }
+                        let expected_src = src.lift_to(*level - 1);
                         if !pc.s().is_convertible(&expected_src) {
                             self.error_at(
                                 span,
@@ -1052,10 +1031,7 @@ impl<'a> Checker<'a> {
                         }
                     }
                     if let Some(tgt) = Self::extract_cell(tgt_val) {
-                        let mut expected_tgt = tgt;
-                        while expected_tgt.dim().in_space < *level - 1 {
-                            expected_tgt = PureCell::id(expected_tgt);
-                        }
+                        let expected_tgt = tgt.lift_to(*level - 1);
                         if !pc.t().is_convertible(&expected_tgt) {
                             self.error_at(
                                 span,

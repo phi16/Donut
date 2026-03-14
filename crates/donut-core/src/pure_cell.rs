@@ -228,6 +228,61 @@ impl Shape {
 }
 
 impl PureCell {
+    /// Lift this cell to the given dimension by wrapping with `id`.
+    pub fn lift_to(mut self, dim: Level) -> Self {
+        while self.dim().in_space < dim {
+            self = <Self as Diagram>::id(self);
+        }
+        self
+    }
+
+    /// Validate structural invariants. Panics with a descriptive message on violation.
+    pub fn validate(&self) {
+        let dim = self.dim();
+        assert!(
+            dim.effective <= dim.in_space,
+            "effective ({}) > in_space ({})",
+            dim.effective, dim.in_space
+        );
+        match self {
+            PureCell::Prim(_, shape, _) => match shape {
+                Shape::Zero => {
+                    assert_eq!(dim.effective, 0, "Zero shape but effective = {}", dim.effective);
+                }
+                Shape::Succ { source, target } => {
+                    assert!(
+                        dim.effective >= 1,
+                        "Succ shape but effective = {}",
+                        dim.effective
+                    );
+                    let face_dim = dim.effective - 1;
+                    assert_eq!(
+                        source.dim().in_space, face_dim,
+                        "source in_space ({}) != effective-1 ({})",
+                        source.dim().in_space, face_dim
+                    );
+                    assert_eq!(
+                        target.dim().in_space, face_dim,
+                        "target in_space ({}) != effective-1 ({})",
+                        target.dim().in_space, face_dim
+                    );
+                    source.validate();
+                    target.validate();
+                }
+            },
+            PureCell::Comp(_, children, _) => {
+                for child in children {
+                    assert_eq!(
+                        child.dim().in_space, dim.in_space,
+                        "child in_space ({}) != parent in_space ({})",
+                        child.dim().in_space, dim.in_space
+                    );
+                    child.validate();
+                }
+            }
+        }
+    }
+
     pub fn extract_prim_id(&self) -> Option<PrimId> {
         match self {
             PureCell::Prim(prim, _, dim) if dim.effective == dim.in_space => Some(prim.id),

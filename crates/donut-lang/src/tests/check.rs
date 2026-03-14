@@ -1866,3 +1866,23 @@ k[m: D → x]: f'[m] ~ f(m)
     let k = env.defs.iter().find(|d| d.lname == "k").unwrap();
     assert!(!k.reqs.is_empty(), "k should have functor constraints");
 }
+
+#[test]
+fn inspect_t_d_result() {
+    let env = check_ok(
+        r#"
+D: *
+x: D → D
+T[a: D → D]: x → a
+result = T[D]
+    "#,
+    );
+    let result = get_def(&env, "result");
+    eprintln!("result ty: {}", env.display_def_signature(result));
+    eprintln!("result val: {}", env.display_pure_val(&result.val));
+    if let PureVal::Cell(pc) = &result.val {
+        eprintln!("result cell: {}", env.display_cell(pc));
+        let expanded = env.expand_defs(pc);
+        expanded.validate();
+    }
+}
