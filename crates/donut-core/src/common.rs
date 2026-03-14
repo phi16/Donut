@@ -97,6 +97,22 @@ pub enum PureVal {
     Any(AnyBox),
 }
 
+impl PureVal {
+    /// Validate all PureCells contained in this value.
+    /// `any_handler` is called for Any values to validate their contents.
+    pub fn validate(&self, any_handler: &impl Fn(&AnyBox)) {
+        match self {
+            PureVal::Cell(pc) => pc.validate(),
+            PureVal::App(_, args) => {
+                for arg in args {
+                    arg.validate(any_handler);
+                }
+            }
+            PureVal::Any(v) => any_handler(v),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Prim {
     pub id: PrimId,
@@ -122,6 +138,16 @@ impl Prim {
         Prim { id, args }
     }
 }
+
+/// Describes what kind of value an ExtId slot expects.
+/// Used in substitution mappings to enable auto-lift and dimension checking.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExtType {
+    Cell(Level),
+    NonCell,
+}
+
+pub type SubstMap = std::collections::HashMap<ExtId, (PureVal, ExtType)>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Dim {

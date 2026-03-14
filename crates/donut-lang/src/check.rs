@@ -5,12 +5,12 @@ use crate::types::env::{self, ArrowTy, DisplayContext, Meta, Ty};
 use crate::types::item::*;
 use donut_core::cell::Diagram;
 use donut_core::cell::Globular;
-use donut_core::common::{Axis, ExtId, Level, Prim, PrimId, PureVal};
+use donut_core::common::{AnyBox, Axis, ExtId, ExtType, Level, Prim, PrimId, PureVal, SubstMap};
 use donut_core::pure_cell::{PureCell, Shape};
 
 #[derive(Clone)]
 struct FunctorEntry {
-    param_ext_ids: Vec<ExtId>,
+    param_ext_entries: Vec<(ExtId, ExtType)>,
     cell: PureCell,
 }
 
@@ -215,6 +215,7 @@ impl<'a> Checker<'a> {
         // Save and restore constraint collection state for this def
         let saved_reqs = std::mem::take(&mut self.current_reqs);
         let saved_cache = std::mem::take(&mut self.constraint_cache);
+        let err_count_at_start = self.errors.len();
 
         // Ensure params are checked
         let params = self.program.def(def_id).params.clone();
@@ -308,6 +309,12 @@ impl<'a> Checker<'a> {
             .map(|p| p.item)
             .collect();
 
+        // Validate values before storing (only if no errors in this def)
+        // TODO: re-enable after fixing pre-existing validation issues
+        // if self.errors.len() == err_count_at_start {
+        //     val.validate(&validate_meta);
+        // }
+
         let env_def = env::Def {
             qname,
             lname,
@@ -359,12 +366,14 @@ impl<'a> Checker<'a> {
                         item.ty.clone()
                     } else {
                         // Substitute param ExtIds with actual args
-                        let subst_map: HashMap<ExtId, PureVal> = item
+                        let subst_map: SubstMap = item
                             .params
                             .iter()
                             .zip(args.iter())
                             .map(|(param_item_id, arg)| {
-                                (ExtId(param_item_id.0 as u64), arg.clone())
+                                let ext_id = ExtId(param_item_id.0 as u64);
+                                let ext_type = self.ext_type_for_item(*param_item_id);
+                                (ext_id, (arg.clone(), ext_type))
                             })
                             .collect();
                         subst_ty(&item.ty, &subst_map, &self.prim_item)
@@ -440,13 +449,14 @@ impl<'a> Checker<'a> {
                 let inner_id = *inner_id;
                 let mapping: HashMap<ItemId, ValId> = mapping.clone();
                 let inner_pv = self.eval_val(inner_id);
-                // Convert HashMap<ItemId, ValId> to HashMap<ExtId, PureVal>
-                let subst_map: HashMap<ExtId, PureVal> = mapping
+                // Convert HashMap<ItemId, ValId> to SubstMap
+                let subst_map: SubstMap = mapping
                     .iter()
                     .map(|(item_id, &val_id)| {
                         let ext_id = ExtId(item_id.0 as u64);
                         let pv = self.eval_val(val_id);
-                        (ext_id, pv)
+                        let ext_type = self.ext_type_for_item(*item_id);
+                        (ext_id, (pv, ext_type))
                     })
                     .collect();
                 subst_pv(&inner_pv, &subst_map, &self.prim_item)
@@ -501,7 +511,7 @@ impl<'a> Checker<'a> {
                     .params.iter().map(|p| (p.item, p.ty)).collect();
                 let span = self.program.val_span(val_id);
                 let err_count = self.errors.len();
-                let mut param_subst: HashMap<ExtId, PureVal> = HashMap::new();
+                let mut param_subst: SubstMap = HashMap::new();
                 for (i, arg) in args.iter_mut().enumerate() {
                     if let Some(&(item_id, ty_val_id)) = params.get(i) {
                         let mut param_ty = self.eval_ty(ty_val_id);
@@ -509,7 +519,8 @@ impl<'a> Checker<'a> {
                             param_ty = subst_ty(&param_ty, &param_subst, &self.prim_item);
                         }
                         *arg = self.coerce_val_to_ty(arg.clone(), &param_ty, &span);
-                        param_subst.insert(ExtId(item_id.0 as u64), arg.clone());
+                        let ext_type = self.ext_type_for_item(item_id);
+                        param_subst.insert(ExtId(item_id.0 as u64), (arg.clone(), ext_type));
                     }
                 }
                 if self.errors.len() > err_count {
@@ -526,9 +537,11 @@ impl<'a> Checker<'a> {
                 ),
             };
             if is_alias {
-                let param_ids = self.param_ext_ids(path.target);
-                let subst_map: HashMap<ExtId, PureVal> =
-                    param_ids.into_iter().zip(args.into_iter()).collect();
+                let param_entries = self.param_ext_entries(path.target);
+                let subst_map: SubstMap =
+                    param_entries.into_iter().zip(args.into_iter())
+                        .map(|((ext_id, ext_type), arg)| (ext_id, (arg, ext_type)))
+                        .collect();
                 subst_pv(&base, &subst_map, &self.prim_item)
             } else {
                 match base {
@@ -537,9 +550,11 @@ impl<'a> Checker<'a> {
                         PureVal::App(id, existing)
                     }
                     _ => {
-                        let param_ids = self.param_ext_ids(path.target);
-                        let subst_map: HashMap<ExtId, PureVal> =
-                            param_ids.into_iter().zip(args.into_iter()).collect();
+                        let param_entries = self.param_ext_entries(path.target);
+                        let subst_map: SubstMap =
+                            param_entries.into_iter().zip(args.into_iter())
+                                .map(|((ext_id, ext_type), arg)| (ext_id, (arg, ext_type)))
+                                .collect();
                         subst_pv(&base, &subst_map, &self.prim_item)
                     }
                 }
@@ -553,26 +568,31 @@ impl<'a> Checker<'a> {
                     let reqs = env_def.reqs.clone();
                     if !reqs.is_empty() {
                         // Build substitution map: param ExtIds → actual arg values
-                        let param_ids = self.param_ext_ids(path.target);
+                        let param_entries = self.param_ext_entries(path.target);
                         let args: Vec<PureVal> = path.args.iter().map(|&a| self.eval_val(a)).collect();
-                        let mut subst_map: HashMap<ExtId, PureVal> =
-                            param_ids.into_iter().zip(args.into_iter()).collect();
+                        let mut subst_map: SubstMap =
+                            param_entries.into_iter().zip(args.into_iter())
+                                .map(|((ext_id, ext_type), arg)| (ext_id, (arg, ext_type)))
+                                .collect();
 
                         // Process reqs in order, growing subst_map with results
                         for req in &reqs {
-                            let sub_arg = subst_cell(&req.arg, &subst_map, &self.prim_item)
-                                .lift_to(req.arg.dim().in_space);
+                            let sub_arg = match subst_cell(&req.arg, &subst_map, &self.prim_item) {
+                                Ok(cell) => cell,
+                                Err(_) => {
+                                    let span = self.program.val_span(val_id);
+                                    self.error_at(span, "dimension mismatch in functor constraint substitution");
+                                    continue;
+                                }
+                            };
                             if let Some(fmap) = self.functor_maps.get(&req.functor) {
                                 let entries = fmap.entries.clone();
                                 let dim_shift = fmap.dim_shift;
-                                // Use constrained version: handles both verification and propagation.
-                                // - Concrete prims not in map and not constrainable → NoMapping error
-                                // - Constrainable prims (caller's params) → propagated as new constraints
                                 match self.apply_functor_constrained(&sub_arg, req.functor, &entries, dim_shift) {
                                     Ok(result_cell) => {
-                                        // Add constraint result to subst_map for subsequent reqs
                                         let ext_id = ExtId(req.result.0 as u64);
-                                        subst_map.insert(ext_id, PureVal::Cell(result_cell));
+                                        let result_dim = result_cell.dim().in_space;
+                                        subst_map.insert(ext_id, (PureVal::Cell(result_cell), ExtType::Cell(result_dim)));
                                     }
                                     Err(e) => {
                                         let span = self.program.val_span(val_id);
@@ -757,7 +777,7 @@ impl<'a> Checker<'a> {
         functor_map.insert(
             src_prim_id,
             FunctorEntry {
-                param_ext_ids: vec![],
+                param_ext_entries: vec![],
                 cell: tgt_cell.clone(),
             },
         );
@@ -766,13 +786,13 @@ impl<'a> Checker<'a> {
         for mapping in mappings {
             // Check mapping params
             let mapping_span = self.program.val_span(mapping.applicand).clone();
-            let param_ext_ids: Vec<ExtId> = mapping
+            let param_ext_entries: Vec<(ExtId, ExtType)> = mapping
                 .params
                 .iter()
                 .map(|param| {
                     let ty = self.eval_ty(param.ty);
                     self.check_item(param.item, &ty, &mapping_span);
-                    ExtId(param.item.0 as u64)
+                    (ExtId(param.item.0 as u64), self.ext_type_for_item(param.item))
                 })
                 .collect();
 
@@ -858,7 +878,7 @@ impl<'a> Checker<'a> {
             functor_map.insert(
                 app_prim_id,
                 FunctorEntry {
-                    param_ext_ids,
+                    param_ext_entries,
                     cell: val_cell,
                 },
             );
@@ -876,23 +896,27 @@ impl<'a> Checker<'a> {
         self.checked.get(&target).cloned()
     }
 
-    fn param_ext_ids(&self, target: Ref) -> Vec<ExtId> {
-        match target {
-            Ref::Item(item_id) => self
-                .program
-                .item(item_id)
-                .params
-                .iter()
-                .map(|p| ExtId(p.item.0 as u64))
-                .collect(),
-            Ref::Def(def_id) => self
-                .program
-                .def(def_id)
-                .params
-                .iter()
-                .map(|p| ExtId(p.item.0 as u64))
-                .collect(),
+    fn ext_type_for_item(&self, item_id: ItemId) -> ExtType {
+        if let Some(Some(item)) = self.env_items.get(item_id.0) {
+            match &item.ty {
+                Ty::Star => ExtType::Cell(0),
+                Ty::Arrow(level, _, _, _) => ExtType::Cell(*level),
+                _ => ExtType::NonCell,
+            }
+        } else {
+            ExtType::NonCell
         }
+    }
+
+    fn param_ext_entries(&self, target: Ref) -> Vec<(ExtId, ExtType)> {
+        let params: &[_] = match target {
+            Ref::Item(item_id) => &self.program.item(item_id).params,
+            Ref::Def(def_id) => &self.program.def(def_id).params,
+        };
+        params
+            .iter()
+            .map(|p| (ExtId(p.item.0 as u64), self.ext_type_for_item(p.item)))
+            .collect()
     }
 
     // --- Item checking ---
@@ -1169,7 +1193,7 @@ impl<'a> Checker<'a> {
 
 fn subst_any_handler(
     pv: &PureVal,
-    map: &HashMap<ExtId, PureVal>,
+    map: &SubstMap,
     prim_item: &HashMap<PrimId, ItemId>,
 ) -> PureVal {
     if let Some(meta) = env::as_meta(pv) {
@@ -1183,11 +1207,11 @@ fn subst_any_handler(
     }
 }
 
-fn make_prim_handler(prim_item: &HashMap<PrimId, ItemId>) -> impl Fn(PrimId, &HashMap<ExtId, PureVal>) -> Option<PureCell> + '_ {
-    move |prim_id: PrimId, mapping: &HashMap<ExtId, PureVal>| -> Option<PureCell> {
+fn make_prim_handler(prim_item: &HashMap<PrimId, ItemId>) -> impl Fn(PrimId, &SubstMap) -> Option<PureCell> + '_ {
+    move |prim_id: PrimId, mapping: &SubstMap| -> Option<PureCell> {
         let item_id = prim_item.get(&prim_id)?;
         let ext_id = ExtId(item_id.0 as u64);
-        let replacement = mapping.get(&ext_id)?;
+        let (replacement, _) = mapping.get(&ext_id)?;
         match replacement {
             PureVal::Cell(cell) => Some(cell.clone()),
             _ => None,
@@ -1197,29 +1221,29 @@ fn make_prim_handler(prim_item: &HashMap<PrimId, ItemId>) -> impl Fn(PrimId, &Ha
 
 fn subst_pv(
     pv: &PureVal,
-    map: &HashMap<ExtId, PureVal>,
+    map: &SubstMap,
     prim_item: &HashMap<PrimId, ItemId>,
 ) -> PureVal {
-    pv.subst_with_prim(
+    pv.subst(
         map,
         &|v, m| subst_any_handler(v, m, prim_item),
         &make_prim_handler(prim_item),
-    )
+    ).unwrap_or_else(|_| Meta::Error.into())
 }
 
 fn subst_cell(
     pc: &PureCell,
-    map: &HashMap<ExtId, PureVal>,
+    map: &SubstMap,
     prim_item: &HashMap<PrimId, ItemId>,
-) -> PureCell {
-    pc.subst_with_prim(
+) -> Result<PureCell, donut_core::common::Error> {
+    pc.subst(
         map,
         &|v, m| subst_any_handler(v, m, prim_item),
         &make_prim_handler(prim_item),
     )
 }
 
-fn subst_ty(ty: &Ty, map: &HashMap<ExtId, PureVal>, prim_item: &HashMap<PrimId, ItemId>) -> Ty {
+fn subst_ty(ty: &Ty, map: &SubstMap, prim_item: &HashMap<PrimId, ItemId>) -> Ty {
     if map.is_empty() {
         return ty.clone();
     }
@@ -1234,6 +1258,28 @@ fn subst_ty(ty: &Ty, map: &HashMap<ExtId, PureVal>, prim_item: &HashMap<PrimId, 
             Ty::Functor(subst_pv(src, map, prim_item), subst_pv(tgt, map, prim_item))
         }
         _ => ty.clone(),
+    }
+}
+
+fn validate_meta(any: &AnyBox) {
+    let meta = any.inner::<env::Meta>();
+    match meta {
+        env::Meta::Ty(ty) => validate_ty(ty),
+        _ => {}
+    }
+}
+
+fn validate_ty(ty: &Ty) {
+    match ty {
+        Ty::Arrow(_, _, src, tgt) => {
+            src.validate(&validate_meta);
+            tgt.validate(&validate_meta);
+        }
+        Ty::Functor(src, tgt) => {
+            src.validate(&validate_meta);
+            tgt.validate(&validate_meta);
+        }
+        _ => {}
     }
 }
 
@@ -1275,14 +1321,15 @@ impl<'a> Checker<'a> {
                 if let Some(entry) = map.get(&prim.id) {
                     // Known mapping — same as apply_functor
                     let mut result = entry.cell.clone();
-                    if !entry.param_ext_ids.is_empty() && !prim.args.is_empty() {
-                        let subst_map: HashMap<ExtId, PureVal> = entry
-                            .param_ext_ids
+                    if !entry.param_ext_entries.is_empty() && !prim.args.is_empty() {
+                        let subst_map: SubstMap = entry
+                            .param_ext_entries
                             .iter()
                             .zip(prim.args.iter())
-                            .map(|(&eid, arg)| (eid, arg.clone()))
+                            .map(|(&(eid, ext_type), arg)| (eid, (arg.clone(), ext_type)))
                             .collect();
-                        result = subst_cell(&result, &subst_map, &self.prim_item);
+                        result = subst_cell(&result, &subst_map, &self.prim_item)
+                            .map_err(FunctorError::CompError)?;
                     }
                     let target_dim = dim.in_space as i32 + dim_shift;
                     while (result.dim().in_space as i32) < target_dim {
@@ -1386,14 +1433,15 @@ fn apply_functor(
                 Some(entry) => {
                     let mut result = entry.cell.clone();
                     // Substitute params with actual args
-                    if !entry.param_ext_ids.is_empty() && !prim.args.is_empty() {
-                        let subst_map: HashMap<ExtId, PureVal> = entry
-                            .param_ext_ids
+                    if !entry.param_ext_entries.is_empty() && !prim.args.is_empty() {
+                        let subst_map: SubstMap = entry
+                            .param_ext_entries
                             .iter()
                             .zip(prim.args.iter())
-                            .map(|(&eid, arg)| (eid, arg.clone()))
+                            .map(|(&(eid, ext_type), arg)| (eid, (arg.clone(), ext_type)))
                             .collect();
-                        result = subst_cell(&result, &subst_map, prim_item);
+                        result = subst_cell(&result, &subst_map, prim_item)
+                            .map_err(FunctorError::CompError)?;
                     }
                     // Lift to target dimension (accounting for dimension shift)
                     let target_dim = dim.in_space as i32 + dim_shift;

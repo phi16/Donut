@@ -1,6 +1,5 @@
 use crate::cell::*;
 use crate::common::*;
-use std::collections::HashMap;
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -161,68 +160,56 @@ impl Diagram for PureCell {
 // --- Substitution ---
 
 impl PureVal {
-    pub fn subst(&self, mapping: &HashMap<ExtId, PureVal>) -> PureVal {
-        self.subst_with(mapping, &|v, _| v.clone())
-    }
-
-    pub fn subst_with(
+    pub fn subst(
         &self,
-        mapping: &HashMap<ExtId, PureVal>,
-        any_handler: &impl Fn(&PureVal, &HashMap<ExtId, PureVal>) -> PureVal,
-    ) -> PureVal {
-        self.subst_with_prim(mapping, any_handler, &|_, _| None)
-    }
-
-    pub fn subst_with_prim(
-        &self,
-        mapping: &HashMap<ExtId, PureVal>,
-        any_handler: &impl Fn(&PureVal, &HashMap<ExtId, PureVal>) -> PureVal,
-        prim_handler: &impl Fn(PrimId, &HashMap<ExtId, PureVal>) -> Option<PureCell>,
-    ) -> PureVal {
+        mapping: &SubstMap,
+        any_handler: &impl Fn(&PureVal, &SubstMap) -> PureVal,
+        prim_handler: &impl Fn(PrimId, &SubstMap) -> Option<PureCell>,
+    ) -> Result<PureVal> {
         if mapping.is_empty() {
-            return self.clone();
+            return Ok(self.clone());
         }
         match self {
-            PureVal::Cell(pc) => PureVal::Cell(pc.subst_with_prim(mapping, any_handler, prim_handler)),
+            PureVal::Cell(pc) => Ok(PureVal::Cell(pc.subst(mapping, any_handler, prim_handler)?)),
             PureVal::App(id, args) => {
-                let new_args: Vec<PureVal> = args.iter().map(|a| a.subst_with_prim(mapping, any_handler, prim_handler)).collect();
+                let new_args: Vec<PureVal> = args.iter().map(|a| a.subst(mapping, any_handler, prim_handler)).collect::<Result<_>>()?;
                 if new_args.is_empty() {
-                    if let Some(replacement) = mapping.get(id) {
-                        return replacement.clone();
+                    if let Some((replacement, ext_type)) = mapping.get(id) {
+                        return match ext_type {
+                            ExtType::Cell(level) => match replacement {
+                                PureVal::Cell(pc) => {
+                                    if pc.dim().in_space > *level {
+                                        Err(Error::IncompatibleDimension)
+                                    } else {
+                                        Ok(PureVal::Cell(pc.clone().lift_to(*level)))
+                                    }
+                                }
+                                _ => Ok(replacement.clone()),
+                            },
+                            ExtType::NonCell => Ok(replacement.clone()),
+                        };
                     }
                 }
-                PureVal::App(*id, new_args)
+                Ok(PureVal::App(*id, new_args))
             }
-            PureVal::Any(_) => any_handler(self, mapping),
+            PureVal::Any(_) => Ok(any_handler(self, mapping)),
         }
     }
 }
 
 impl Shape {
-    pub fn subst(&self, mapping: &HashMap<ExtId, PureVal>) -> Shape {
-        self.subst_with(mapping, &|v, _| v.clone())
-    }
-
-    pub fn subst_with(
+    pub fn subst(
         &self,
-        mapping: &HashMap<ExtId, PureVal>,
-        any_handler: &impl Fn(&PureVal, &HashMap<ExtId, PureVal>) -> PureVal,
-    ) -> Shape {
-        self.subst_with_prim(mapping, any_handler, &|_, _| None)
-    }
-
-    pub fn subst_with_prim(
-        &self,
-        mapping: &HashMap<ExtId, PureVal>,
-        any_handler: &impl Fn(&PureVal, &HashMap<ExtId, PureVal>) -> PureVal,
-        prim_handler: &impl Fn(PrimId, &HashMap<ExtId, PureVal>) -> Option<PureCell>,
-    ) -> Shape {
+        mapping: &SubstMap,
+        any_handler: &impl Fn(&PureVal, &SubstMap) -> PureVal,
+        prim_handler: &impl Fn(PrimId, &SubstMap) -> Option<PureCell>,
+    ) -> Result<Shape> {
         match self {
-            Shape::Zero => Shape::Zero,
-            Shape::Succ { source, target } => Shape::Succ {
-                source: Box::new(source.subst_with_prim(mapping, any_handler, prim_handler)),
-                target: Box::new(target.subst_with_prim(mapping, any_handler, prim_handler)),
-            },
+            Shape::Zero => Ok(Shape::Zero),
+            Shape::Succ { source, target } => Ok(Shape::Succ {
+                source: Box::new(source.subst(mapping, any_handler, prim_handler)?),
+                target: Box::new(target.subst(mapping, any_handler, prim_handler)?),
+            }),
         }
     }
 }
@@ -297,42 +284,34 @@ impl PureCell {
         }
     }
 
-    pub fn subst(&self, mapping: &HashMap<ExtId, PureVal>) -> PureCell {
-        self.subst_with(mapping, &|v, _| v.clone())
-    }
-
-    pub fn subst_with(
+    /// Substitute ExtId references and Prim cells according to the mapping.
+    /// Auto-lifts replacement cells to match expected dimensions (from ExtType).
+    /// Also auto-lifts prim_handler results to match the original Prim's dimension.
+    pub fn subst(
         &self,
-        mapping: &HashMap<ExtId, PureVal>,
-        any_handler: &impl Fn(&PureVal, &HashMap<ExtId, PureVal>) -> PureVal,
-    ) -> PureCell {
-        self.subst_with_prim(mapping, any_handler, &|_, _| None)
-    }
-
-    /// Like `subst_with`, but also allows replacing entire Prim cells.
-    /// `prim_handler` is called with (PrimId, mapping) and may return a replacement PureCell.
-    pub fn subst_with_prim(
-        &self,
-        mapping: &HashMap<ExtId, PureVal>,
-        any_handler: &impl Fn(&PureVal, &HashMap<ExtId, PureVal>) -> PureVal,
-        prim_handler: &impl Fn(PrimId, &HashMap<ExtId, PureVal>) -> Option<PureCell>,
-    ) -> PureCell {
+        mapping: &SubstMap,
+        any_handler: &impl Fn(&PureVal, &SubstMap) -> PureVal,
+        prim_handler: &impl Fn(PrimId, &SubstMap) -> Option<PureCell>,
+    ) -> Result<PureCell> {
         if mapping.is_empty() {
-            return self.clone();
+            return Ok(self.clone());
         }
         match self {
             PureCell::Prim(prim, shape, dim) => {
                 if let Some(replacement) = prim_handler(prim.id, mapping) {
-                    return replacement;
+                    if replacement.dim().in_space > dim.in_space {
+                        return Err(Error::IncompatibleDimension);
+                    }
+                    return Ok(replacement.lift_to(dim.in_space));
                 }
-                let new_args = prim.args.iter().map(|a| a.subst_with_prim(mapping, any_handler, prim_handler)).collect();
+                let new_args: Vec<PureVal> = prim.args.iter().map(|a| a.subst(mapping, any_handler, prim_handler)).collect::<Result<_>>()?;
                 let new_prim = Prim::with_id_args(prim.id, new_args);
-                let new_shape = shape.subst_with_prim(mapping, any_handler, prim_handler);
-                PureCell::Prim(new_prim, new_shape, *dim)
+                let new_shape = shape.subst(mapping, any_handler, prim_handler)?;
+                Ok(PureCell::Prim(new_prim, new_shape, *dim))
             }
             PureCell::Comp(axis, children, dim) => {
-                let new_children = children.iter().map(|c| c.subst_with_prim(mapping, any_handler, prim_handler)).collect();
-                PureCell::Comp(*axis, new_children, *dim)
+                let new_children: Vec<PureCell> = children.iter().map(|c| c.subst(mapping, any_handler, prim_handler)).collect::<Result<_>>()?;
+                Ok(PureCell::Comp(*axis, new_children, *dim))
             }
         }
     }
