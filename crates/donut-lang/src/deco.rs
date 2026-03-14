@@ -15,7 +15,7 @@ pub fn decorate(env: &mut env::Env) {
         let evaluated: Vec<PureVal> = def
             .decos
             .iter()
-            .map(|deco| reduce(deco, &env.items))
+            .map(|deco| reduce(deco, &env.refs))
             .collect();
         def.decos = evaluated;
     }
@@ -28,7 +28,7 @@ pub fn decorate(env: &mut env::Env) {
         let color = resolve_color(spec, &env.defs[i], &prim_colors);
 
         if let Some(item_id) = env.defs[i].item {
-            if let Some(prim_id) = env.items[item_id.0].prim_id {
+            if let Some(prim_id) = env.refs[item_id.0].prim_id {
                 prim_colors.insert(prim_id, color);
             }
         }

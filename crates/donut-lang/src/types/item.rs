@@ -12,8 +12,8 @@ pub struct DefId(pub usize);
 
 /// A scope entry: a defined item, a bound variable (parameter), or a named definition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Ref {
-    Item(RefId),
+pub enum Entry {
+    Ref(RefId),
     Bound(BoundId),
     Def(DefId),
 }
@@ -31,8 +31,8 @@ pub enum ArrowKind {
 pub struct Path {
     /// Per-segment resolution: [first_ref, ..., final_ref].
     /// Corresponds 1:1 with the name tokens in the path (before `[`).
-    pub segments: Vec<Ref>,
-    pub target: Ref,
+    pub segments: Vec<Entry>,
+    pub target: Entry,
     pub args: Vec<ValId>,
     pub applicand: Option<ValId>,
 }
@@ -112,8 +112,12 @@ pub enum DefBody {
         /// For DeclDef (`:=`): the body val `y` in `x: T := y`.
         def_val: Option<ValId>,
     },
-    Alias { val: ValId },
-    Functor { mappings: Vec<FunctorMapping> },
+    Alias {
+        val: ValId,
+    },
+    Functor {
+        mappings: Vec<FunctorMapping>,
+    },
 }
 
 #[derive(Debug)]
@@ -261,10 +265,7 @@ impl Program {
         for (i, item) in self.bounds.iter().enumerate() {
             s.push_str(&format!(
                 "  Bound({}) cname={} lname={} ty=Val({})\n",
-                i,
-                item.cname,
-                item.lname,
-                item.ty.0,
+                i, item.cname, item.lname, item.ty.0,
             ));
         }
 
@@ -353,9 +354,9 @@ impl Program {
         match val {
             Val::Path(path) => {
                 let target = match path.target {
-                    Ref::Item(ref_id) => format!("Item({})", ref_id.0),
-                    Ref::Bound(bound_id) => format!("Bound({})", bound_id.0),
-                    Ref::Def(def_id) => format!("Def({})", def_id.0),
+                    Entry::Ref(ref_id) => format!("Item({})", ref_id.0),
+                    Entry::Bound(bound_id) => format!("Bound({})", bound_id.0),
+                    Entry::Def(def_id) => format!("Def({})", def_id.0),
                 };
                 let mut s = target;
                 if !path.args.is_empty() {

@@ -14,7 +14,7 @@ impl PrimTable {
         let mut prim_color = HashMap::new();
         for def in &env.defs {
             if let Some(item_id) = def.item {
-                if let Some(prim_id) = env.items[item_id.0].prim_id {
+                if let Some(prim_id) = env.refs[item_id.0].prim_id {
                     prim_color.insert(prim_id, def.style.color);
                 }
             }

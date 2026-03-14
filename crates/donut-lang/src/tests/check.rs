@@ -111,7 +111,7 @@ fn alias_chain() {
 fn decl_has_prim_id() {
     let env = check_ok("x: *");
     let x = get_def(&env, "x");
-    let item = &env.items[x.item.unwrap().0];
+    let item = &env.refs[x.item.unwrap().0];
     assert!(item.prim_id.is_some());
 }
 
@@ -125,8 +125,8 @@ fn alias_no_item() {
 #[test]
 fn multiple_decls_distinct_prim_ids() {
     let env = check_ok("a: *\nb: *");
-    let a_item = &env.items[get_def(&env, "a").item.unwrap().0];
-    let b_item = &env.items[get_def(&env, "b").item.unwrap().0];
+    let a_item = &env.refs[get_def(&env, "a").item.unwrap().0];
+    let b_item = &env.refs[get_def(&env, "b").item.unwrap().0];
     assert_ne!(a_item.prim_id, b_item.prim_id);
 }
 

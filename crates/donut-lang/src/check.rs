@@ -5,7 +5,9 @@ use crate::types::env::{self, ArrowTy, DisplayContext, Meta, Ty};
 use crate::types::item::*;
 use donut_core::cell::Diagram;
 use donut_core::cell::Globular;
-use donut_core::common::{AnyBox, Axis, BoundId, ExtType, Level, Prim, PrimId, PureVal, RefId, SubstMap};
+use donut_core::common::{
+    AnyBox, Axis, BoundId, ExtType, Level, Prim, PrimId, PureVal, RefId, SubstMap,
+};
 use donut_core::pure_cell::{PureCell, Shape};
 
 #[derive(Clone)]
@@ -26,7 +28,7 @@ struct Checker<'a> {
     program: &'a Program,
 
     // Output
-    env_items: Vec<Option<env::Item>>,
+    env_refs: Vec<Option<env::Item>>,
     env_bounds: Vec<Option<env::Item>>,
     env_defs: Vec<Option<env::Def>>,
     prim_owner: HashMap<PrimId, env::PrimOwner>,
@@ -35,7 +37,7 @@ struct Checker<'a> {
     next_prim: u64,
     prefixes: Vec<String>,
     // Ref → PureVal for checked items/defs
-    checked: HashMap<Ref, PureVal>,
+    checked: HashMap<Entry, PureVal>,
     // DefId → (PrimId → FunctorEntry)
     functor_maps: HashMap<DefId, FunctorMap>,
     // DeclDef expansion: PrimId of `x` → PureCell of `y`
@@ -53,7 +55,7 @@ impl<'a> DisplayContext for Checker<'a> {
     fn ref_name(&self, ref_id: RefId) -> &str {
         if ref_id.0 < self.program.items.len() {
             &self.program.item(ref_id).cname
-        } else if let Some(Some(env_item)) = self.env_items.get(ref_id.0) {
+        } else if let Some(Some(env_item)) = self.env_refs.get(ref_id.0) {
             &env_item.cname
         } else {
             "?"
@@ -76,7 +78,7 @@ impl<'a> DisplayContext for Checker<'a> {
                 env::PrimOwner::Ref(ref_id) => {
                     if ref_id.0 < self.program.items.len() {
                         &self.program.item(ref_id).cname
-                    } else if let Some(Some(env_item)) = self.env_items.get(ref_id.0) {
+                    } else if let Some(Some(env_item)) = self.env_refs.get(ref_id.0) {
                         &env_item.cname
                     } else {
                         "?"
@@ -105,7 +107,7 @@ impl<'a> Checker<'a> {
         let n_defs = program.defs.len();
         let mut checker = Checker {
             program,
-            env_items: (0..n_items).map(|_| None).collect(),
+            env_refs: (0..n_items).map(|_| None).collect(),
             env_bounds: (0..n_bounds).map(|_| None).collect(),
             env_defs: (0..n_defs).map(|_| None).collect(),
             prim_owner: HashMap::new(),
@@ -129,8 +131,8 @@ impl<'a> Checker<'a> {
             if let Some((_, ty)) = builtins.iter().find(|(name, _)| *name == item.lname) {
                 let ref_id = RefId(i);
                 let pv: PureVal = Meta::Ty(ty.clone()).into();
-                self.checked.insert(Ref::Item(ref_id), pv);
-                self.env_items[i] = Some(env::Item {
+                self.checked.insert(Entry::Ref(ref_id), pv);
+                self.env_refs[i] = Some(env::Item {
                     cname: item.cname.clone(),
                     lname: item.lname.clone(),
                     kind: item.kind,
@@ -167,10 +169,23 @@ impl<'a> Checker<'a> {
     fn format_comp_error(&self, e: &donut_core::common::Error) -> String {
         match e {
             donut_core::common::Error::NotConvertible(a, b) => {
-                format!("`{}` is not convertible to `{}`", self.display_cell(a), self.display_cell(b))
+                format!(
+                    "`{}` is not convertible to `{}`",
+                    self.display_cell(a),
+                    self.display_cell(b)
+                )
             }
-            donut_core::common::Error::IncompatibleDimension { expected, got_dim, got } => {
-                format!("expected {}-cell, got {}-cell `{}`", expected, got_dim, self.display_cell(got))
+            donut_core::common::Error::IncompatibleDimension {
+                expected,
+                got_dim,
+                got,
+            } => {
+                format!(
+                    "expected {}-cell, got {}-cell `{}`",
+                    expected,
+                    got_dim,
+                    self.display_cell(got)
+                )
             }
         }
     }
@@ -178,8 +193,16 @@ impl<'a> Checker<'a> {
     fn format_functor_error(&self, def_id: DefId, e: &FunctorError) -> String {
         let name = &self.program.def(def_id).lname;
         match e {
-            FunctorError::NoMapping(prim) => format!("functor {}: no mapping for {}", name, self.prim_name(prim.id)),
-            FunctorError::CompError(e) => format!("functor {} composition error: {}", name, self.format_comp_error(e)),
+            FunctorError::NoMapping(prim) => format!(
+                "functor {}: no mapping for {}",
+                name,
+                self.prim_name(prim.id)
+            ),
+            FunctorError::CompError(e) => format!(
+                "functor {} composition error: {}",
+                name,
+                self.format_comp_error(e)
+            ),
         }
     }
 
@@ -268,7 +291,10 @@ impl<'a> Checker<'a> {
 
         // Evaluate body
         let (item, val, ty) = match &self.program.def(def_id).body {
-            DefBody::Decl { item: ref_id, def_val } => {
+            DefBody::Decl {
+                item: ref_id,
+                def_val,
+            } => {
                 let ref_id = *ref_id;
                 let def_val = *def_val;
                 let def_pv = def_val.map(|id| self.eval_val(id));
@@ -284,7 +310,7 @@ impl<'a> Checker<'a> {
                 self.check_ref_item(ref_id, &ty, &span);
                 // Record DeclDef substitution: x's PrimId → y's cell
                 if let Some(PureVal::Cell(target_cell)) = &def_pv {
-                    if let Some(Some(env_item)) = self.env_items.get(ref_id.0) {
+                    if let Some(Some(env_item)) = self.env_refs.get(ref_id.0) {
                         if let Some(prim_id) = env_item.prim_id {
                             // Transitively resolve through existing subs
                             let resolved = env::expand_defs(target_cell, &self.def_subs);
@@ -292,7 +318,7 @@ impl<'a> Checker<'a> {
                         }
                     }
                 }
-                let pv = self.checked[&Ref::Item(ref_id)].clone();
+                let pv = self.checked[&Entry::Ref(ref_id)].clone();
                 (Some(ref_id), pv, ty)
             }
             DefBody::Alias { val: val_id } => {
@@ -325,10 +351,10 @@ impl<'a> Checker<'a> {
                 let pv = self.eval_val(d);
                 let deco_span = self.program.val_span(d);
                 if !self.check_meta_val(&pv, Ty::Deco) {
-                    self.error_at(deco_span, format!(
-                        "expected decorator, got `{}`",
-                        self.display_pure_val(&pv),
-                    ));
+                    self.error_at(
+                        deco_span,
+                        format!("expected decorator, got `{}`", self.display_pure_val(&pv),),
+                    );
                 }
                 pv
             })
@@ -359,11 +385,13 @@ impl<'a> Checker<'a> {
             val,
             decos,
             reqs: std::mem::take(&mut self.current_reqs),
-            style: env::DefStyle { color: env::Color::gray() },
+            style: env::DefStyle {
+                color: env::Color::gray(),
+            },
             origin,
             param_counts,
         };
-        self.checked.insert(Ref::Def(def_id), env_def.val.clone());
+        self.checked.insert(Entry::Def(def_id), env_def.val.clone());
         self.env_defs[def_id.0] = Some(env_def);
 
         // Restore constraint collection state
@@ -395,7 +423,7 @@ impl<'a> Checker<'a> {
             }
             PureVal::Ref(ref_id, args) => {
                 let idx = ref_id.0;
-                if let Some(Some(item)) = self.env_items.get(idx) {
+                if let Some(Some(item)) = self.env_refs.get(idx) {
                     if args.is_empty() {
                         item.ty.clone()
                     } else {
@@ -510,15 +538,15 @@ impl<'a> Checker<'a> {
         } else {
             let span = self.program.val_span(val_id);
             match path.target {
-                Ref::Def(def_id) => {
+                Entry::Def(def_id) => {
                     let qname = &self.program.def(def_id).qname;
                     self.error_at(span, format!("self-referencing definition: `{}`", qname));
                 }
-                Ref::Item(ref_id) => {
+                Entry::Ref(ref_id) => {
                     let cname = &self.program.item(ref_id).cname;
                     self.error_at(span, format!("unresolved item: `{}`", cname));
                 }
-                Ref::Bound(bound_id) => {
+                Entry::Bound(bound_id) => {
                     let lname = &self.program.bound(bound_id).lname;
                     self.error_at(span, format!("unresolved bound variable: `{}`", lname));
                 }
@@ -528,7 +556,7 @@ impl<'a> Checker<'a> {
 
         // Check arg count (only for Def targets; Item refs may appear
         // internally via Subst without args)
-        if let Ref::Def(def_id) = path.target {
+        if let Entry::Def(def_id) = path.target {
             let expected_params = self.program.def(def_id).params.len();
             if path.args.len() != expected_params {
                 let name = &self.program.def(def_id).qname;
@@ -537,7 +565,9 @@ impl<'a> Checker<'a> {
                     span,
                     format!(
                         "`{}` expects {} parameters, but {} were given",
-                        name, expected_params, path.args.len()
+                        name,
+                        expected_params,
+                        path.args.len()
                     ),
                 );
             }
@@ -550,9 +580,14 @@ impl<'a> Checker<'a> {
             let mut args: Vec<PureVal> = path.args.iter().map(|&a| self.eval_val(a)).collect();
 
             // Type-check args against parameter types (and lift dimensions)
-            if let Ref::Def(def_id) = path.target {
-                let params: Vec<_> = self.program.def(def_id)
-                    .params.iter().map(|p| (p.bound, p.ty)).collect();
+            if let Entry::Def(def_id) = path.target {
+                let params: Vec<_> = self
+                    .program
+                    .def(def_id)
+                    .params
+                    .iter()
+                    .map(|p| (p.bound, p.ty))
+                    .collect();
                 let span = self.program.val_span(val_id);
                 let err_count = self.errors.len();
                 let mut param_subst: SubstMap = HashMap::new();
@@ -574,18 +609,18 @@ impl<'a> Checker<'a> {
             // Decl defs (with item) and bare Items accumulate args into App;
             // Alias defs substitute param placeholders with actual args.
             let is_alias = match path.target {
-                Ref::Item(_) | Ref::Bound(_) => false,
-                Ref::Def(def_id) => matches!(
-                    self.program.def(def_id).body,
-                    DefBody::Alias { .. }
-                ),
+                Entry::Ref(_) | Entry::Bound(_) => false,
+                Entry::Def(def_id) => {
+                    matches!(self.program.def(def_id).body, DefBody::Alias { .. })
+                }
             };
             if is_alias {
                 let param_entries = self.param_bound_entries(path.target);
-                let subst_map: SubstMap =
-                    param_entries.into_iter().zip(args.into_iter())
-                        .map(|((ext_id, ext_type), arg)| (ext_id, (arg, ext_type)))
-                        .collect();
+                let subst_map: SubstMap = param_entries
+                    .into_iter()
+                    .zip(args.into_iter())
+                    .map(|((ext_id, ext_type), arg)| (ext_id, (arg, ext_type)))
+                    .collect();
                 subst_pv(&base, &subst_map, &self.prim_owner)
             } else {
                 match base {
@@ -595,10 +630,11 @@ impl<'a> Checker<'a> {
                     }
                     _ => {
                         let param_entries = self.param_bound_entries(path.target);
-                        let subst_map: SubstMap =
-                            param_entries.into_iter().zip(args.into_iter())
-                                .map(|((ext_id, ext_type), arg)| (ext_id, (arg, ext_type)))
-                                .collect();
+                        let subst_map: SubstMap = param_entries
+                            .into_iter()
+                            .zip(args.into_iter())
+                            .map(|((ext_id, ext_type), arg)| (ext_id, (arg, ext_type)))
+                            .collect();
                         subst_pv(&base, &subst_map, &self.prim_owner)
                     }
                 }
@@ -606,18 +642,20 @@ impl<'a> Checker<'a> {
         };
 
         // Verify/propagate functor constraints from target def
-        if let Ref::Def(def_id) = path.target {
+        if let Entry::Def(def_id) = path.target {
             if !path.args.is_empty() {
                 if let Some(Some(env_def)) = self.env_defs.get(def_id.0) {
                     let reqs = env_def.reqs.clone();
                     if !reqs.is_empty() {
                         // Build substitution map: bound vars → actual arg values
                         let param_entries = self.param_bound_entries(path.target);
-                        let args: Vec<PureVal> = path.args.iter().map(|&a| self.eval_val(a)).collect();
-                        let mut subst_map: SubstMap =
-                            param_entries.into_iter().zip(args.into_iter())
-                                .map(|((ext_id, ext_type), arg)| (ext_id, (arg, ext_type)))
-                                .collect();
+                        let args: Vec<PureVal> =
+                            path.args.iter().map(|&a| self.eval_val(a)).collect();
+                        let mut subst_map: SubstMap = param_entries
+                            .into_iter()
+                            .zip(args.into_iter())
+                            .map(|((ext_id, ext_type), arg)| (ext_id, (arg, ext_type)))
+                            .collect();
 
                         // Process reqs in order, growing subst_map with results
                         for req in &reqs {
@@ -625,22 +663,39 @@ impl<'a> Checker<'a> {
                                 Ok(cell) => cell,
                                 Err(e) => {
                                     let span = self.program.val_span(val_id);
-                                    self.error_at(span, format!("functor constraint substitution failed: {}", self.format_comp_error(&e)));
+                                    self.error_at(
+                                        span,
+                                        format!(
+                                            "functor constraint substitution failed: {}",
+                                            self.format_comp_error(&e)
+                                        ),
+                                    );
                                     continue;
                                 }
                             };
                             if let Some(fmap) = self.functor_maps.get(&req.functor) {
                                 let entries = fmap.entries.clone();
                                 let dim_shift = fmap.dim_shift;
-                                match self.apply_functor_constrained(&sub_arg, req.functor, &entries, dim_shift) {
+                                match self.apply_functor_constrained(
+                                    &sub_arg,
+                                    req.functor,
+                                    &entries,
+                                    dim_shift,
+                                ) {
                                     Ok(result_cell) => {
                                         let bound_id = BoundId(req.result.0);
                                         let result_dim = result_cell.dim().in_space;
-                                        subst_map.insert(bound_id, (PureVal::Cell(result_cell), ExtType::Cell(result_dim)));
+                                        subst_map.insert(
+                                            bound_id,
+                                            (PureVal::Cell(result_cell), ExtType::Cell(result_dim)),
+                                        );
                                     }
                                     Err(e) => {
                                         let span = self.program.val_span(val_id);
-                                        self.error_at(span, self.format_functor_error(req.functor, &e));
+                                        self.error_at(
+                                            span,
+                                            self.format_functor_error(req.functor, &e),
+                                        );
                                     }
                                 }
                             }
@@ -660,14 +715,20 @@ impl<'a> Checker<'a> {
                 PureVal::Cell(pc) => pc,
                 _ => {
                     let span = self.program.val_span(val_id);
-                    self.error_at(span, format!("functor applicand must be a cell, got `{}`", self.display_pure_val(&applicand)));
+                    self.error_at(
+                        span,
+                        format!(
+                            "functor applicand must be a cell, got `{}`",
+                            self.display_pure_val(&applicand)
+                        ),
+                    );
                     return result;
                 }
             };
             // Find functor map for this def
             let functor_def_id = match path.target {
-                Ref::Def(did) => did,
-                Ref::Item(_) | Ref::Bound(_) => {
+                Entry::Def(did) => did,
+                Entry::Ref(_) | Entry::Bound(_) => {
                     let span = self.program.val_span(val_id);
                     self.error_at(span, "functor application target must be a definition");
                     return result;
@@ -676,7 +737,8 @@ impl<'a> Checker<'a> {
             if let Some(fmap) = self.functor_maps.get(&functor_def_id) {
                 let entries = fmap.entries.clone();
                 let dim_shift = fmap.dim_shift;
-                match self.apply_functor_constrained(app_cell, functor_def_id, &entries, dim_shift) {
+                match self.apply_functor_constrained(app_cell, functor_def_id, &entries, dim_shift)
+                {
                     Ok(pc) => PureVal::Cell(pc),
                     Err(e) => {
                         let span = self.program.val_span(val_id);
@@ -727,13 +789,22 @@ impl<'a> Checker<'a> {
             .into_iter()
             .filter_map(|pv| match pv {
                 PureVal::Cell(pc) => Some(pc),
-                _ => { non_cell = Some(pv); None }
+                _ => {
+                    non_cell = Some(pv);
+                    None
+                }
             })
             .collect();
         if cells.len() != children.len() {
             let span = self.program.val_span(val_id);
             if let Some(bad) = non_cell {
-                self.error_at(span, format!("composition requires cell values, got `{}`", self.display_pure_val(&bad)));
+                self.error_at(
+                    span,
+                    format!(
+                        "composition requires cell values, got `{}`",
+                        self.display_pure_val(&bad)
+                    ),
+                );
             }
             return Meta::Error.into();
         }
@@ -767,7 +838,7 @@ impl<'a> Checker<'a> {
             PureVal::Cell(pc) => Some(pc.dim().in_space),
             PureVal::Ref(RefId(idx), _) => {
                 let idx = *idx;
-                self.env_items
+                self.env_refs
                     .get(idx)?
                     .as_ref()
                     .and_then(|item| self.level_of_ty(&item.ty))
@@ -794,7 +865,13 @@ impl<'a> Checker<'a> {
             Ty::Functor(s, t) => (s.clone(), t.clone()),
             _ => {
                 let span = self.program.def(def_id).span.clone();
-                self.error_at(&span, format!("functor must have type `A ~> B`, got `{}`", self.display_ty(ty)));
+                self.error_at(
+                    &span,
+                    format!(
+                        "functor must have type `A ~> B`, got `{}`",
+                        self.display_ty(ty)
+                    ),
+                );
                 return;
             }
         };
@@ -804,10 +881,14 @@ impl<'a> Checker<'a> {
             (PureVal::Cell(s), PureVal::Cell(t)) => (s.clone(), t.clone()),
             _ => {
                 let span = self.program.def(def_id).span.clone();
-                self.error_at(&span, format!(
-                    "functor source and target must be cell values, got `{}` ~> `{}`",
-                    self.display_pure_val(&src_val), self.display_pure_val(&tgt_val),
-                ));
+                self.error_at(
+                    &span,
+                    format!(
+                        "functor source and target must be cell values, got `{}` ~> `{}`",
+                        self.display_pure_val(&src_val),
+                        self.display_pure_val(&tgt_val),
+                    ),
+                );
                 return;
             }
         };
@@ -819,10 +900,13 @@ impl<'a> Checker<'a> {
             Some(id) => id,
             None => {
                 let span = self.program.def(def_id).span.clone();
-                self.error_at(&span, format!(
-                    "functor source must be a primitive cell, got `{}`",
-                    self.display_cell(&src_cell),
-                ));
+                self.error_at(
+                    &span,
+                    format!(
+                        "functor source must be a primitive cell, got `{}`",
+                        self.display_cell(&src_cell),
+                    ),
+                );
                 return;
             }
         };
@@ -857,10 +941,13 @@ impl<'a> Checker<'a> {
                 PureVal::Cell(pc) => pc.clone(),
                 _ => {
                     let span = self.program.val_span(mapping.applicand);
-                    self.error_at(span, format!(
-                        "functor mapping applicand must be a cell, got `{}`",
-                        self.display_pure_val(&app_val),
-                    ));
+                    self.error_at(
+                        span,
+                        format!(
+                            "functor mapping applicand must be a cell, got `{}`",
+                            self.display_pure_val(&app_val),
+                        ),
+                    );
                     continue;
                 }
             };
@@ -869,10 +956,13 @@ impl<'a> Checker<'a> {
                 Some(id) => id,
                 None => {
                     let span = self.program.val_span(mapping.applicand);
-                    self.error_at(span, format!(
-                        "functor mapping applicand must be a primitive cell, got `{}`",
-                        self.display_cell(&app_cell),
-                    ));
+                    self.error_at(
+                        span,
+                        format!(
+                            "functor mapping applicand must be a primitive cell, got `{}`",
+                            self.display_cell(&app_cell),
+                        ),
+                    );
                     continue;
                 }
             };
@@ -883,10 +973,13 @@ impl<'a> Checker<'a> {
                 PureVal::Cell(pc) => pc.clone(),
                 _ => {
                     let span = self.program.val_span(mapping.val);
-                    self.error_at(span, format!(
-                        "functor mapping value must be a cell, got `{}`",
-                        self.display_pure_val(&val_val),
-                    ));
+                    self.error_at(
+                        span,
+                        format!(
+                            "functor mapping value must be a cell, got `{}`",
+                            self.display_pure_val(&val_val),
+                        ),
+                    );
                     continue;
                 }
             };
@@ -909,10 +1002,14 @@ impl<'a> Checker<'a> {
             let expected_dim = app_dim as i32 + dim_shift;
             if expected_dim < 0 {
                 let span = self.program.val_span(mapping.applicand);
-                self.error_at(span, format!(
-                    "functor mapping `{}` ({}-cell) is below functor source dimension",
-                    self.display_cell(&app_cell), app_dim,
-                ));
+                self.error_at(
+                    span,
+                    format!(
+                        "functor mapping `{}` ({}-cell) is below functor source dimension",
+                        self.display_cell(&app_cell),
+                        app_dim,
+                    ),
+                );
                 continue;
             }
 
@@ -922,25 +1019,35 @@ impl<'a> Checker<'a> {
             }
 
             // Functoriality check: apply_functor(app.s) == val.s, apply_functor(app.t) == val.t
-            let expected_s = apply_functor(&app_cell.s(), &functor_map, &self.prim_owner, dim_shift);
-            let expected_t = apply_functor(&app_cell.t(), &functor_map, &self.prim_owner, dim_shift);
+            let expected_s =
+                apply_functor(&app_cell.s(), &functor_map, &self.prim_owner, dim_shift);
+            let expected_t =
+                apply_functor(&app_cell.t(), &functor_map, &self.prim_owner, dim_shift);
 
             match (expected_s, expected_t) {
                 (Ok(es), Ok(et)) => {
                     if !es.is_convertible(&val_cell.s()) {
                         let span = self.program.val_span(mapping.val);
-                        self.error_at(span, format!(
-                            "functor mapping source mismatch: expected `{}`, got `{}`",
-                            self.display_cell(&es), self.display_cell(&val_cell.s()),
-                        ));
+                        self.error_at(
+                            span,
+                            format!(
+                                "functor mapping source mismatch: expected `{}`, got `{}`",
+                                self.display_cell(&es),
+                                self.display_cell(&val_cell.s()),
+                            ),
+                        );
                         continue;
                     }
                     if !et.is_convertible(&val_cell.t()) {
                         let span = self.program.val_span(mapping.val);
-                        self.error_at(span, format!(
-                            "functor mapping target mismatch: expected `{}`, got `{}`",
-                            self.display_cell(&et), self.display_cell(&val_cell.t()),
-                        ));
+                        self.error_at(
+                            span,
+                            format!(
+                                "functor mapping target mismatch: expected `{}`, got `{}`",
+                                self.display_cell(&et),
+                                self.display_cell(&val_cell.t()),
+                            ),
+                        );
                         continue;
                     }
                 }
@@ -960,20 +1067,23 @@ impl<'a> Checker<'a> {
             );
         }
 
-        self.functor_maps.insert(def_id, FunctorMap {
-            entries: functor_map,
-            dim_shift,
-        });
+        self.functor_maps.insert(
+            def_id,
+            FunctorMap {
+                entries: functor_map,
+                dim_shift,
+            },
+        );
     }
 
     // --- Path resolution ---
 
-    fn resolve_ref(&mut self, target: Ref) -> Option<PureVal> {
+    fn resolve_ref(&mut self, target: Entry) -> Option<PureVal> {
         self.checked.get(&target).cloned()
     }
 
     fn ext_type_for_ref(&self, ref_id: RefId) -> ExtType {
-        if let Some(Some(item)) = self.env_items.get(ref_id.0) {
+        if let Some(Some(item)) = self.env_refs.get(ref_id.0) {
             Self::ext_type_from_ty(&item.ty)
         } else {
             ExtType::NonCell
@@ -996,11 +1106,11 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn param_bound_entries(&self, target: Ref) -> Vec<(BoundId, ExtType)> {
+    fn param_bound_entries(&self, target: Entry) -> Vec<(BoundId, ExtType)> {
         let params: &[_] = match target {
-            Ref::Item(ref_id) => &self.program.item(ref_id).params,
-            Ref::Bound(_) => return vec![],
-            Ref::Def(def_id) => &self.program.def(def_id).params,
+            Entry::Ref(ref_id) => &self.program.item(ref_id).params,
+            Entry::Bound(_) => return vec![],
+            Entry::Def(def_id) => &self.program.def(def_id).params,
         };
         params
             .iter()
@@ -1030,20 +1140,24 @@ impl<'a> Checker<'a> {
                 let prim_id = self.fresh_prim_id();
                 let prim = Prim::with_id_args(PrimId(prim_id.0), param_args);
                 match (Self::extract_cell(src_val), Self::extract_cell(tgt_val)) {
-                    (Some(src), Some(tgt)) => {
-                        match PureCell::prim(prim, src, tgt) {
-                            Ok(pc) => (PureVal::Cell(pc), Some(prim_id)),
-                            Err(e) => {
-                                self.error_at(span, format!("cell construction error: {}", self.format_comp_error(&e)));
-                                (Meta::Error.into(), Some(prim_id))
-                            }
+                    (Some(src), Some(tgt)) => match PureCell::prim(prim, src, tgt) {
+                        Ok(pc) => (PureVal::Cell(pc), Some(prim_id)),
+                        Err(e) => {
+                            self.error_at(
+                                span,
+                                format!("cell construction error: {}", self.format_comp_error(&e)),
+                            );
+                            (Meta::Error.into(), Some(prim_id))
                         }
-                    }
+                    },
                     _ => {
-                        self.error_at(span, format!(
-                            "arrow source/target must be cell values in type `{}`",
-                            self.display_ty(ty),
-                        ));
+                        self.error_at(
+                            span,
+                            format!(
+                                "arrow source/target must be cell values in type `{}`",
+                                self.display_ty(ty),
+                            ),
+                        );
                         (Meta::Error.into(), Some(prim_id))
                     }
                 }
@@ -1084,7 +1198,7 @@ impl<'a> Checker<'a> {
     }
 
     fn check_ref_item(&mut self, ref_id: RefId, ty: &Ty, span: &TokenSpan) {
-        if self.checked.contains_key(&Ref::Item(ref_id)) {
+        if self.checked.contains_key(&Entry::Ref(ref_id)) {
             return;
         }
         let item = self.program.item(ref_id);
@@ -1096,7 +1210,7 @@ impl<'a> Checker<'a> {
 
         let (pv, prim_id) = self.build_item_val(item, ty, span, param_args, false, ref_id.0);
 
-        self.checked.insert(Ref::Item(ref_id), pv);
+        self.checked.insert(Entry::Ref(ref_id), pv);
         if let Some(pid) = prim_id {
             self.prim_owner.insert(pid, env::PrimOwner::Ref(ref_id));
         }
@@ -1109,11 +1223,11 @@ impl<'a> Checker<'a> {
             prim_id,
             params: item.params.iter().map(|p| p.bound).collect(),
         };
-        self.env_items[ref_id.0] = Some(env_item);
+        self.env_refs[ref_id.0] = Some(env_item);
     }
 
     fn check_bound(&mut self, bound_id: BoundId, ty: &Ty, span: &TokenSpan) {
-        if self.checked.contains_key(&Ref::Bound(bound_id)) {
+        if self.checked.contains_key(&Entry::Bound(bound_id)) {
             return;
         }
         let item = self.program.bound(bound_id);
@@ -1125,7 +1239,7 @@ impl<'a> Checker<'a> {
 
         let (pv, prim_id) = self.build_item_val(item, ty, span, param_args, true, bound_id.0);
 
-        self.checked.insert(Ref::Bound(bound_id), pv);
+        self.checked.insert(Entry::Bound(bound_id), pv);
         if let Some(pid) = prim_id {
             self.prim_owner.insert(pid, env::PrimOwner::Bound(bound_id));
         }
@@ -1304,7 +1418,7 @@ impl<'a> Checker<'a> {
         // Fill unchecked entries with defaults
         let n_program_items = self.program.items.len();
         let items: Vec<env::Item> = self
-            .env_items
+            .env_refs
             .into_iter()
             .enumerate()
             .map(|(i, o)| {
@@ -1381,7 +1495,9 @@ impl<'a> Checker<'a> {
                         val: Meta::Error.into(),
                         decos: vec![],
                         reqs: vec![],
-                        style: env::DefStyle { color: env::Color::gray() },
+                        style: env::DefStyle {
+                            color: env::Color::gray(),
+                        },
                         origin: def.origin.clone(),
                         param_counts: def.param_counts.clone(),
                     }
@@ -1390,7 +1506,7 @@ impl<'a> Checker<'a> {
             .collect();
 
         let env = env::Env {
-            items,
+            refs: items,
             bounds,
             defs,
             prim_owner: self.prim_owner,
@@ -1419,7 +1535,9 @@ fn subst_any_handler(
     }
 }
 
-fn make_prim_handler(prim_owner: &HashMap<PrimId, env::PrimOwner>) -> impl Fn(PrimId, &SubstMap) -> Option<PureCell> + '_ {
+fn make_prim_handler(
+    prim_owner: &HashMap<PrimId, env::PrimOwner>,
+) -> impl Fn(PrimId, &SubstMap) -> Option<PureCell> + '_ {
     move |prim_id: PrimId, mapping: &SubstMap| -> Option<PureCell> {
         let owner = prim_owner.get(&prim_id)?;
         let bound_id = match owner {
@@ -1434,16 +1552,13 @@ fn make_prim_handler(prim_owner: &HashMap<PrimId, env::PrimOwner>) -> impl Fn(Pr
     }
 }
 
-fn subst_pv(
-    pv: &PureVal,
-    map: &SubstMap,
-    prim_owner: &HashMap<PrimId, env::PrimOwner>,
-) -> PureVal {
+fn subst_pv(pv: &PureVal, map: &SubstMap, prim_owner: &HashMap<PrimId, env::PrimOwner>) -> PureVal {
     pv.subst(
         map,
         &|v, m| subst_any_handler(v, m, prim_owner),
         &make_prim_handler(prim_owner),
-    ).unwrap_or_else(|_| Meta::Error.into())
+    )
+    .unwrap_or_else(|_| Meta::Error.into())
 }
 
 fn subst_cell(
@@ -1469,9 +1584,10 @@ fn subst_ty(ty: &Ty, map: &SubstMap, prim_owner: &HashMap<PrimId, env::PrimOwner
             subst_pv(src, map, prim_owner),
             subst_pv(tgt, map, prim_owner),
         ),
-        Ty::Functor(src, tgt) => {
-            Ty::Functor(subst_pv(src, map, prim_owner), subst_pv(tgt, map, prim_owner))
-        }
+        Ty::Functor(src, tgt) => Ty::Functor(
+            subst_pv(src, map, prim_owner),
+            subst_pv(tgt, map, prim_owner),
+        ),
         _ => ty.clone(),
     }
 }
@@ -1571,10 +1687,16 @@ impl<'a> Checker<'a> {
                         Shape::Zero => PureCell::zero(fresh_prim),
                         Shape::Succ { source, target } => {
                             let mapped_src = self.apply_functor_constrained(
-                                source, functor_def_id, map, dim_shift,
+                                source,
+                                functor_def_id,
+                                map,
+                                dim_shift,
                             )?;
                             let mapped_tgt = self.apply_functor_constrained(
-                                target, functor_def_id, map, dim_shift,
+                                target,
+                                functor_def_id,
+                                map,
+                                dim_shift,
                             )?;
                             PureCell::prim(fresh_prim, mapped_src, mapped_tgt)
                                 .map_err(FunctorError::CompError)?
@@ -1592,7 +1714,7 @@ impl<'a> Checker<'a> {
                             env::PrimOwner::Ref(ref_id) => {
                                 if ref_id.0 < self.program.items.len() {
                                     self.program.item(ref_id).lname.clone()
-                                } else if let Some(Some(env_item)) = self.env_items.get(ref_id.0) {
+                                } else if let Some(Some(env_item)) = self.env_refs.get(ref_id.0) {
                                     env_item.lname.clone()
                                 } else {
                                     "?".to_string()
@@ -1601,7 +1723,8 @@ impl<'a> Checker<'a> {
                             env::PrimOwner::Bound(bound_id) => {
                                 if bound_id.0 < self.program.bounds.len() {
                                     self.program.bound(bound_id).lname.clone()
-                                } else if let Some(Some(env_item)) = self.env_bounds.get(bound_id.0) {
+                                } else if let Some(Some(env_item)) = self.env_bounds.get(bound_id.0)
+                                {
                                     env_item.lname.clone()
                                 } else {
                                     "?".to_string()
@@ -1622,7 +1745,8 @@ impl<'a> Checker<'a> {
                         prim_id: Some(fresh_id),
                         params: vec![],
                     }));
-                    self.prim_owner.insert(fresh_id, env::PrimOwner::Bound(result_bound_id));
+                    self.prim_owner
+                        .insert(fresh_id, env::PrimOwner::Bound(result_bound_id));
 
                     // Record constraint with result bound
                     let arg_cell = PureCell::Prim(prim.clone(), shape.clone(), *dim);
@@ -1690,7 +1814,6 @@ fn apply_functor(
         }
     }
 }
-
 
 // --- Public API ---
 

@@ -51,8 +51,10 @@ fn build_prim_maps(env: &Env) -> (HashMap<String, PrimId>, HashMap<PrimId, Strin
     let mut names = HashMap::new();
     for (&prim_id, &owner) in &env.prim_owner {
         let cname = match owner {
-            donut_lang::types::env::PrimOwner::Ref(ref_id) => env.items[ref_id.0].cname.clone(),
-            donut_lang::types::env::PrimOwner::Bound(bound_id) => env.bounds[bound_id.0].cname.clone(),
+            donut_lang::types::env::PrimOwner::Ref(ref_id) => env.refs[ref_id.0].cname.clone(),
+            donut_lang::types::env::PrimOwner::Bound(bound_id) => {
+                env.bounds[bound_id.0].cname.clone()
+            }
         };
         lookup.insert(cname.clone(), prim_id);
         names.insert(prim_id, cname);

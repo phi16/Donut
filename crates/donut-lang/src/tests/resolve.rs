@@ -49,9 +49,9 @@ fn names<'a>(p: &'a Program, m: &Module) -> Vec<&'a str> {
 fn val_as_path_name<'a>(p: &'a Program, val_id: ValId) -> Option<&'a str> {
     match p.val(val_id) {
         Val::Path(path) => match path.target {
-            Ref::Def(def_id) => Some(&p.def(def_id).lname),
-            Ref::Item(ref_id) => Some(&p.item(ref_id).lname),
-            Ref::Bound(bound_id) => Some(&p.bound(bound_id).lname),
+            Entry::Def(def_id) => Some(&p.def(def_id).lname),
+            Entry::Ref(ref_id) => Some(&p.item(ref_id).lname),
+            Entry::Bound(bound_id) => Some(&p.bound(bound_id).lname),
         },
         _ => None,
     }
@@ -64,9 +64,9 @@ fn val_segment_names<'a>(p: &'a Program, val_id: ValId) -> Vec<&'a str> {
             .segments
             .iter()
             .map(|r| match r {
-                Ref::Def(id) => p.def(*id).lname.as_str(),
-                Ref::Item(id) => p.item(*id).lname.as_str(),
-                Ref::Bound(id) => p.bound(*id).lname.as_str(),
+                Entry::Def(id) => p.def(*id).lname.as_str(),
+                Entry::Ref(id) => p.item(*id).lname.as_str(),
+                Entry::Bound(id) => p.bound(*id).lname.as_str(),
             })
             .collect(),
         _ => vec![],
@@ -308,7 +308,7 @@ fn path_segments_param_ref() {
     assert_eq!(segs, vec!["f"]);
     // param ref should be Ref::Bound
     if let Val::Path(path) = p.val(x.val().unwrap()) {
-        assert!(matches!(path.segments[0], Ref::Bound(_)));
+        assert!(matches!(path.segments[0], Entry::Bound(_)));
     }
 }
 

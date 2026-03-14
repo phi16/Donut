@@ -132,7 +132,7 @@ impl Resolve for S<semtree::Path<semtree::ParamVal>> {
         let applicand = path.1.map(|v| v.resolve(ctx));
 
         // Use a dummy Ref if unresolved (error already reported)
-        let target = resolved.unwrap_or(Ref::Def(DefId(0)));
+        let target = resolved.unwrap_or(Entry::Def(DefId(0)));
 
         Path {
             segments,
@@ -177,9 +177,9 @@ impl Resolve for S<semtree::Lit> {
 
 struct Scope {
     /// All names in scope (for lookup).
-    names: HashMap<String, Ref>,
+    names: HashMap<String, Entry>,
     /// Entries defined in this scope, in order.
-    entries: Vec<(String, Ref)>,
+    entries: Vec<(String, Entry)>,
     /// Names added via `use` — visible for resolution but not exported.
     used: HashSet<String>,
 }
@@ -193,7 +193,7 @@ impl Scope {
         }
     }
 
-    fn define(&mut self, name: String, r: Ref) -> Option<Ref> {
+    fn define(&mut self, name: String, r: Entry) -> Option<Entry> {
         if let Some(&existing) = self.names.get(&name) {
             Some(existing)
         } else {
@@ -203,7 +203,7 @@ impl Scope {
         }
     }
 
-    fn define_used(&mut self, name: String, r: Ref) -> Option<Ref> {
+    fn define_used(&mut self, name: String, r: Entry) -> Option<Entry> {
         if let Some(&existing) = self.names.get(&name) {
             if existing != r {
                 return Some(existing);
@@ -217,7 +217,7 @@ impl Scope {
         }
     }
 
-    fn replace(&mut self, name: &str, new_r: Ref) {
+    fn replace(&mut self, name: &str, new_r: Entry) {
         if let Some(r) = self.names.get_mut(name) {
             *r = new_r;
         }
@@ -229,7 +229,7 @@ impl Scope {
         }
     }
 
-    fn get(&self, name: &str) -> Option<Ref> {
+    fn get(&self, name: &str) -> Option<Entry> {
         self.names.get(name).copied()
     }
 
@@ -238,7 +238,7 @@ impl Scope {
         let mut module = Module::new();
         for (name, r) in &self.entries {
             if !self.used.contains(name) {
-                if let Ref::Def(def_id) = r {
+                if let Entry::Def(def_id) = r {
                     module.define(name.clone(), *def_id);
                 }
             }
@@ -251,7 +251,7 @@ impl Scope {
         let mut conflicts = Vec::new();
         for &def_id in &module.entries {
             let lname = defs[def_id.0].lname.clone();
-            let r = Ref::Def(def_id);
+            let r = Entry::Def(def_id);
             if let Some(_) = self.define_used(lname.clone(), r) {
                 conflicts.push(lname);
             }
@@ -264,7 +264,7 @@ impl Scope {
         let mut conflicts = Vec::new();
         for &def_id in &module.entries {
             let lname = defs[def_id.0].lname.clone();
-            let r = Ref::Def(def_id);
+            let r = Entry::Def(def_id);
             if let Some(_) = self.define(lname.clone(), r) {
                 conflicts.push(lname);
             }
@@ -357,7 +357,7 @@ impl Checker {
         let meta_ty_val = self.alloc_val(
             Val::Path(Path {
                 segments: vec![],
-                target: Ref::Item(RefId(0)),
+                target: Entry::Ref(RefId(0)),
                 args: vec![],
                 applicand: None,
             }),
@@ -376,7 +376,7 @@ impl Checker {
         let star_ty_val = self.alloc_val(
             Val::Path(Path {
                 segments: vec![],
-                target: Ref::Item(meta_id),
+                target: Entry::Ref(meta_id),
                 args: vec![],
                 applicand: None,
             }),
@@ -392,8 +392,8 @@ impl Checker {
 
         // Register in initial scope
         self.push_scope();
-        self.define("meta".into(), Ref::Item(meta_id));
-        self.define("*".into(), Ref::Item(star_id));
+        self.define("meta".into(), Entry::Ref(meta_id));
+        self.define("*".into(), Entry::Ref(star_id));
     }
 
     // --- Arena allocators ---
@@ -473,7 +473,7 @@ impl Checker {
                 let path_val = self.alloc_val(
                     Val::Path(Path {
                         segments: vec![],
-                        target: Ref::Item(item),
+                        target: Entry::Ref(item),
                         args: vec![],
                         applicand: None,
                     }),
@@ -672,12 +672,12 @@ impl Checker {
         scope.to_module()
     }
 
-    fn define(&mut self, name: String, r: Ref) -> bool {
+    fn define(&mut self, name: String, r: Entry) -> bool {
         let scope = self.scopes.last_mut().unwrap();
         scope.define(name, r).is_none()
     }
 
-    fn lookup(&self, name: &str) -> Option<Ref> {
+    fn lookup(&self, name: &str) -> Option<Entry> {
         for scope in self.scopes.iter().rev() {
             if let Some(r) = scope.get(name) {
                 return Some(r);
@@ -689,8 +689,8 @@ impl Checker {
     /// Look up a Ref and get the DefId, if it's a Def.
     fn lookup_def(&self, name: &str) -> Option<DefId> {
         match self.lookup(name)? {
-            Ref::Def(id) => Some(id),
-            Ref::Item(_) | Ref::Bound(_) => None,
+            Entry::Def(id) => Some(id),
+            Entry::Ref(_) | Entry::Bound(_) => None,
         }
     }
 
@@ -730,7 +730,7 @@ impl Checker {
 
     /// Resolve a dotted path segment-by-segment.
     /// Returns the per-segment Refs (for Path.segments) and the final Ref.
-    fn resolve_segments(&mut self, segments: &[(&str, &TokenSpan)]) -> (Vec<Ref>, Option<Ref>) {
+    fn resolve_segments(&mut self, segments: &[(&str, &TokenSpan)]) -> (Vec<Entry>, Option<Entry>) {
         let Some((&(first_name, first_span), rest)) = segments.split_first() else {
             return (vec![], None);
         };
@@ -741,7 +741,7 @@ impl Checker {
             return (vec![], None);
         };
         // Track deco param usage in applicand context
-        if let Ref::Bound(bound_id) = first_ref {
+        if let Entry::Bound(bound_id) = first_ref {
             if let Some(ref mut used) = self.used_deco_params_in_applicand {
                 if self.deco_param_stack.iter().any(|s| s.contains(&bound_id)) {
                     used.insert(bound_id);
@@ -753,13 +753,13 @@ impl Checker {
         let mut current_ref = first_ref;
         for &(name, span) in rest {
             let current_def = match current_ref {
-                Ref::Def(id) => Some(id),
-                Ref::Item(_) | Ref::Bound(_) => None,
+                Entry::Def(id) => Some(id),
+                Entry::Ref(_) | Entry::Bound(_) => None,
             };
             let next = current_def.and_then(|id| self.def(id).members.get(name));
             match next {
                 Some(id) => {
-                    current_ref = Ref::Def(id);
+                    current_ref = Entry::Def(id);
                     seg_refs.push(current_ref);
                 }
                 None => {
@@ -822,7 +822,7 @@ impl Checker {
             };
             let bound_id = self.alloc_bound(item);
             param_items.insert(bound_id);
-            self.define(name.clone(), Ref::Bound(bound_id));
+            self.define(name.clone(), Entry::Bound(bound_id));
         }
         self.deco_param_stack.push(param_items);
     }
@@ -1060,7 +1060,7 @@ impl Checker {
                     param_counts,
                 };
                 let def_id = self.alloc_def(def);
-                if !self.define(lname, Ref::Def(def_id)) {
+                if !self.define(lname, Entry::Def(def_id)) {
                     self.error_at(&span, "duplicate definition");
                 }
                 self.emit_def_tree(DefTree {
@@ -1138,7 +1138,7 @@ impl Checker {
                 param_counts: vec![],
             };
             let id = self.alloc_def(def);
-            if !self.define(name.clone(), Ref::Def(id)) {
+            if !self.define(name.clone(), Entry::Def(id)) {
                 self.error_at(span, format!("duplicate definition `{}`", name));
             }
         }
@@ -1199,7 +1199,7 @@ impl Checker {
         if body_members.entries.is_empty() {
             if let Some(val_id) = body_val_resolved {
                 if let Val::Path(path) = &self.vals[val_id.0].0 {
-                    if let Ref::Def(id) = path.target {
+                    if let Entry::Def(id) = path.target {
                         let m = &self.def(id).members;
                         if !m.entries.is_empty() {
                             if path.args.is_empty() {
@@ -1237,7 +1237,7 @@ impl Checker {
             let mapping_params: Vec<Param> = deco_param_defs
                 .iter()
                 .map(|(name, val_id)| {
-                    let Ref::Bound(bound) = self.lookup(name).unwrap() else {
+                    let Entry::Bound(bound) = self.lookup(name).unwrap() else {
                         unreachable!("deco param must be Bound")
                     };
                     Param {
@@ -1337,7 +1337,7 @@ impl Checker {
             // same DefId.
             let def_id = if seg_names.len() == 1 {
                 let fwd = match self.lookup(&seg_names[0].0) {
-                    Some(Ref::Def(id)) => id,
+                    Some(Entry::Def(id)) => id,
                     _ => unreachable!("forward-ref Def must exist for single-segment declaration"),
                 };
                 *self.def_mut(fwd) = def;
@@ -1358,7 +1358,7 @@ impl Checker {
                 let x_val = self.alloc_val(
                     Val::Path(Path {
                         segments: vec![],
-                        target: Ref::Item(main_item_id),
+                        target: Entry::Ref(main_item_id),
                         args: vec![],
                         applicand: None,
                     }),
@@ -1434,7 +1434,7 @@ impl Checker {
                         ty: resolved_ty,
                         bound: bound_id,
                     };
-                    self.define(param.name.clone(), Ref::Bound(bound_id));
+                    self.define(param.name.clone(), Entry::Bound(bound_id));
                     params.push(param);
                 }
             }
@@ -1449,7 +1449,7 @@ impl Checker {
         match segs.len() {
             1 => {
                 let scope = self.scopes.last_mut().unwrap();
-                scope.replace(&segs[0].0, Ref::Def(def_id));
+                scope.replace(&segs[0].0, Entry::Def(def_id));
             }
             _ => self.insert_into_dotted(segs, def_id),
         }
@@ -1463,7 +1463,7 @@ impl Checker {
         let (last_name, last_span) = &segs[segs.len() - 1];
 
         let mut conflict = false;
-        if let Some(Ref::Def(mut current_id)) = self.lookup(first_name) {
+        if let Some(Entry::Def(mut current_id)) = self.lookup(first_name) {
             for (name, _) in &segs[1..segs.len() - 1] {
                 let next = self.def(current_id).members.get(name);
                 match next {
@@ -1496,7 +1496,7 @@ impl Checker {
                 .iter()
                 .map(|&id| (id, self.defs[id.0].lname.clone()))
                 .collect();
-            let conflicts = if let Some(Ref::Def(id)) = self.lookup(name) {
+            let conflicts = if let Some(Entry::Def(id)) = self.lookup(name) {
                 let members = &mut self.def_mut(id).members;
                 let mut cs = Vec::new();
                 for (new_id, lname) in &lnames {
@@ -1558,7 +1558,7 @@ impl Checker {
                 let span = self.vals[val_id.0].1.clone();
                 match &self.vals[val_id.0].0 {
                     Val::Path(path) => {
-                        if let Ref::Def(id) = path.target {
+                        if let Entry::Def(id) = path.target {
                             self.def(id).members.clone()
                         } else {
                             Module::new()

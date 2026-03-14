@@ -11,7 +11,7 @@ fn prim_lookup(env: &Env) -> HashMap<String, PrimId> {
         .iter()
         .map(|(&prim_id, &owner)| {
             let cname = match owner {
-                donut_lang::types::env::PrimOwner::Ref(ref_id) => env.items[ref_id.0].cname.clone(),
+                donut_lang::types::env::PrimOwner::Ref(ref_id) => env.refs[ref_id.0].cname.clone(),
                 donut_lang::types::env::PrimOwner::Bound(bound_id) => env.bounds[bound_id.0].cname.clone(),
             };
             (cname, prim_id)
@@ -24,7 +24,7 @@ fn prim_names(env: &Env) -> HashMap<PrimId, String> {
         .iter()
         .map(|(&prim_id, &owner)| {
             let cname = match owner {
-                donut_lang::types::env::PrimOwner::Ref(ref_id) => env.items[ref_id.0].cname.clone(),
+                donut_lang::types::env::PrimOwner::Ref(ref_id) => env.refs[ref_id.0].cname.clone(),
                 donut_lang::types::env::PrimOwner::Bound(bound_id) => env.bounds[bound_id.0].cname.clone(),
             };
             (prim_id, cname)
@@ -395,7 +395,7 @@ fn test_canonical_names_match() {
         .prim_owner
         .iter()
         .map(|(&_, &owner)| match owner {
-            donut_lang::types::env::PrimOwner::Ref(ref_id) => named_env.items[ref_id.0].cname.clone(),
+            donut_lang::types::env::PrimOwner::Ref(ref_id) => named_env.refs[ref_id.0].cname.clone(),
             donut_lang::types::env::PrimOwner::Bound(bound_id) => named_env.bounds[bound_id.0].cname.clone(),
         })
         .collect();
@@ -403,7 +403,7 @@ fn test_canonical_names_match() {
         .prim_owner
         .iter()
         .map(|(&_, &owner)| match owner {
-            donut_lang::types::env::PrimOwner::Ref(ref_id) => bare_env.items[ref_id.0].cname.clone(),
+            donut_lang::types::env::PrimOwner::Ref(ref_id) => bare_env.refs[ref_id.0].cname.clone(),
             donut_lang::types::env::PrimOwner::Bound(bound_id) => bare_env.bounds[bound_id.0].cname.clone(),
         })
         .collect();
@@ -496,7 +496,7 @@ import \"sys\"
         .prim_owner
         .iter()
         .map(|(&_, &owner)| match owner {
-            donut_lang::types::env::PrimOwner::Ref(ref_id) => named_env.items[ref_id.0].cname.clone(),
+            donut_lang::types::env::PrimOwner::Ref(ref_id) => named_env.refs[ref_id.0].cname.clone(),
             donut_lang::types::env::PrimOwner::Bound(bound_id) => named_env.bounds[bound_id.0].cname.clone(),
         })
         .collect();
@@ -504,7 +504,7 @@ import \"sys\"
         .prim_owner
         .iter()
         .map(|(&_, &owner)| match owner {
-            donut_lang::types::env::PrimOwner::Ref(ref_id) => bare_env.items[ref_id.0].cname.clone(),
+            donut_lang::types::env::PrimOwner::Ref(ref_id) => bare_env.refs[ref_id.0].cname.clone(),
             donut_lang::types::env::PrimOwner::Bound(bound_id) => bare_env.bounds[bound_id.0].cname.clone(),
         })
         .collect();

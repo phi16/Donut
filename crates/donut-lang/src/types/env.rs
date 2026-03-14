@@ -17,9 +17,15 @@ impl Color {
         Color(128, 128, 128)
     }
 
-    pub fn r(&self) -> u8 { self.0 }
-    pub fn g(&self) -> u8 { self.1 }
-    pub fn b(&self) -> u8 { self.2 }
+    pub fn r(&self) -> u8 {
+        self.0
+    }
+    pub fn g(&self) -> u8 {
+        self.1
+    }
+    pub fn b(&self) -> u8 {
+        self.2
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -136,7 +142,7 @@ pub struct Module {
 
 #[derive(Debug)]
 pub struct Env {
-    pub items: Vec<Item>,
+    pub refs: Vec<Item>,
     pub bounds: Vec<Item>,
     pub defs: Vec<Def>,
     pub prim_owner: HashMap<PrimId, PrimOwner>,
@@ -162,14 +168,11 @@ pub fn display_pure_val(ctx: &impl DisplayContext, pv: &PureVal) -> String {
             if args.is_empty() {
                 name.to_string()
             } else {
-                let args_str: Vec<String> =
-                    args.iter().map(|a| display_pure_val(ctx, a)).collect();
+                let args_str: Vec<String> = args.iter().map(|a| display_pure_val(ctx, a)).collect();
                 format!("{}[{}]", name, args_str.join(", "))
             }
         }
-        PureVal::Bound(bound_id) => {
-            ctx.bound_name(*bound_id).to_string()
-        }
+        PureVal::Bound(bound_id) => ctx.bound_name(*bound_id).to_string(),
         PureVal::Any(any) => display_meta(ctx, any.inner::<Meta>()),
     }
 }
@@ -192,8 +195,7 @@ pub fn display_cell(ctx: &impl DisplayContext, cell: &PureCell) -> String {
                 1 => "; ",
                 _ => ", ",
             };
-            let parts: Vec<String> =
-                children.iter().map(|c| display_cell(ctx, c)).collect();
+            let parts: Vec<String> = children.iter().map(|c| display_cell(ctx, c)).collect();
             if *axis >= 2 {
                 format!("[{}: {}]", axis, parts.join(sep))
             } else {
@@ -249,7 +251,7 @@ pub fn display_ty(ctx: &impl DisplayContext, ty: &Ty) -> String {
 
 impl DisplayContext for Env {
     fn ref_name(&self, ref_id: RefId) -> &str {
-        &self.items[ref_id.0].cname
+        &self.refs[ref_id.0].cname
     }
 
     fn bound_name(&self, bound_id: BoundId) -> &str {
@@ -259,7 +261,7 @@ impl DisplayContext for Env {
     fn prim_name(&self, prim_id: PrimId) -> &str {
         if let Some(&owner) = self.prim_owner.get(&prim_id) {
             match owner {
-                PrimOwner::Ref(ref_id) => &self.items[ref_id.0].cname,
+                PrimOwner::Ref(ref_id) => &self.refs[ref_id.0].cname,
                 PrimOwner::Bound(bound_id) => &self.bounds[bound_id.0].lname,
             }
         } else {
@@ -282,22 +284,33 @@ impl Env {
     }
 
     /// Format params as `[x: *, y: x → x]` or `[x: * | f(x)]` with constraints.
-    fn format_params(&self, ctx: &impl DisplayContext, params: &[BoundId], reqs: &[FunctorReq]) -> String {
+    fn format_params(
+        &self,
+        ctx: &impl DisplayContext,
+        params: &[BoundId],
+        reqs: &[FunctorReq],
+    ) -> String {
         if params.is_empty() && reqs.is_empty() {
             return String::new();
         }
-        let params_str: Vec<String> = params.iter().map(|&bound_id| {
-            let item = &self.bounds[bound_id.0];
-            format!("{}: {}", item.lname, display_ty(ctx, &item.ty))
-        }).collect();
+        let params_str: Vec<String> = params
+            .iter()
+            .map(|&bound_id| {
+                let item = &self.bounds[bound_id.0];
+                format!("{}: {}", item.lname, display_ty(ctx, &item.ty))
+            })
+            .collect();
         if reqs.is_empty() {
             format!("[{}]", params_str.join(", "))
         } else {
-            let reqs_str: Vec<String> = reqs.iter().map(|req| {
-                let functor_name = &self.defs[req.functor.0].lname;
-                let arg_str = display_cell(ctx, &req.arg);
-                format!("{}({})", functor_name, arg_str)
-            }).collect();
+            let reqs_str: Vec<String> = reqs
+                .iter()
+                .map(|req| {
+                    let functor_name = &self.defs[req.functor.0].lname;
+                    let arg_str = display_cell(ctx, &req.arg);
+                    format!("{}({})", functor_name, arg_str)
+                })
+                .collect();
             format!("[{} | {}]", params_str.join(", "), reqs_str.join(", "))
         }
     }

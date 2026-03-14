@@ -3,9 +3,7 @@ use donut_lang::types::item::*;
 use donut_lang::types::token;
 use std::collections::HashMap;
 
-use crate::{
-    build_entry_info, EntryInfo, FlatEnv, HoverInfo, TokenType,
-};
+use crate::{build_entry_info, EntryInfo, FlatEnv, HoverInfo, TokenType};
 
 pub(crate) struct HoverBuilder<'a> {
     program: &'a Program,
@@ -93,11 +91,11 @@ impl<'a> HoverBuilder<'a> {
 
     // --- Hover insertion ---
 
-    fn insert_ref_hover(&mut self, token_index: usize, target: &Ref, is_namespace: bool) {
+    fn insert_ref_hover(&mut self, token_index: usize, target: &Entry, is_namespace: bool) {
         match target {
-            Ref::Item(ref_id) => {
+            Entry::Ref(ref_id) => {
                 // Non-param item (e.g., star literal)
-                let item = &self.env.items[ref_id.0];
+                let item = &self.env.refs[ref_id.0];
                 let ty_str = self.env.display_ty(&item.ty);
                 let entry = EntryInfo {
                     kind: crate::item_to_kind(item),
@@ -116,11 +114,11 @@ impl<'a> HoverBuilder<'a> {
                     },
                 );
             }
-            Ref::Bound(bound_id) => {
+            Entry::Bound(bound_id) => {
                 self.insert_param_hover(token_index, *bound_id);
                 self.styles.insert(token_index, TokenType::Parameter);
             }
-            Ref::Def(def_id) => {
+            Entry::Def(def_id) => {
                 let env_def = &self.env.defs[def_id.0];
                 let signature = self.env.display_def_signature(env_def);
                 let entry = build_entry_info(*def_id, self.env, self.flat);
@@ -210,7 +208,9 @@ impl<'a> HoverBuilder<'a> {
         // Walk body value
         match &def.body {
             DefBody::Alias { val } => self.walk_val(*val),
-            DefBody::Decl { def_val: Some(val), .. } => self.walk_val(*val),
+            DefBody::Decl {
+                def_val: Some(val), ..
+            } => self.walk_val(*val),
             _ => {}
         }
 
