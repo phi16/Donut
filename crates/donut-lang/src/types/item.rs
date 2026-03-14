@@ -1,5 +1,5 @@
 use crate::types::common::{S, TokenSpan};
-use donut_core::common::Axis;
+pub use donut_core::common::{Axis, BoundId, RefId};
 use std::collections::HashMap;
 
 // --- Index types ---
@@ -8,15 +8,13 @@ use std::collections::HashMap;
 pub struct ValId(pub usize);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ItemId(pub usize);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DefId(pub usize);
 
-/// A scope entry: either a direct Item (e.g. parameter) or a Def (named definition).
+/// A scope entry: a defined item, a bound variable (parameter), or a named definition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Ref {
-    Item(ItemId),
+    Item(RefId),
+    Bound(BoundId),
     Def(DefId),
 }
 
@@ -61,7 +59,7 @@ pub enum Val {
     CompStar(Vec<ValId>),
     Arrow(ArrowKind, ValId, ValId),
     Hole(Hole),
-    Subst(ValId, HashMap<ItemId, ValId>),
+    Subst(ValId, HashMap<BoundId, ValId>),
 }
 
 // --- Param ---
@@ -70,16 +68,17 @@ pub enum Val {
 pub struct Param {
     pub name: String,
     pub ty: ValId,
-    pub item: ItemId,
+    pub bound: BoundId,
 }
 
 // --- Item ---
-// The actual entity. Identified by cname. ItemId.0 → RefId.0 or BoundId.0.
+// The actual entity. Identified by cname.
+// Defined items are indexed by RefId, bound variables by BoundId.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ItemKind {
     Decl,
-    DeclDef, // TODO
+    DeclDef,
     Param,
 }
 
@@ -109,7 +108,7 @@ pub struct FunctorMapping {
 pub enum DefBody {
     None,
     Decl {
-        item: ItemId,
+        item: RefId,
         /// For DeclDef (`:=`): the body val `y` in `x: T := y`.
         def_val: Option<ValId>,
     },
@@ -155,6 +154,7 @@ pub struct DefTree {
 pub struct Program {
     pub root: Module,
     pub items: Vec<Item>,
+    pub bounds: Vec<Item>,
     pub defs: Vec<Def>,
     pub vals: Vec<S<Val>>,
     pub def_order: Vec<DefTree>,
@@ -167,8 +167,11 @@ impl Program {
     pub fn val_span(&self, id: ValId) -> &TokenSpan {
         &self.vals[id.0].1
     }
-    pub fn item(&self, id: ItemId) -> &Item {
+    pub fn item(&self, id: RefId) -> &Item {
         &self.items[id.0]
+    }
+    pub fn bound(&self, id: BoundId) -> &Item {
+        &self.bounds[id.0]
     }
     pub fn def(&self, id: DefId) -> &Def {
         &self.defs[id.0]
@@ -248,9 +251,20 @@ impl Program {
                 item.ty.0,
                 item.params
                     .iter()
-                    .map(|p| format!("{}:Val({})=Item({})", p.name, p.ty.0, p.item.0))
+                    .map(|p| format!("{}:Val({})=Bound({})", p.name, p.ty.0, p.bound.0))
                     .collect::<Vec<_>>()
                     .join(", "),
+            ));
+        }
+
+        s.push_str("\n=== Bounds ===\n");
+        for (i, item) in self.bounds.iter().enumerate() {
+            s.push_str(&format!(
+                "  Bound({}) cname={} lname={} ty=Val({})\n",
+                i,
+                item.cname,
+                item.lname,
+                item.ty.0,
             ));
         }
 
@@ -269,7 +283,7 @@ impl Program {
                     "    params: [{}]\n",
                     def.params
                         .iter()
-                        .map(|p| format!("{}:Val({})=Item({})", p.name, p.ty.0, p.item.0))
+                        .map(|p| format!("{}:Val({})=Bound({})", p.name, p.ty.0, p.bound.0))
                         .collect::<Vec<_>>()
                         .join(", "),
                 ));
@@ -339,7 +353,8 @@ impl Program {
         match val {
             Val::Path(path) => {
                 let target = match path.target {
-                    Ref::Item(item_id) => format!("Item({})", item_id.0),
+                    Ref::Item(ref_id) => format!("Item({})", ref_id.0),
+                    Ref::Bound(bound_id) => format!("Bound({})", bound_id.0),
                     Ref::Def(def_id) => format!("Def({})", def_id.0),
                 };
                 let mut s = target;
@@ -419,8 +434,8 @@ impl Program {
             Val::Subst(inner, mapping) => {
                 let substs: Vec<String> = mapping
                     .iter()
-                    .map(|(item_id, &val_id)| {
-                        format!("Item({})={}", item_id.0, self.display_val(val_id))
+                    .map(|(bound_id, &val_id)| {
+                        format!("Bound({})={}", bound_id.0, self.display_val(val_id))
                     })
                     .collect();
                 format!("{}[{}]", self.display_val(*inner), substs.join(", "))

@@ -50,7 +50,8 @@ fn val_as_path_name<'a>(p: &'a Program, val_id: ValId) -> Option<&'a str> {
     match p.val(val_id) {
         Val::Path(path) => match path.target {
             Ref::Def(def_id) => Some(&p.def(def_id).lname),
-            Ref::Item(item_id) => Some(&p.item(item_id).lname),
+            Ref::Item(ref_id) => Some(&p.item(ref_id).lname),
+            Ref::Bound(bound_id) => Some(&p.bound(bound_id).lname),
         },
         _ => None,
     }
@@ -65,6 +66,7 @@ fn val_segment_names<'a>(p: &'a Program, val_id: ValId) -> Vec<&'a str> {
             .map(|r| match r {
                 Ref::Def(id) => p.def(*id).lname.as_str(),
                 Ref::Item(id) => p.item(*id).lname.as_str(),
+                Ref::Bound(id) => p.bound(*id).lname.as_str(),
             })
             .collect(),
         _ => vec![],
@@ -304,9 +306,9 @@ fn path_segments_param_ref() {
     let x = get_def(&p, "x");
     let segs = val_segment_names(&p, x.val().unwrap());
     assert_eq!(segs, vec!["f"]);
-    // param ref should be Ref::Item
+    // param ref should be Ref::Bound
     if let Val::Path(path) = p.val(x.val().unwrap()) {
-        assert!(matches!(path.segments[0], Ref::Item(_)));
+        assert!(matches!(path.segments[0], Ref::Bound(_)));
     }
 }
 
@@ -1615,7 +1617,7 @@ fn item_created_for_def() {
 fn item_created_for_param() {
     let p = check_module("T = \"t\"\nf[x: T] = \"v\"");
     let param_items: Vec<_> = p
-        .items
+        .bounds
         .iter()
         .filter(|i| matches!(i.kind, ItemKind::Param))
         .collect();
@@ -1664,7 +1666,7 @@ fn item_cname_with_origin() {
 fn item_param_cname() {
     let p = check_module("T = \"t\"\nf[x: T] = \"v\"");
     let param_item = p
-        .items
+        .bounds
         .iter()
         .find(|i| i.lname == "x" && matches!(i.kind, ItemKind::Param))
         .unwrap();

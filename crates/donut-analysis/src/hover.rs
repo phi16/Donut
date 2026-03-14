@@ -95,32 +95,30 @@ impl<'a> HoverBuilder<'a> {
 
     fn insert_ref_hover(&mut self, token_index: usize, target: &Ref, is_namespace: bool) {
         match target {
-            Ref::Item(item_id) => {
-                let prog_item = self.program.item(*item_id);
-                if matches!(prog_item.kind, ItemKind::Param) {
-                    self.insert_param_hover(token_index, *item_id);
-                    self.styles.insert(token_index, TokenType::Parameter);
-                } else {
-                    // Non-param item (e.g., star literal)
-                    let item = &self.env.items[item_id.0];
-                    let ty_str = self.env.display_ty(&item.ty);
-                    let entry = EntryInfo {
-                        kind: crate::item_to_kind(item),
-                        module_kind: None,
-                        type_expr: Some(ty_str.clone()),
-                        params: String::new(),
-                    };
-                    let tags = entry.tags();
-                    self.map.insert(
-                        token_index,
-                        HoverInfo {
-                            name: item.lname.clone(),
-                            signature: format!("{}: {}", item.lname, ty_str),
-                            entry,
-                            tags,
-                        },
-                    );
-                }
+            Ref::Item(ref_id) => {
+                // Non-param item (e.g., star literal)
+                let item = &self.env.items[ref_id.0];
+                let ty_str = self.env.display_ty(&item.ty);
+                let entry = EntryInfo {
+                    kind: crate::item_to_kind(item),
+                    module_kind: None,
+                    type_expr: Some(ty_str.clone()),
+                    params: String::new(),
+                };
+                let tags = entry.tags();
+                self.map.insert(
+                    token_index,
+                    HoverInfo {
+                        name: item.lname.clone(),
+                        signature: format!("{}: {}", item.lname, ty_str),
+                        entry,
+                        tags,
+                    },
+                );
+            }
+            Ref::Bound(bound_id) => {
+                self.insert_param_hover(token_index, *bound_id);
+                self.styles.insert(token_index, TokenType::Parameter);
             }
             Ref::Def(def_id) => {
                 let env_def = &self.env.defs[def_id.0];
@@ -143,9 +141,9 @@ impl<'a> HoverBuilder<'a> {
         }
     }
 
-    fn insert_param_hover(&mut self, token_index: usize, item_id: ItemId) {
-        let item = &self.env.items[item_id.0];
-        let parent_def = self.env.defs.iter().find(|d| d.params.contains(&item_id));
+    fn insert_param_hover(&mut self, token_index: usize, bound_id: BoundId) {
+        let item = &self.env.bounds[bound_id.0];
+        let parent_def = self.env.defs.iter().find(|d| d.params.contains(&bound_id));
         let type_expr = if let Some(def) = parent_def {
             self.env.display_ty_in_def(&item.ty, def)
         } else {

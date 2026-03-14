@@ -27,8 +27,9 @@ struct Checker<'a> {
 
     // Output
     env_items: Vec<Option<env::Item>>,
+    env_bounds: Vec<Option<env::Item>>,
     env_defs: Vec<Option<env::Def>>,
-    prim_item: HashMap<PrimId, ItemId>,
+    prim_owner: HashMap<PrimId, env::PrimOwner>,
 
     // State
     next_prim: u64,
@@ -50,10 +51,9 @@ struct Checker<'a> {
 
 impl<'a> DisplayContext for Checker<'a> {
     fn ref_name(&self, ref_id: RefId) -> &str {
-        let item_id = ItemId(ref_id.0);
-        if item_id.0 < self.program.items.len() {
-            &self.program.item(item_id).cname
-        } else if let Some(Some(env_item)) = self.env_items.get(item_id.0) {
+        if ref_id.0 < self.program.items.len() {
+            &self.program.item(ref_id).cname
+        } else if let Some(Some(env_item)) = self.env_items.get(ref_id.0) {
             &env_item.cname
         } else {
             "?"
@@ -61,10 +61,9 @@ impl<'a> DisplayContext for Checker<'a> {
     }
 
     fn bound_name(&self, bound_id: BoundId) -> &str {
-        let item_id = ItemId(bound_id.0);
-        if item_id.0 < self.program.items.len() {
-            &self.program.item(item_id).lname
-        } else if let Some(Some(env_item)) = self.env_items.get(item_id.0) {
+        if bound_id.0 < self.program.bounds.len() {
+            &self.program.bound(bound_id).lname
+        } else if let Some(Some(env_item)) = self.env_bounds.get(bound_id.0) {
             &env_item.lname
         } else {
             "?"
@@ -72,13 +71,26 @@ impl<'a> DisplayContext for Checker<'a> {
     }
 
     fn prim_name(&self, prim_id: PrimId) -> &str {
-        if let Some(&item_id) = self.prim_item.get(&prim_id) {
-            if item_id.0 < self.program.items.len() {
-                &self.program.item(item_id).cname
-            } else if let Some(Some(env_item)) = self.env_items.get(item_id.0) {
-                &env_item.cname
-            } else {
-                "?"
+        if let Some(&owner) = self.prim_owner.get(&prim_id) {
+            match owner {
+                env::PrimOwner::Ref(ref_id) => {
+                    if ref_id.0 < self.program.items.len() {
+                        &self.program.item(ref_id).cname
+                    } else if let Some(Some(env_item)) = self.env_items.get(ref_id.0) {
+                        &env_item.cname
+                    } else {
+                        "?"
+                    }
+                }
+                env::PrimOwner::Bound(bound_id) => {
+                    if bound_id.0 < self.program.bounds.len() {
+                        &self.program.bound(bound_id).lname
+                    } else if let Some(Some(env_item)) = self.env_bounds.get(bound_id.0) {
+                        &env_item.lname
+                    } else {
+                        "?"
+                    }
+                }
             }
         } else {
             "?"
@@ -89,12 +101,14 @@ impl<'a> DisplayContext for Checker<'a> {
 impl<'a> Checker<'a> {
     fn new(program: &'a Program) -> Self {
         let n_items = program.items.len();
+        let n_bounds = program.bounds.len();
         let n_defs = program.defs.len();
         let mut checker = Checker {
             program,
             env_items: (0..n_items).map(|_| None).collect(),
+            env_bounds: (0..n_bounds).map(|_| None).collect(),
             env_defs: (0..n_defs).map(|_| None).collect(),
-            prim_item: HashMap::new(),
+            prim_owner: HashMap::new(),
             next_prim: 1, // 0 reserved for meta
             prefixes: Vec::new(),
             checked: HashMap::new(),
@@ -113,9 +127,9 @@ impl<'a> Checker<'a> {
         let builtins: &[(&str, Ty)] = &[("meta", Ty::Meta), ("*", Ty::Star)];
         for (i, item) in self.program.items.iter().enumerate() {
             if let Some((_, ty)) = builtins.iter().find(|(name, _)| *name == item.lname) {
-                let item_id = ItemId(i);
+                let ref_id = RefId(i);
                 let pv: PureVal = Meta::Ty(ty.clone()).into();
-                self.checked.insert(Ref::Item(item_id), pv);
+                self.checked.insert(Ref::Item(ref_id), pv);
                 self.env_items[i] = Some(env::Item {
                     cname: item.cname.clone(),
                     lname: item.lname.clone(),
@@ -194,11 +208,11 @@ impl<'a> Checker<'a> {
         let params = def.params.clone();
         self.prefixes.push(lname);
 
-        // Check param Items
+        // Check param Items (bound variables)
         let def_span = self.program.def(def_id).span.clone();
         for param in &params {
             let ty = self.eval_ty(param.ty);
-            self.check_item(param.item, &ty, &def_span);
+            self.check_bound(param.bound, &ty, &def_span);
         }
 
         // Extend constrainable with this def's param prims (save for restore)
@@ -239,7 +253,7 @@ impl<'a> Checker<'a> {
         let def_span = self.program.def(def_id).span.clone();
         for param in &params {
             let ty = self.eval_ty(param.ty);
-            self.check_item(param.item, &ty, &def_span);
+            self.check_bound(param.bound, &ty, &def_span);
         }
 
         let def = self.program.def(def_id);
@@ -254,8 +268,8 @@ impl<'a> Checker<'a> {
 
         // Evaluate body
         let (item, val, ty) = match &self.program.def(def_id).body {
-            DefBody::Decl { item: item_id, def_val } => {
-                let item_id = *item_id;
+            DefBody::Decl { item: ref_id, def_val } => {
+                let ref_id = *ref_id;
                 let def_val = *def_val;
                 let def_pv = def_val.map(|id| self.eval_val(id));
                 let ty = if let Some(ref pv) = def_pv {
@@ -267,10 +281,10 @@ impl<'a> Checker<'a> {
                 } else {
                     declared_ty.unwrap_or(Ty::Star)
                 };
-                self.check_item(item_id, &ty, &span);
+                self.check_ref_item(ref_id, &ty, &span);
                 // Record DeclDef substitution: x's PrimId → y's cell
                 if let Some(PureVal::Cell(target_cell)) = &def_pv {
-                    if let Some(Some(env_item)) = self.env_items.get(item_id.0) {
+                    if let Some(Some(env_item)) = self.env_items.get(ref_id.0) {
                         if let Some(prim_id) = env_item.prim_id {
                             // Transitively resolve through existing subs
                             let resolved = env::expand_defs(target_cell, &self.def_subs);
@@ -278,8 +292,8 @@ impl<'a> Checker<'a> {
                         }
                     }
                 }
-                let pv = self.checked[&Ref::Item(item_id)].clone();
-                (Some(item_id), pv, ty)
+                let pv = self.checked[&Ref::Item(ref_id)].clone();
+                (Some(ref_id), pv, ty)
             }
             DefBody::Alias { val: val_id } => {
                 let val_id = *val_id;
@@ -320,13 +334,13 @@ impl<'a> Checker<'a> {
             })
             .collect();
 
-        // Params → ItemIds (already checked in process_tree)
-        let params: Vec<ItemId> = self
+        // Params → BoundIds (already checked in process_tree)
+        let params: Vec<BoundId> = self
             .program
             .def(def_id)
             .params
             .iter()
-            .map(|p| p.item)
+            .map(|p| p.bound)
             .collect();
 
         // Validate values before storing (only if no errors in this def)
@@ -390,13 +404,12 @@ impl<'a> Checker<'a> {
                             .params
                             .iter()
                             .zip(args.iter())
-                            .map(|(param_item_id, arg)| {
-                                let bound_id = BoundId(param_item_id.0);
-                                let ext_type = self.ext_type_for_item(*param_item_id);
+                            .map(|(&bound_id, arg)| {
+                                let ext_type = self.ext_type_for_bound(bound_id);
                                 (bound_id, (arg.clone(), ext_type))
                             })
                             .collect();
-                        subst_ty(&item.ty, &subst_map, &self.prim_item)
+                        subst_ty(&item.ty, &subst_map, &self.prim_owner)
                     }
                 } else {
                     Ty::Hole
@@ -404,7 +417,7 @@ impl<'a> Checker<'a> {
             }
             PureVal::Bound(bound_id) => {
                 let idx = bound_id.0;
-                if let Some(Some(item)) = self.env_items.get(idx) {
+                if let Some(Some(item)) = self.env_bounds.get(idx) {
                     item.ty.clone()
                 } else {
                     Ty::Hole
@@ -475,19 +488,18 @@ impl<'a> Checker<'a> {
             Val::Hole(_) => Meta::Ty(Ty::Hole).into(),
             Val::Subst(inner_id, mapping) => {
                 let inner_id = *inner_id;
-                let mapping: HashMap<ItemId, ValId> = mapping.clone();
+                let mapping: HashMap<BoundId, ValId> = mapping.clone();
                 let inner_pv = self.eval_val(inner_id);
-                // Convert HashMap<ItemId, ValId> to SubstMap
+                // Convert HashMap<BoundId, ValId> to SubstMap
                 let subst_map: SubstMap = mapping
                     .iter()
-                    .map(|(item_id, &val_id)| {
-                        let bound_id = BoundId(item_id.0);
+                    .map(|(&bound_id, &val_id)| {
                         let pv = self.eval_val(val_id);
-                        let ext_type = self.ext_type_for_item(*item_id);
+                        let ext_type = self.ext_type_for_bound(bound_id);
                         (bound_id, (pv, ext_type))
                     })
                     .collect();
-                subst_pv(&inner_pv, &subst_map, &self.prim_item)
+                subst_pv(&inner_pv, &subst_map, &self.prim_owner)
             }
         }
     }
@@ -502,9 +514,13 @@ impl<'a> Checker<'a> {
                     let qname = &self.program.def(def_id).qname;
                     self.error_at(span, format!("self-referencing definition: `{}`", qname));
                 }
-                Ref::Item(item_id) => {
-                    let cname = &self.program.item(item_id).cname;
+                Ref::Item(ref_id) => {
+                    let cname = &self.program.item(ref_id).cname;
                     self.error_at(span, format!("unresolved item: `{}`", cname));
+                }
+                Ref::Bound(bound_id) => {
+                    let lname = &self.program.bound(bound_id).lname;
+                    self.error_at(span, format!("unresolved bound variable: `{}`", lname));
                 }
             };
             return Meta::Error.into();
@@ -536,19 +552,19 @@ impl<'a> Checker<'a> {
             // Type-check args against parameter types (and lift dimensions)
             if let Ref::Def(def_id) = path.target {
                 let params: Vec<_> = self.program.def(def_id)
-                    .params.iter().map(|p| (p.item, p.ty)).collect();
+                    .params.iter().map(|p| (p.bound, p.ty)).collect();
                 let span = self.program.val_span(val_id);
                 let err_count = self.errors.len();
                 let mut param_subst: SubstMap = HashMap::new();
                 for (i, arg) in args.iter_mut().enumerate() {
-                    if let Some(&(item_id, ty_val_id)) = params.get(i) {
+                    if let Some(&(bound_id, ty_val_id)) = params.get(i) {
                         let mut param_ty = self.eval_ty(ty_val_id);
                         if !param_subst.is_empty() {
-                            param_ty = subst_ty(&param_ty, &param_subst, &self.prim_item);
+                            param_ty = subst_ty(&param_ty, &param_subst, &self.prim_owner);
                         }
                         *arg = self.coerce_val_to_ty(arg.clone(), &param_ty, &span);
-                        let ext_type = self.ext_type_for_item(item_id);
-                        param_subst.insert(BoundId(item_id.0), (arg.clone(), ext_type));
+                        let ext_type = self.ext_type_for_bound(bound_id);
+                        param_subst.insert(bound_id, (arg.clone(), ext_type));
                     }
                 }
                 if self.errors.len() > err_count {
@@ -558,7 +574,7 @@ impl<'a> Checker<'a> {
             // Decl defs (with item) and bare Items accumulate args into App;
             // Alias defs substitute param placeholders with actual args.
             let is_alias = match path.target {
-                Ref::Item(_) => false,
+                Ref::Item(_) | Ref::Bound(_) => false,
                 Ref::Def(def_id) => matches!(
                     self.program.def(def_id).body,
                     DefBody::Alias { .. }
@@ -570,7 +586,7 @@ impl<'a> Checker<'a> {
                     param_entries.into_iter().zip(args.into_iter())
                         .map(|((ext_id, ext_type), arg)| (ext_id, (arg, ext_type)))
                         .collect();
-                subst_pv(&base, &subst_map, &self.prim_item)
+                subst_pv(&base, &subst_map, &self.prim_owner)
             } else {
                 match base {
                     PureVal::Ref(id, mut existing) => {
@@ -583,7 +599,7 @@ impl<'a> Checker<'a> {
                             param_entries.into_iter().zip(args.into_iter())
                                 .map(|((ext_id, ext_type), arg)| (ext_id, (arg, ext_type)))
                                 .collect();
-                        subst_pv(&base, &subst_map, &self.prim_item)
+                        subst_pv(&base, &subst_map, &self.prim_owner)
                     }
                 }
             }
@@ -605,7 +621,7 @@ impl<'a> Checker<'a> {
 
                         // Process reqs in order, growing subst_map with results
                         for req in &reqs {
-                            let sub_arg = match subst_cell(&req.arg, &subst_map, &self.prim_item) {
+                            let sub_arg = match subst_cell(&req.arg, &subst_map, &self.prim_owner) {
                                 Ok(cell) => cell,
                                 Err(e) => {
                                     let span = self.program.val_span(val_id);
@@ -631,7 +647,7 @@ impl<'a> Checker<'a> {
                         }
 
                         // Re-substitute result with the full map (including constraint results)
-                        result = subst_pv(&result, &subst_map, &self.prim_item);
+                        result = subst_pv(&result, &subst_map, &self.prim_owner);
                     }
                 }
             }
@@ -651,7 +667,7 @@ impl<'a> Checker<'a> {
             // Find functor map for this def
             let functor_def_id = match path.target {
                 Ref::Def(did) => did,
-                Ref::Item(_) => {
+                Ref::Item(_) | Ref::Bound(_) => {
                     let span = self.program.val_span(val_id);
                     self.error_at(span, "functor application target must be a definition");
                     return result;
@@ -749,9 +765,16 @@ impl<'a> Checker<'a> {
     fn level_of(&self, pv: &PureVal) -> Option<Level> {
         match pv {
             PureVal::Cell(pc) => Some(pc.dim().in_space),
-            PureVal::Ref(RefId(idx), _) | PureVal::Bound(BoundId(idx)) => {
+            PureVal::Ref(RefId(idx), _) => {
                 let idx = *idx;
                 self.env_items
+                    .get(idx)?
+                    .as_ref()
+                    .and_then(|item| self.level_of_ty(&item.ty))
+            }
+            PureVal::Bound(BoundId(idx)) => {
+                let idx = *idx;
+                self.env_bounds
                     .get(idx)?
                     .as_ref()
                     .and_then(|item| self.level_of_ty(&item.ty))
@@ -823,8 +846,8 @@ impl<'a> Checker<'a> {
                 .iter()
                 .map(|param| {
                     let ty = self.eval_ty(param.ty);
-                    self.check_item(param.item, &ty, &mapping_span);
-                    (BoundId(param.item.0), self.ext_type_for_item(param.item))
+                    self.check_bound(param.bound, &ty, &mapping_span);
+                    (param.bound, self.ext_type_for_bound(param.bound))
                 })
                 .collect();
 
@@ -899,8 +922,8 @@ impl<'a> Checker<'a> {
             }
 
             // Functoriality check: apply_functor(app.s) == val.s, apply_functor(app.t) == val.t
-            let expected_s = apply_functor(&app_cell.s(), &functor_map, &self.prim_item, dim_shift);
-            let expected_t = apply_functor(&app_cell.t(), &functor_map, &self.prim_item, dim_shift);
+            let expected_s = apply_functor(&app_cell.s(), &functor_map, &self.prim_owner, dim_shift);
+            let expected_t = apply_functor(&app_cell.t(), &functor_map, &self.prim_owner, dim_shift);
 
             match (expected_s, expected_t) {
                 (Ok(es), Ok(et)) => {
@@ -949,45 +972,55 @@ impl<'a> Checker<'a> {
         self.checked.get(&target).cloned()
     }
 
-    fn ext_type_for_item(&self, item_id: ItemId) -> ExtType {
-        if let Some(Some(item)) = self.env_items.get(item_id.0) {
-            match &item.ty {
-                Ty::Star => ExtType::Cell(0),
-                Ty::Arrow(level, _, _, _) => ExtType::Cell(*level),
-                _ => ExtType::NonCell,
-            }
+    fn ext_type_for_ref(&self, ref_id: RefId) -> ExtType {
+        if let Some(Some(item)) = self.env_items.get(ref_id.0) {
+            Self::ext_type_from_ty(&item.ty)
         } else {
             ExtType::NonCell
         }
     }
 
+    fn ext_type_for_bound(&self, bound_id: BoundId) -> ExtType {
+        if let Some(Some(item)) = self.env_bounds.get(bound_id.0) {
+            Self::ext_type_from_ty(&item.ty)
+        } else {
+            ExtType::NonCell
+        }
+    }
+
+    fn ext_type_from_ty(ty: &Ty) -> ExtType {
+        match ty {
+            Ty::Star => ExtType::Cell(0),
+            Ty::Arrow(level, _, _, _) => ExtType::Cell(*level),
+            _ => ExtType::NonCell,
+        }
+    }
+
     fn param_bound_entries(&self, target: Ref) -> Vec<(BoundId, ExtType)> {
         let params: &[_] = match target {
-            Ref::Item(item_id) => &self.program.item(item_id).params,
+            Ref::Item(ref_id) => &self.program.item(ref_id).params,
+            Ref::Bound(_) => return vec![],
             Ref::Def(def_id) => &self.program.def(def_id).params,
         };
         params
             .iter()
-            .map(|p| (BoundId(p.item.0), self.ext_type_for_item(p.item)))
+            .map(|p| (p.bound, self.ext_type_for_bound(p.bound)))
             .collect()
     }
 
     // --- Item checking ---
 
-    fn check_item(&mut self, item_id: ItemId, ty: &Ty, span: &TokenSpan) {
-        if self.checked.contains_key(&Ref::Item(item_id)) {
-            return;
-        }
-        let item = self.program.item(item_id);
-
-        // Collect parameter placeholders for Prim.args
-        let param_args: Vec<PureVal> = item
-            .params
-            .iter()
-            .map(|p| PureVal::Bound(BoundId(p.item.0)))
-            .collect();
-
-        let (pv, prim_id) = match ty {
+    /// Build (PureVal, Option<PrimId>) for an item given its type and param_args.
+    fn build_item_val(
+        &mut self,
+        item: &Item,
+        ty: &Ty,
+        span: &TokenSpan,
+        param_args: Vec<PureVal>,
+        is_param: bool,
+        raw_id: usize,
+    ) -> (PureVal, Option<PrimId>) {
+        match ty {
             Ty::Star => {
                 let prim_id = self.fresh_prim_id();
                 let prim = Prim::with_id_args(PrimId(prim_id.0), param_args);
@@ -1033,10 +1066,10 @@ impl<'a> Checker<'a> {
                 (pv, None)
             }
             Ty::Nat | Ty::Rat | Ty::Color | Ty::Deco => {
-                let pv = if item.kind == ItemKind::Param {
-                    PureVal::Bound(BoundId(item_id.0))
+                let pv = if is_param {
+                    PureVal::Bound(BoundId(raw_id))
                 } else {
-                    PureVal::Ref(RefId(item_id.0), vec![])
+                    PureVal::Ref(RefId(raw_id), vec![])
                 };
                 (pv, None)
             }
@@ -1047,11 +1080,25 @@ impl<'a> Checker<'a> {
                 // error has already been reported
                 (Meta::Error.into(), None)
             }
-        };
+        }
+    }
 
-        self.checked.insert(Ref::Item(item_id), pv);
+    fn check_ref_item(&mut self, ref_id: RefId, ty: &Ty, span: &TokenSpan) {
+        if self.checked.contains_key(&Ref::Item(ref_id)) {
+            return;
+        }
+        let item = self.program.item(ref_id);
+        let param_args: Vec<PureVal> = item
+            .params
+            .iter()
+            .map(|p| PureVal::Bound(p.bound))
+            .collect();
+
+        let (pv, prim_id) = self.build_item_val(item, ty, span, param_args, false, ref_id.0);
+
+        self.checked.insert(Ref::Item(ref_id), pv);
         if let Some(pid) = prim_id {
-            self.prim_item.insert(pid, item_id);
+            self.prim_owner.insert(pid, env::PrimOwner::Ref(ref_id));
         }
 
         let env_item = env::Item {
@@ -1060,9 +1107,38 @@ impl<'a> Checker<'a> {
             kind: item.kind,
             ty: ty.clone(),
             prim_id,
-            params: item.params.iter().map(|p| p.item).collect(),
+            params: item.params.iter().map(|p| p.bound).collect(),
         };
-        self.env_items[item_id.0] = Some(env_item);
+        self.env_items[ref_id.0] = Some(env_item);
+    }
+
+    fn check_bound(&mut self, bound_id: BoundId, ty: &Ty, span: &TokenSpan) {
+        if self.checked.contains_key(&Ref::Bound(bound_id)) {
+            return;
+        }
+        let item = self.program.bound(bound_id);
+        let param_args: Vec<PureVal> = item
+            .params
+            .iter()
+            .map(|p| PureVal::Bound(p.bound))
+            .collect();
+
+        let (pv, prim_id) = self.build_item_val(item, ty, span, param_args, true, bound_id.0);
+
+        self.checked.insert(Ref::Bound(bound_id), pv);
+        if let Some(pid) = prim_id {
+            self.prim_owner.insert(pid, env::PrimOwner::Bound(bound_id));
+        }
+
+        let env_item = env::Item {
+            cname: item.cname.clone(),
+            lname: item.lname.clone(),
+            kind: item.kind,
+            ty: ty.clone(),
+            prim_id,
+            params: item.params.iter().map(|p| p.bound).collect(),
+        };
+        self.env_bounds[bound_id.0] = Some(env_item);
     }
 
     fn extract_cell(pv: &PureVal) -> Option<PureCell> {
@@ -1234,7 +1310,7 @@ impl<'a> Checker<'a> {
             .map(|(i, o)| {
                 o.unwrap_or_else(|| {
                     if i < n_program_items {
-                        let item = self.program.item(ItemId(i));
+                        let item = self.program.item(RefId(i));
                         env::Item {
                             cname: item.cname.clone(),
                             lname: item.lname.clone(),
@@ -1249,6 +1325,37 @@ impl<'a> Checker<'a> {
                             cname: "?".to_string(),
                             lname: "?".to_string(),
                             kind: ItemKind::Decl,
+                            ty: Ty::Hole,
+                            prim_id: None,
+                            params: vec![],
+                        }
+                    }
+                })
+            })
+            .collect();
+        let n_program_bounds = self.program.bounds.len();
+        let bounds: Vec<env::Item> = self
+            .env_bounds
+            .into_iter()
+            .enumerate()
+            .map(|(i, o)| {
+                o.unwrap_or_else(|| {
+                    if i < n_program_bounds {
+                        let item = self.program.bound(BoundId(i));
+                        env::Item {
+                            cname: item.cname.clone(),
+                            lname: item.lname.clone(),
+                            kind: item.kind,
+                            ty: Ty::Star,
+                            prim_id: None,
+                            params: vec![],
+                        }
+                    } else {
+                        // Constraint-generated bound (should already be Some)
+                        env::Item {
+                            cname: "?".to_string(),
+                            lname: "?".to_string(),
+                            kind: ItemKind::Param,
                             ty: Ty::Hole,
                             prim_id: None,
                             params: vec![],
@@ -1284,8 +1391,9 @@ impl<'a> Checker<'a> {
 
         let env = env::Env {
             items,
+            bounds,
             defs,
-            prim_item: self.prim_item,
+            prim_owner: self.prim_owner,
             root,
             def_subs: self.def_subs,
         };
@@ -1298,11 +1406,11 @@ impl<'a> Checker<'a> {
 fn subst_any_handler(
     pv: &PureVal,
     map: &SubstMap,
-    prim_item: &HashMap<PrimId, ItemId>,
+    prim_owner: &HashMap<PrimId, env::PrimOwner>,
 ) -> PureVal {
     if let Some(meta) = env::as_meta(pv) {
         let new_meta = match meta {
-            Meta::Ty(ty) => Meta::Ty(subst_ty(ty, map, prim_item)),
+            Meta::Ty(ty) => Meta::Ty(subst_ty(ty, map, prim_owner)),
             _ => return pv.clone(),
         };
         new_meta.into()
@@ -1311,10 +1419,13 @@ fn subst_any_handler(
     }
 }
 
-fn make_prim_handler(prim_item: &HashMap<PrimId, ItemId>) -> impl Fn(PrimId, &SubstMap) -> Option<PureCell> + '_ {
+fn make_prim_handler(prim_owner: &HashMap<PrimId, env::PrimOwner>) -> impl Fn(PrimId, &SubstMap) -> Option<PureCell> + '_ {
     move |prim_id: PrimId, mapping: &SubstMap| -> Option<PureCell> {
-        let item_id = prim_item.get(&prim_id)?;
-        let bound_id = BoundId(item_id.0);
+        let owner = prim_owner.get(&prim_id)?;
+        let bound_id = match owner {
+            env::PrimOwner::Bound(bid) => *bid,
+            env::PrimOwner::Ref(_) => return None,
+        };
         let (replacement, _) = mapping.get(&bound_id)?;
         match replacement {
             PureVal::Cell(cell) => Some(cell.clone()),
@@ -1326,28 +1437,28 @@ fn make_prim_handler(prim_item: &HashMap<PrimId, ItemId>) -> impl Fn(PrimId, &Su
 fn subst_pv(
     pv: &PureVal,
     map: &SubstMap,
-    prim_item: &HashMap<PrimId, ItemId>,
+    prim_owner: &HashMap<PrimId, env::PrimOwner>,
 ) -> PureVal {
     pv.subst(
         map,
-        &|v, m| subst_any_handler(v, m, prim_item),
-        &make_prim_handler(prim_item),
+        &|v, m| subst_any_handler(v, m, prim_owner),
+        &make_prim_handler(prim_owner),
     ).unwrap_or_else(|_| Meta::Error.into())
 }
 
 fn subst_cell(
     pc: &PureCell,
     map: &SubstMap,
-    prim_item: &HashMap<PrimId, ItemId>,
+    prim_owner: &HashMap<PrimId, env::PrimOwner>,
 ) -> Result<PureCell, donut_core::common::Error> {
     pc.subst(
         map,
-        &|v, m| subst_any_handler(v, m, prim_item),
-        &make_prim_handler(prim_item),
+        &|v, m| subst_any_handler(v, m, prim_owner),
+        &make_prim_handler(prim_owner),
     )
 }
 
-fn subst_ty(ty: &Ty, map: &SubstMap, prim_item: &HashMap<PrimId, ItemId>) -> Ty {
+fn subst_ty(ty: &Ty, map: &SubstMap, prim_owner: &HashMap<PrimId, env::PrimOwner>) -> Ty {
     if map.is_empty() {
         return ty.clone();
     }
@@ -1355,11 +1466,11 @@ fn subst_ty(ty: &Ty, map: &SubstMap, prim_item: &HashMap<PrimId, ItemId>) -> Ty 
         Ty::Arrow(level, arrow_ty, src, tgt) => Ty::Arrow(
             *level,
             arrow_ty.clone(),
-            subst_pv(src, map, prim_item),
-            subst_pv(tgt, map, prim_item),
+            subst_pv(src, map, prim_owner),
+            subst_pv(tgt, map, prim_owner),
         ),
         Ty::Functor(src, tgt) => {
-            Ty::Functor(subst_pv(src, map, prim_item), subst_pv(tgt, map, prim_item))
+            Ty::Functor(subst_pv(src, map, prim_owner), subst_pv(tgt, map, prim_owner))
         }
         _ => ty.clone(),
     }
@@ -1401,7 +1512,7 @@ impl<'a> Checker<'a> {
     fn current_param_prims(&self, def_id: DefId) -> HashSet<PrimId> {
         let mut prims = HashSet::new();
         for param in &self.program.def(def_id).params {
-            if let Some(Some(env_item)) = self.env_items.get(param.item.0) {
+            if let Some(Some(env_item)) = self.env_bounds.get(param.bound.0) {
                 if let Some(prim_id) = env_item.prim_id {
                     prims.insert(prim_id);
                 }
@@ -1432,7 +1543,7 @@ impl<'a> Checker<'a> {
                             .zip(prim.args.iter())
                             .map(|(&(eid, ext_type), arg)| (eid, (arg.clone(), ext_type)))
                             .collect();
-                        result = subst_cell(&result, &subst_map, &self.prim_item)
+                        result = subst_cell(&result, &subst_map, &self.prim_owner)
                             .map_err(FunctorError::CompError)?;
                     }
                     let target_dim = dim.in_space as i32 + dim_shift;
@@ -1476,36 +1587,49 @@ impl<'a> Checker<'a> {
 
                     // Create Item for the fresh prim (for bound-variable substitution)
                     let functor_name = self.program.def(functor_def_id).lname.clone();
-                    let arg_name = if let Some(&item_id) = self.prim_item.get(&prim.id) {
-                        if item_id.0 < self.program.items.len() {
-                            self.program.item(item_id).lname.clone()
-                        } else if let Some(Some(env_item)) = self.env_items.get(item_id.0) {
-                            env_item.lname.clone()
-                        } else {
-                            "?".to_string()
+                    let arg_name = if let Some(&owner) = self.prim_owner.get(&prim.id) {
+                        match owner {
+                            env::PrimOwner::Ref(ref_id) => {
+                                if ref_id.0 < self.program.items.len() {
+                                    self.program.item(ref_id).lname.clone()
+                                } else if let Some(Some(env_item)) = self.env_items.get(ref_id.0) {
+                                    env_item.lname.clone()
+                                } else {
+                                    "?".to_string()
+                                }
+                            }
+                            env::PrimOwner::Bound(bound_id) => {
+                                if bound_id.0 < self.program.bounds.len() {
+                                    self.program.bound(bound_id).lname.clone()
+                                } else if let Some(Some(env_item)) = self.env_bounds.get(bound_id.0) {
+                                    env_item.lname.clone()
+                                } else {
+                                    "?".to_string()
+                                }
+                            }
                         }
                     } else {
                         "?".to_string()
                     };
                     let display_name = format!("{}({})", functor_name, arg_name);
 
-                    let result_item_id = ItemId(self.env_items.len());
-                    self.env_items.push(Some(env::Item {
+                    let result_bound_id = BoundId(self.env_bounds.len());
+                    self.env_bounds.push(Some(env::Item {
                         cname: display_name.clone(),
                         lname: display_name,
-                        kind: ItemKind::Decl,
+                        kind: ItemKind::Param,
                         ty: Ty::Hole, // placeholder
                         prim_id: Some(fresh_id),
                         params: vec![],
                     }));
-                    self.prim_item.insert(fresh_id, result_item_id);
+                    self.prim_owner.insert(fresh_id, env::PrimOwner::Bound(result_bound_id));
 
-                    // Record constraint with result Item
+                    // Record constraint with result bound
                     let arg_cell = PureCell::Prim(prim.clone(), shape.clone(), *dim);
                     self.current_reqs.push(env::FunctorReq {
                         functor: functor_def_id,
                         arg: arg_cell,
-                        result: result_item_id,
+                        result: result_bound_id,
                     });
 
                     Ok(result)
@@ -1528,7 +1652,7 @@ impl<'a> Checker<'a> {
 fn apply_functor(
     cell: &PureCell,
     map: &HashMap<PrimId, FunctorEntry>,
-    prim_item: &HashMap<PrimId, ItemId>,
+    prim_owner: &HashMap<PrimId, env::PrimOwner>,
     dim_shift: i32,
 ) -> Result<PureCell, FunctorError> {
     match cell {
@@ -1544,7 +1668,7 @@ fn apply_functor(
                             .zip(prim.args.iter())
                             .map(|(&(eid, ext_type), arg)| (eid, (arg.clone(), ext_type)))
                             .collect();
-                        result = subst_cell(&result, &subst_map, prim_item)
+                        result = subst_cell(&result, &subst_map, prim_owner)
                             .map_err(FunctorError::CompError)?;
                     }
                     // Lift to target dimension (accounting for dimension shift)
@@ -1560,7 +1684,7 @@ fn apply_functor(
         PureCell::Comp(axis, children, _) => {
             let mapped: Vec<PureCell> = children
                 .iter()
-                .map(|c| apply_functor(c, map, prim_item, dim_shift))
+                .map(|c| apply_functor(c, map, prim_owner, dim_shift))
                 .collect::<Result<_, _>>()?;
             PureCell::comp(*axis, mapped).map_err(FunctorError::CompError)
         }

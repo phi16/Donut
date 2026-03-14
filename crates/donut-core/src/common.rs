@@ -12,7 +12,7 @@ pub type Vec1<T> = Vec<T>;
 pub type Vec2<T> = Vec<T>;
 
 /// Reference ID — identifies a defined item (Decl/DeclDef).
-/// Used in PureVal::Ref. In donut-lang, this corresponds to ItemId for non-param items.
+/// Used in PureVal::Ref. Indexes into the defined items array.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RefId(pub usize);
 

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::types::common::TokenSpan;
-use crate::types::item::{DefId, ItemId, ItemKind};
+use crate::types::item::{DefId, ItemKind};
 use donut_core::common::{AnyBox, BoundId, Level, PrimId, PureVal, RefId};
 use donut_core::pure_cell::{PureCell, Shape};
 
@@ -76,7 +76,12 @@ pub fn as_meta(val: &PureVal) -> Option<&Meta> {
     }
 }
 
-// Note: ItemId.0 is used as RefId.0 or BoundId.0 depending on item kind
+/// Identifies the owner of a PrimId: either a defined item (RefId) or a bound variable (BoundId).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrimOwner {
+    Ref(RefId),
+    Bound(BoundId),
+}
 
 // --- Entry ---
 
@@ -87,7 +92,7 @@ pub struct Item {
     pub kind: ItemKind,
     pub ty: Ty,
     pub prim_id: Option<PrimId>,
-    pub params: Vec<ItemId>,
+    pub params: Vec<BoundId>,
 }
 
 #[derive(Debug)]
@@ -102,7 +107,7 @@ pub struct DefStyle {
 pub struct FunctorReq {
     pub functor: DefId,
     pub arg: PureCell,
-    pub result: ItemId,
+    pub result: BoundId,
 }
 
 #[derive(Debug)]
@@ -110,9 +115,9 @@ pub struct Def {
     pub qname: String,
     pub lname: String,
     pub span: TokenSpan,
-    pub item: Option<ItemId>,
+    pub item: Option<RefId>,
     pub ty: Ty,
-    pub params: Vec<ItemId>,
+    pub params: Vec<BoundId>,
     pub val: PureVal,
     pub decos: Vec<PureVal>,
     pub reqs: Vec<FunctorReq>,
@@ -132,8 +137,9 @@ pub struct Module {
 #[derive(Debug)]
 pub struct Env {
     pub items: Vec<Item>,
+    pub bounds: Vec<Item>,
     pub defs: Vec<Def>,
-    pub prim_item: HashMap<PrimId, ItemId>,
+    pub prim_owner: HashMap<PrimId, PrimOwner>,
     pub root: Module,
     /// DeclDef expansion: PrimId of `x` → PureCell of `y` for `x := y`.
     pub def_subs: HashMap<PrimId, PureCell>,
@@ -247,16 +253,14 @@ impl DisplayContext for Env {
     }
 
     fn bound_name(&self, bound_id: BoundId) -> &str {
-        &self.items[bound_id.0].lname
+        &self.bounds[bound_id.0].lname
     }
 
     fn prim_name(&self, prim_id: PrimId) -> &str {
-        if let Some(&item_id) = self.prim_item.get(&prim_id) {
-            let item = &self.items[item_id.0];
-            if item.kind == ItemKind::Param {
-                &item.lname
-            } else {
-                &item.cname
+        if let Some(&owner) = self.prim_owner.get(&prim_id) {
+            match owner {
+                PrimOwner::Ref(ref_id) => &self.items[ref_id.0].cname,
+                PrimOwner::Bound(bound_id) => &self.bounds[bound_id.0].lname,
             }
         } else {
             "?"
@@ -278,12 +282,12 @@ impl Env {
     }
 
     /// Format params as `[x: *, y: x → x]` or `[x: * | f(x)]` with constraints.
-    fn format_params(&self, ctx: &impl DisplayContext, params: &[ItemId], reqs: &[FunctorReq]) -> String {
+    fn format_params(&self, ctx: &impl DisplayContext, params: &[BoundId], reqs: &[FunctorReq]) -> String {
         if params.is_empty() && reqs.is_empty() {
             return String::new();
         }
-        let params_str: Vec<String> = params.iter().map(|&item_id| {
-            let item = &self.items[item_id.0];
+        let params_str: Vec<String> = params.iter().map(|&bound_id| {
+            let item = &self.bounds[bound_id.0];
             format!("{}: {}", item.lname, display_ty(ctx, &item.ty))
         }).collect();
         if reqs.is_empty() {
@@ -315,7 +319,7 @@ impl Env {
 
     /// Collect all parameters for a def, including ancestor params,
     /// by walking the module tree along the def's qname path.
-    pub fn collect_all_params(&self, def: &Def) -> Vec<ItemId> {
+    pub fn collect_all_params(&self, def: &Def) -> Vec<BoundId> {
         let mut all_params = Vec::new();
         let mut current = &self.root;
         for seg in def.qname.split('.') {

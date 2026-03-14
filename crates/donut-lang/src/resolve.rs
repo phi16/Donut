@@ -292,19 +292,21 @@ type Error = SpanError;
 struct Checker {
     // Arenas
     items: Vec<Item>,
+    bounds: Vec<Item>,
     defs: Vec<Def>,
     vals: Vec<S<Val>>,
 
-    // Item deduplication (cname → ItemId)
-    item_by_cname: HashMap<String, ItemId>,
+    // Item deduplication (cname → RefId / BoundId)
+    item_by_cname: HashMap<String, RefId>,
+    bound_by_cname: HashMap<String, BoundId>,
 
     // Scopes
     scopes: Vec<Scope>,
     errors: Vec<Error>,
 
     // Decorator param tracking
-    deco_param_stack: Vec<HashSet<ItemId>>,
-    used_deco_params_in_applicand: Option<HashSet<ItemId>>,
+    deco_param_stack: Vec<HashSet<BoundId>>,
+    used_deco_params_in_applicand: Option<HashSet<BoundId>>,
 
     // Name building
     /// Prefix stack for qnames (use-site qualified names).
@@ -329,9 +331,11 @@ impl Checker {
     fn new() -> Self {
         let mut checker = Checker {
             items: Vec::new(),
+            bounds: Vec::new(),
             defs: Vec::new(),
             vals: Vec::new(),
             item_by_cname: HashMap::new(),
+            bound_by_cname: HashMap::new(),
             scopes: Vec::new(),
             errors: Vec::new(),
             deco_param_stack: Vec::new(),
@@ -349,11 +353,11 @@ impl Checker {
 
     fn register_builtins(&mut self) {
         // meta: meta (self-referential type)
-        // We know meta will be ItemId(0), so we can create the self-referencing Val
+        // We know meta will be RefId(0), so we can create the self-referencing Val
         let meta_ty_val = self.alloc_val(
             Val::Path(Path {
                 segments: vec![],
-                target: Ref::Item(ItemId(0)),
+                target: Ref::Item(RefId(0)),
                 args: vec![],
                 applicand: None,
             }),
@@ -366,7 +370,7 @@ impl Checker {
             ty: meta_ty_val,
             params: vec![],
         });
-        debug_assert_eq!(meta_id, ItemId(0));
+        debug_assert_eq!(meta_id, RefId(0));
 
         // *: meta
         let star_ty_val = self.alloc_val(
@@ -400,14 +404,24 @@ impl Checker {
         id
     }
 
-    fn alloc_item(&mut self, item: Item) -> ItemId {
+    fn alloc_item(&mut self, item: Item) -> RefId {
         // Dedup by cname: reuse existing Item if same cname
         if let Some(&existing) = self.item_by_cname.get(&item.cname) {
             return existing;
         }
-        let id = ItemId(self.items.len());
+        let id = RefId(self.items.len());
         self.item_by_cname.insert(item.cname.clone(), id);
         self.items.push(item);
+        id
+    }
+
+    fn alloc_bound(&mut self, item: Item) -> BoundId {
+        if let Some(&existing) = self.bound_by_cname.get(&item.cname) {
+            return existing;
+        }
+        let id = BoundId(self.bounds.len());
+        self.bound_by_cname.insert(item.cname.clone(), id);
+        self.bounds.push(item);
         id
     }
 
@@ -436,7 +450,7 @@ impl Checker {
 
     // --- Deep clone for module instantiation ---
 
-    fn deep_clone_module(&mut self, source: &Module, mapping: &HashMap<ItemId, ValId>) -> Module {
+    fn deep_clone_module(&mut self, source: &Module, mapping: &HashMap<BoundId, ValId>) -> Module {
         let mut new_module = Module::new();
         for &def_id in &source.entries {
             let new_def_id = self.deep_clone_def(def_id, mapping);
@@ -449,7 +463,7 @@ impl Checker {
     fn wrap_body_with_subst(
         &mut self,
         def_id: DefId,
-        mapping: &HashMap<ItemId, ValId>,
+        mapping: &HashMap<BoundId, ValId>,
         span: &TokenSpan,
     ) -> DefBody {
         match &self.def(def_id).body {
@@ -501,7 +515,7 @@ impl Checker {
         }
     }
 
-    fn deep_clone_def(&mut self, def_id: DefId, mapping: &HashMap<ItemId, ValId>) -> DefId {
+    fn deep_clone_def(&mut self, def_id: DefId, mapping: &HashMap<BoundId, ValId>) -> DefId {
         let original = self.def(def_id);
         let qname = original.qname.clone();
         let lname = original.lname.clone();
@@ -528,7 +542,7 @@ impl Checker {
                 Param {
                     name: p.name,
                     ty: new_ty,
-                    item: p.item,
+                    bound: p.bound,
                 }
             })
             .collect();
@@ -676,7 +690,7 @@ impl Checker {
     fn lookup_def(&self, name: &str) -> Option<DefId> {
         match self.lookup(name)? {
             Ref::Def(id) => Some(id),
-            Ref::Item(_) => None,
+            Ref::Item(_) | Ref::Bound(_) => None,
         }
     }
 
@@ -727,10 +741,10 @@ impl Checker {
             return (vec![], None);
         };
         // Track deco param usage in applicand context
-        if let Ref::Item(item_id) = first_ref {
+        if let Ref::Bound(bound_id) = first_ref {
             if let Some(ref mut used) = self.used_deco_params_in_applicand {
-                if self.deco_param_stack.iter().any(|s| s.contains(&item_id)) {
-                    used.insert(item_id);
+                if self.deco_param_stack.iter().any(|s| s.contains(&bound_id)) {
+                    used.insert(bound_id);
                 }
             }
         }
@@ -740,7 +754,7 @@ impl Checker {
         for &(name, span) in rest {
             let current_def = match current_ref {
                 Ref::Def(id) => Some(id),
-                Ref::Item(_) => None,
+                Ref::Item(_) | Ref::Bound(_) => None,
             };
             let next = current_def.and_then(|id| self.def(id).members.get(name));
             match next {
@@ -806,9 +820,9 @@ impl Checker {
                 ty: *val_id,
                 params: vec![],
             };
-            let item_id = self.alloc_item(item);
-            param_items.insert(item_id);
-            self.define(name.clone(), Ref::Item(item_id));
+            let bound_id = self.alloc_bound(item);
+            param_items.insert(bound_id);
+            self.define(name.clone(), Ref::Bound(bound_id));
         }
         self.deco_param_stack.push(param_items);
     }
@@ -1191,12 +1205,12 @@ impl Checker {
                             if path.args.is_empty() {
                                 body_members = m.clone();
                             } else {
-                                // Build substitution mapping: param ItemId → arg ValId
+                                // Build substitution mapping: param BoundId → arg ValId
                                 let target_params = &self.def(id).params;
-                                let mapping: HashMap<ItemId, ValId> = target_params
+                                let mapping: HashMap<BoundId, ValId> = target_params
                                     .iter()
                                     .zip(path.args.iter())
-                                    .map(|(param, &arg)| (param.item, arg))
+                                    .map(|(param, &arg)| (param.bound, arg))
                                     .collect();
                                 let m_clone = m.clone();
                                 body_members = self.deep_clone_module(&m_clone, &mapping);
@@ -1223,13 +1237,13 @@ impl Checker {
             let mapping_params: Vec<Param> = deco_param_defs
                 .iter()
                 .map(|(name, val_id)| {
-                    let Ref::Item(item) = self.lookup(name).unwrap() else {
-                        unreachable!("deco param must be Item")
+                    let Ref::Bound(bound) = self.lookup(name).unwrap() else {
+                        unreachable!("deco param must be Bound")
                     };
                     Param {
                         name: name.clone(),
                         ty: *val_id,
-                        item,
+                        bound,
                     }
                 })
                 .collect();
@@ -1238,7 +1252,7 @@ impl Checker {
             self.used_deco_params_in_applicand = Some(HashSet::new());
             let app_resolved = applicand.resolve(self);
             let used = self.used_deco_params_in_applicand.take().unwrap();
-            let all_deco_params: HashSet<ItemId> =
+            let all_deco_params: HashSet<BoundId> =
                 self.deco_param_stack.iter().flatten().copied().collect();
             for dp in &all_deco_params {
                 if !used.contains(dp) {
@@ -1408,7 +1422,7 @@ impl Checker {
                 let resolved_ty = param_decl.ty.resolve(self);
                 for name in param_decl.names {
                     let param_cname = self.make_param_cname(owner_lname, &name.0);
-                    let item_id = self.alloc_item(Item {
+                    let bound_id = self.alloc_bound(Item {
                         cname: param_cname,
                         lname: name.0.clone(),
                         kind: ItemKind::Param,
@@ -1418,9 +1432,9 @@ impl Checker {
                     let param = Param {
                         name: name.0.clone(),
                         ty: resolved_ty,
-                        item: item_id,
+                        bound: bound_id,
                     };
-                    self.define(param.name.clone(), Ref::Item(item_id));
+                    self.define(param.name.clone(), Ref::Bound(bound_id));
                     params.push(param);
                 }
             }
@@ -1632,6 +1646,7 @@ pub fn resolve_with_sources(
     let prog = Program {
         root,
         items: checker.items,
+        bounds: checker.bounds,
         defs: checker.defs,
         vals: checker.vals,
         def_order,

@@ -7,16 +7,28 @@ use donut_lang::types::env::Env;
 use std::collections::HashMap;
 
 fn prim_lookup(env: &Env) -> HashMap<String, PrimId> {
-    env.prim_item
+    env.prim_owner
         .iter()
-        .map(|(&prim_id, &item_id)| (env.items[item_id.0].cname.clone(), prim_id))
+        .map(|(&prim_id, &owner)| {
+            let cname = match owner {
+                donut_lang::types::env::PrimOwner::Ref(ref_id) => env.items[ref_id.0].cname.clone(),
+                donut_lang::types::env::PrimOwner::Bound(bound_id) => env.bounds[bound_id.0].cname.clone(),
+            };
+            (cname, prim_id)
+        })
         .collect()
 }
 
 fn prim_names(env: &Env) -> HashMap<PrimId, String> {
-    env.prim_item
+    env.prim_owner
         .iter()
-        .map(|(&prim_id, &item_id)| (prim_id, env.items[item_id.0].cname.clone()))
+        .map(|(&prim_id, &owner)| {
+            let cname = match owner {
+                donut_lang::types::env::PrimOwner::Ref(ref_id) => env.items[ref_id.0].cname.clone(),
+                donut_lang::types::env::PrimOwner::Bound(bound_id) => env.bounds[bound_id.0].cname.clone(),
+            };
+            (prim_id, cname)
+        })
         .collect()
 }
 
@@ -380,14 +392,20 @@ fn test_canonical_names_match() {
     let (bare_env, _) = donut_lang::load::load(bare_code);
 
     let mut named_names: Vec<String> = named_env
-        .prim_item
+        .prim_owner
         .iter()
-        .map(|(&_, &item_id)| named_env.items[item_id.0].cname.clone())
+        .map(|(&_, &owner)| match owner {
+            donut_lang::types::env::PrimOwner::Ref(ref_id) => named_env.items[ref_id.0].cname.clone(),
+            donut_lang::types::env::PrimOwner::Bound(bound_id) => named_env.bounds[bound_id.0].cname.clone(),
+        })
         .collect();
     let mut bare_names: Vec<String> = bare_env
-        .prim_item
+        .prim_owner
         .iter()
-        .map(|(&_, &item_id)| bare_env.items[item_id.0].cname.clone())
+        .map(|(&_, &owner)| match owner {
+            donut_lang::types::env::PrimOwner::Ref(ref_id) => bare_env.items[ref_id.0].cname.clone(),
+            donut_lang::types::env::PrimOwner::Bound(bound_id) => bare_env.bounds[bound_id.0].cname.clone(),
+        })
         .collect();
     named_names.sort();
     bare_names.sort();
@@ -475,14 +493,20 @@ import \"sys\"
     let (bare_env, _) = donut_lang::load::load_with_sources(bare_code, sources);
 
     let mut named_names: Vec<String> = named_env
-        .prim_item
+        .prim_owner
         .iter()
-        .map(|(&_, &item_id)| named_env.items[item_id.0].cname.clone())
+        .map(|(&_, &owner)| match owner {
+            donut_lang::types::env::PrimOwner::Ref(ref_id) => named_env.items[ref_id.0].cname.clone(),
+            donut_lang::types::env::PrimOwner::Bound(bound_id) => named_env.bounds[bound_id.0].cname.clone(),
+        })
         .collect();
     let mut bare_names: Vec<String> = bare_env
-        .prim_item
+        .prim_owner
         .iter()
-        .map(|(&_, &item_id)| bare_env.items[item_id.0].cname.clone())
+        .map(|(&_, &owner)| match owner {
+            donut_lang::types::env::PrimOwner::Ref(ref_id) => bare_env.items[ref_id.0].cname.clone(),
+            donut_lang::types::env::PrimOwner::Bound(bound_id) => bare_env.bounds[bound_id.0].cname.clone(),
+        })
         .collect();
     named_names.sort();
     bare_names.sort();

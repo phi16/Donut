@@ -49,8 +49,11 @@ fn root_entries(env: &Env) -> Vec<DefId> {
 fn build_prim_maps(env: &Env) -> (HashMap<String, PrimId>, HashMap<PrimId, String>) {
     let mut lookup = HashMap::new();
     let mut names = HashMap::new();
-    for (&prim_id, &item_id) in &env.prim_item {
-        let cname = env.items[item_id.0].cname.clone();
+    for (&prim_id, &owner) in &env.prim_owner {
+        let cname = match owner {
+            donut_lang::types::env::PrimOwner::Ref(ref_id) => env.items[ref_id.0].cname.clone(),
+            donut_lang::types::env::PrimOwner::Bound(bound_id) => env.bounds[bound_id.0].cname.clone(),
+        };
         lookup.insert(cname.clone(), prim_id);
         names.insert(prim_id, cname);
     }

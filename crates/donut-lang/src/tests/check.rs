@@ -154,7 +154,7 @@ fn param_decl_has_item() {
     let env = check_ok("A[x: *]: x → x");
     let a = get_def(&env, "A");
     assert_eq!(a.params.len(), 1);
-    let param_item = &env.items[a.params[0].0];
+    let param_item = &env.bounds[a.params[0].0];
     assert_eq!(param_item.lname, "x");
     assert_eq!(param_item.ty, Ty::Star);
     assert!(param_item.prim_id.is_some());
@@ -164,7 +164,7 @@ fn param_decl_has_item() {
 fn param_type_is_checked() {
     let env = check_ok("T = *\nA[x: T]: *");
     let a = get_def(&env, "A");
-    let param_item = &env.items[a.params[0].0];
+    let param_item = &env.bounds[a.params[0].0];
     assert_eq!(param_item.ty, Ty::Star);
 }
 
@@ -173,8 +173,8 @@ fn multiple_params() {
     let env = check_ok("A[x: *, y: *]: x → y");
     let a = get_def(&env, "A");
     assert_eq!(a.params.len(), 2);
-    let px = &env.items[a.params[0].0];
-    let py = &env.items[a.params[1].0];
+    let px = &env.bounds[a.params[0].0];
+    let py = &env.bounds[a.params[1].0];
     assert_eq!(px.lname, "x");
     assert_eq!(py.lname, "y");
     assert_ne!(px.prim_id, py.prim_id);
