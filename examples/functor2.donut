@@ -28,4 +28,4 @@ m = (one one; add) one; mul
 result = f'[m]
 
 
-k[m: D → x, (m has definition on f)]: f'[m] ~ f(m)
+k[m: D → x]: f'[m] ~ f(m)

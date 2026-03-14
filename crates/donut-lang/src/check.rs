@@ -6,8 +6,9 @@ use crate::types::item::*;
 use donut_core::cell::Diagram;
 use donut_core::cell::Globular;
 use donut_core::common::{Axis, ExtId, Level, Prim, PrimId, PureVal};
-use donut_core::pure_cell::PureCell;
+use donut_core::pure_cell::{PureCell, Shape};
 
+#[derive(Clone)]
 struct FunctorEntry {
     param_ext_ids: Vec<ExtId>,
     cell: PureCell,
@@ -38,17 +39,36 @@ struct Checker<'a> {
     functor_maps: HashMap<DefId, FunctorMap>,
     // DeclDef expansion: PrimId of `x` → PureCell of `y`
     def_subs: HashMap<PrimId, PureCell>,
+    // Constraints accumulated during check_def
+    current_reqs: Vec<env::FunctorReq>,
+    // Cache: (functor DefId, arg PrimId) → generated fresh PureCell
+    constraint_cache: HashMap<(DefId, PrimId), PureCell>,
+    // PrimIds that may generate constraints (param prims + constraint-generated fresh prims)
+    constrainable: HashSet<PrimId>,
     errors: Vec<Error>,
 }
 
 impl<'a> DisplayContext for Checker<'a> {
     fn item_cname(&self, ext_id: ExtId) -> &str {
-        &self.program.item(ItemId(ext_id.0 as usize)).cname
+        let item_id = ItemId(ext_id.0 as usize);
+        if item_id.0 < self.program.items.len() {
+            &self.program.item(item_id).cname
+        } else if let Some(Some(env_item)) = self.env_items.get(item_id.0) {
+            &env_item.cname
+        } else {
+            "?"
+        }
     }
 
     fn prim_name(&self, prim_id: PrimId) -> &str {
         if let Some(&item_id) = self.prim_item.get(&prim_id) {
-            &self.program.item(item_id).cname
+            if item_id.0 < self.program.items.len() {
+                &self.program.item(item_id).cname
+            } else if let Some(Some(env_item)) = self.env_items.get(item_id.0) {
+                &env_item.cname
+            } else {
+                "?"
+            }
         } else {
             "?"
         }
@@ -69,6 +89,9 @@ impl<'a> Checker<'a> {
             checked: HashMap::new(),
             functor_maps: HashMap::new(),
             def_subs: HashMap::new(),
+            current_reqs: Vec::new(),
+            constraint_cache: HashMap::new(),
+            constrainable: HashSet::new(),
             errors: Vec::new(),
         };
         checker.register_builtins();
@@ -161,6 +184,10 @@ impl<'a> Checker<'a> {
             self.check_item(param.item, &ty, &def_span);
         }
 
+        // Extend constrainable with this def's param prims (save for restore)
+        let saved_constrainable = self.constrainable.clone();
+        self.constrainable.extend(self.current_param_prims(def_id));
+
         // Process `before` trees (where clauses) — must be checked before this def
         let mut lookup = self.process_trees(&tree.before);
 
@@ -170,6 +197,8 @@ impl<'a> Checker<'a> {
         // Process `after` trees (module members, with clauses)
         lookup.extend(self.process_trees(&tree.after));
 
+        // Restore constrainable
+        self.constrainable = saved_constrainable;
         self.prefixes.pop();
 
         env::Module {
@@ -182,6 +211,10 @@ impl<'a> Checker<'a> {
         if self.env_defs[def_id.0].is_some() {
             return; // already checked
         }
+
+        // Save and restore constraint collection state for this def
+        let saved_reqs = std::mem::take(&mut self.current_reqs);
+        let saved_cache = std::mem::take(&mut self.constraint_cache);
 
         // Ensure params are checked
         let params = self.program.def(def_id).params.clone();
@@ -284,12 +317,17 @@ impl<'a> Checker<'a> {
             params,
             val,
             decos,
+            reqs: std::mem::take(&mut self.current_reqs),
             style: env::DefStyle { color: env::Color::gray() },
             origin,
             param_counts,
         };
         self.checked.insert(Ref::Def(def_id), env_def.val.clone());
         self.env_defs[def_id.0] = Some(env_def);
+
+        // Restore constraint collection state
+        self.current_reqs = saved_reqs;
+        self.constraint_cache = saved_cache;
     }
 
     // --- Type evaluation ---
@@ -452,7 +490,7 @@ impl<'a> Checker<'a> {
         }
 
         // Apply args
-        let result = if path.args.is_empty() {
+        let mut result = if path.args.is_empty() {
             base
         } else {
             let args: Vec<PureVal> = path.args.iter().map(|&a| self.eval_val(a)).collect();
@@ -508,6 +546,48 @@ impl<'a> Checker<'a> {
             }
         };
 
+        // Verify/propagate functor constraints from target def
+        if let Ref::Def(def_id) = path.target {
+            if !path.args.is_empty() {
+                if let Some(Some(env_def)) = self.env_defs.get(def_id.0) {
+                    let reqs = env_def.reqs.clone();
+                    if !reqs.is_empty() {
+                        // Build substitution map: param ExtIds → actual arg values
+                        let param_ids = self.param_ext_ids(path.target);
+                        let args: Vec<PureVal> = path.args.iter().map(|&a| self.eval_val(a)).collect();
+                        let mut subst_map: HashMap<ExtId, PureVal> =
+                            param_ids.into_iter().zip(args.into_iter()).collect();
+
+                        // Process reqs in order, growing subst_map with results
+                        for req in &reqs {
+                            let sub_arg = subst_cell(&req.arg, &subst_map, &self.prim_item);
+                            if let Some(fmap) = self.functor_maps.get(&req.functor) {
+                                let entries = fmap.entries.clone();
+                                let dim_shift = fmap.dim_shift;
+                                // Use constrained version: handles both verification and propagation.
+                                // - Concrete prims not in map and not constrainable → NoMapping error
+                                // - Constrainable prims (caller's params) → propagated as new constraints
+                                match self.apply_functor_constrained(&sub_arg, req.functor, &entries, dim_shift) {
+                                    Ok(result_cell) => {
+                                        // Add constraint result to subst_map for subsequent reqs
+                                        let ext_id = ExtId(req.result.0 as u64);
+                                        subst_map.insert(ext_id, PureVal::Cell(result_cell));
+                                    }
+                                    Err(e) => {
+                                        let span = self.program.val_span(val_id);
+                                        self.error_at(span, self.format_functor_error(req.functor, &e));
+                                    }
+                                }
+                            }
+                        }
+
+                        // Re-substitute result with the full map (including constraint results)
+                        result = subst_pv(&result, &subst_map, &self.prim_item);
+                    }
+                }
+            }
+        }
+
         // Functor application: f(x)
         if let Some(app_val_id) = path.applicand {
             let applicand = self.eval_val(app_val_id);
@@ -529,7 +609,9 @@ impl<'a> Checker<'a> {
                 }
             };
             if let Some(fmap) = self.functor_maps.get(&functor_def_id) {
-                match apply_functor(app_cell, &fmap.entries, &self.prim_item, fmap.dim_shift) {
+                let entries = fmap.entries.clone();
+                let dim_shift = fmap.dim_shift;
+                match self.apply_functor_constrained(app_cell, functor_def_id, &entries, dim_shift) {
                     Ok(pc) => PureVal::Cell(pc),
                     Err(e) => {
                         let span = self.program.val_span(val_id);
@@ -1033,20 +1115,33 @@ impl<'a> Checker<'a> {
         };
 
         // Fill unchecked entries with defaults
+        let n_program_items = self.program.items.len();
         let items: Vec<env::Item> = self
             .env_items
             .into_iter()
             .enumerate()
             .map(|(i, o)| {
                 o.unwrap_or_else(|| {
-                    let item = self.program.item(ItemId(i));
-                    env::Item {
-                        cname: item.cname.clone(),
-                        lname: item.lname.clone(),
-                        kind: item.kind,
-                        ty: Ty::Star,
-                        prim_id: None,
-                        params: vec![],
+                    if i < n_program_items {
+                        let item = self.program.item(ItemId(i));
+                        env::Item {
+                            cname: item.cname.clone(),
+                            lname: item.lname.clone(),
+                            kind: item.kind,
+                            ty: Ty::Star,
+                            prim_id: None,
+                            params: vec![],
+                        }
+                    } else {
+                        // Constraint-generated item (should already be Some)
+                        env::Item {
+                            cname: "?".to_string(),
+                            lname: "?".to_string(),
+                            kind: ItemKind::Decl,
+                            ty: Ty::Hole,
+                            prim_id: None,
+                            params: vec![],
+                        }
                     }
                 })
             })
@@ -1067,6 +1162,7 @@ impl<'a> Checker<'a> {
                         params: vec![],
                         val: Meta::Error.into(),
                         decos: vec![],
+                        reqs: vec![],
                         style: env::DefStyle { color: env::Color::gray() },
                         origin: def.origin.clone(),
                         param_counts: def.param_counts.clone(),
@@ -1159,6 +1255,136 @@ fn subst_ty(ty: &Ty, map: &HashMap<ExtId, PureVal>, prim_item: &HashMap<PrimId, 
 enum FunctorError {
     NoMapping(Prim),
     CompError(donut_core::common::Error),
+}
+
+use std::collections::HashSet;
+
+impl<'a> Checker<'a> {
+    /// Collect PrimIds of all parameter items for the current def's params.
+    fn current_param_prims(&self, def_id: DefId) -> HashSet<PrimId> {
+        let mut prims = HashSet::new();
+        for param in &self.program.def(def_id).params {
+            if let Some(Some(env_item)) = self.env_items.get(param.item.0) {
+                if let Some(prim_id) = env_item.prim_id {
+                    prims.insert(prim_id);
+                }
+            }
+        }
+        prims
+    }
+
+    /// Apply functor with constraint generation.
+    /// Unknown prims in `self.constrainable` generate a FunctorReq + fresh Item.
+    /// Unknown prims NOT in `self.constrainable` return NoMapping error.
+    fn apply_functor_constrained(
+        &mut self,
+        cell: &PureCell,
+        functor_def_id: DefId,
+        map: &HashMap<PrimId, FunctorEntry>,
+        dim_shift: i32,
+    ) -> Result<PureCell, FunctorError> {
+        match cell {
+            PureCell::Prim(prim, shape, dim) => {
+                if let Some(entry) = map.get(&prim.id) {
+                    // Known mapping — same as apply_functor
+                    let mut result = entry.cell.clone();
+                    if !entry.param_ext_ids.is_empty() && !prim.args.is_empty() {
+                        let subst_map: HashMap<ExtId, PureVal> = entry
+                            .param_ext_ids
+                            .iter()
+                            .zip(prim.args.iter())
+                            .map(|(&eid, arg)| (eid, arg.clone()))
+                            .collect();
+                        result = subst_cell(&result, &subst_map, &self.prim_item);
+                    }
+                    let target_dim = dim.in_space as i32 + dim_shift;
+                    while (result.dim().in_space as i32) < target_dim {
+                        result = PureCell::id(result);
+                    }
+                    Ok(result)
+                } else if let Some(cached) = self.constraint_cache.get(&(functor_def_id, prim.id)) {
+                    // Already generated a fresh prim for this constraint
+                    let mut result = cached.clone();
+                    let target_dim = dim.in_space as i32 + dim_shift;
+                    while (result.dim().in_space as i32) < target_dim {
+                        result = PureCell::id(result);
+                    }
+                    Ok(result)
+                } else if self.constrainable.contains(&prim.id) {
+                    // Constrainable prim — generate constraint + fresh prim as Item
+                    let fresh_id = self.fresh_prim_id();
+                    let fresh_prim = Prim::with_id_args(fresh_id, prim.args.clone());
+
+                    // Add fresh prim to constrainable (for f(g(m)) patterns)
+                    self.constrainable.insert(fresh_id);
+
+                    let result = match shape {
+                        Shape::Zero => PureCell::zero(fresh_prim),
+                        Shape::Succ { source, target } => {
+                            let mapped_src = self.apply_functor_constrained(
+                                source, functor_def_id, map, dim_shift,
+                            )?;
+                            let mapped_tgt = self.apply_functor_constrained(
+                                target, functor_def_id, map, dim_shift,
+                            )?;
+                            PureCell::prim(fresh_prim, mapped_src, mapped_tgt)
+                                .map_err(FunctorError::CompError)?
+                        }
+                    };
+
+                    // Cache
+                    self.constraint_cache
+                        .insert((functor_def_id, prim.id), result.clone());
+
+                    // Create Item for the fresh prim (for ExtId-based substitution)
+                    let functor_name = self.program.def(functor_def_id).lname.clone();
+                    let arg_name = if let Some(&item_id) = self.prim_item.get(&prim.id) {
+                        if item_id.0 < self.program.items.len() {
+                            self.program.item(item_id).lname.clone()
+                        } else if let Some(Some(env_item)) = self.env_items.get(item_id.0) {
+                            env_item.lname.clone()
+                        } else {
+                            "?".to_string()
+                        }
+                    } else {
+                        "?".to_string()
+                    };
+                    let display_name = format!("{}({})", functor_name, arg_name);
+
+                    let result_item_id = ItemId(self.env_items.len());
+                    self.env_items.push(Some(env::Item {
+                        cname: display_name.clone(),
+                        lname: display_name,
+                        kind: ItemKind::Decl,
+                        ty: Ty::Hole, // placeholder
+                        prim_id: Some(fresh_id),
+                        params: vec![],
+                    }));
+                    self.prim_item.insert(fresh_id, result_item_id);
+
+                    // Record constraint with result Item
+                    let arg_cell = PureCell::Prim(prim.clone(), shape.clone(), *dim);
+                    self.current_reqs.push(env::FunctorReq {
+                        functor: functor_def_id,
+                        arg: arg_cell,
+                        result: result_item_id,
+                    });
+
+                    Ok(result)
+                } else {
+                    // Not constrainable — strict error
+                    Err(FunctorError::NoMapping(prim.clone()))
+                }
+            }
+            PureCell::Comp(axis, children, _) => {
+                let mapped: Vec<PureCell> = children
+                    .iter()
+                    .map(|c| self.apply_functor_constrained(c, functor_def_id, map, dim_shift))
+                    .collect::<Result<_, _>>()?;
+                PureCell::comp(*axis, mapped).map_err(FunctorError::CompError)
+            }
+        }
+    }
 }
 
 fn apply_functor(

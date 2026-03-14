@@ -1482,3 +1482,170 @@ h = m[g]"#,
     );
     assert!(errors.is_empty(), "unexpected errors: {:?}", errors);
 }
+
+// --- Functor constraints ---
+
+#[test]
+fn functor_constraint_basic() {
+    // h[m: src.C → src.X] = F(m) should not error; generates constraints
+    let env = check_ok(
+        "src = {\n  C: *\n  X: C → C\n}\ntgt = {\n  D: *\n  Y: D → D\n}\nF: src.C ~> tgt.D\nF(src.X) = tgt.Y\nh[m: src.C → src.X] = F(m)",
+    );
+    let h = get_def(&env, "h");
+    assert!(!h.reqs.is_empty(), "h should have functor constraints");
+}
+
+#[test]
+fn functor_constraint_with_boundary() {
+    // h[a b: src.C → src.C, m: a → b] uses F(m), generating constraints F(a), F(b), F(m)
+    let env = check_ok(
+        "src = {\n  C: *\n  X: C → C\n}\ntgt = {\n  D: *\n  Y: D → D\n}\nF: src.C ~> tgt.D\nF(src.X) = tgt.Y\nh[a b: src.C → src.C, m: a → b] = F(m)",
+    );
+    let h = get_def(&env, "h");
+    // Should have constraints for F(a), F(b), F(m)
+    assert!(
+        h.reqs.len() >= 3,
+        "expected at least 3 constraints (F(a), F(b), F(m)), got {}",
+        h.reqs.len()
+    );
+}
+
+#[test]
+fn functor_constraint_display() {
+    let env = check_ok(
+        "src = {\n  C: *\n  X: C → C\n}\ntgt = {\n  D: *\n  Y: D → D\n}\nF: src.C ~> tgt.D\nF(src.X) = tgt.Y\nh[m: src.C → src.X] = F(m)",
+    );
+    let h = get_def(&env, "h");
+    let sig = env.display_params(h);
+    eprintln!("sig = {}", sig);
+    // Should contain "|" separator for constraints
+    assert!(sig.contains('|'), "display should contain '|' separator: {}", sig);
+    // Should mention F
+    assert!(sig.contains("F("), "display should contain 'F(': {}", sig);
+}
+
+#[test]
+fn functor_constraint_verified_ok() {
+    // h[m] has constraint F(m). Calling h[src.u] should succeed because F(src.u) is defined.
+    check_ok(
+        "src = {\n  C: *\n  X: C → C\n  u: C → X\n}\ntgt = {\n  D: *\n  Y: D → D\n  v: D → Y\n}\nF: src.C ~> tgt.D\nF(src.X) = tgt.Y\nF(src.u) = tgt.v\nh[m: src.C → src.X] = F(m)\nresult = h[src.u]",
+    );
+}
+
+#[test]
+fn functor_constraint_verified_fail() {
+    // h[m] has constraint F(m). Calling h[src.v] should fail because F(src.v) is not defined
+    // (F only maps src.X, not src.Y).
+    let (_, errors) = run_check(
+        "src = {\n  C: *\n  X: C → C\n  Y: C → C\n  v: C → X\n}\ntgt = {\n  D: *\n  A: D → D\n}\nF: src.C ~> tgt.D\nF(src.X) = tgt.A\nh[m: src.C → src.X] = F(m)\nresult = h[src.v]",
+    );
+    assert!(!errors.is_empty(), "expected constraint violation error");
+}
+
+#[test]
+fn functor_constraint_propagation() {
+    // h[m] has constraint F(m). g[n] = h[n] should propagate the constraint to g.
+    let env = check_ok(
+        "src = {\n  C: *\n  X: C → C\n  u: C → X\n}\ntgt = {\n  D: *\n  Y: D → D\n  v: D → Y\n}\nF: src.C ~> tgt.D\nF(src.X) = tgt.Y\nF(src.u) = tgt.v\nh[m: src.C → src.X] = F(m)\ng[n: src.C → src.X] = h[n]",
+    );
+    let g = get_def(&env, "g");
+    assert!(
+        !g.reqs.is_empty(),
+        "g should have propagated constraints from h"
+    );
+}
+
+#[test]
+fn functor_constraint_call_site_substitution() {
+    // h[m] = F(m) is an alias. Calling h[src.u] should produce the same result as F(src.u).
+    let env = check_ok(
+        "src = {\n  C: *\n  X: C → C\n  u: C → X\n}\ntgt = {\n  D: *\n  Y: D → D\n  v: D → Y\n}\nF: src.C ~> tgt.D\nF(src.X) = tgt.Y\nF(src.u) = tgt.v\nh[m: src.C → src.X] = F(m)\nresult_h = h[src.u]\nresult_f = F(src.u)",
+    );
+    let rh = get_def(&env, "result_h");
+    let rf = get_def(&env, "result_f");
+    // Both should produce the same cell value
+    assert_eq!(rh.val, rf.val, "h[src.u] should equal F(src.u)");
+}
+
+#[test]
+fn functor_constraint_decldef() {
+    // DeclDef: h[m] := F(m) produces h with type F(src) → F(tgt) and h.def: h ~ F(m)
+    let env = check_ok(
+        "src = {\n  C: *\n  X: C → C\n  u: C → X\n}\ntgt = {\n  D: *\n  Y: D → D\n  v: D → Y\n}\nF: src.C ~> tgt.D\nF(src.X) = tgt.Y\nF(src.u) = tgt.v\nh[m: src.C → src.X] := F(m)",
+    );
+    let h = get_def(&env, "h");
+    assert!(!h.reqs.is_empty(), "h should have constraints");
+    // h should have an item (it's a DeclDef)
+    assert!(h.item.is_some(), "h should be a DeclDef with an item");
+}
+
+#[test]
+fn functor_constraint_nested_functor() {
+    // f(g(m)): two functors composed, generates constraints for both g(m) and f(g(m))
+    let env = check_ok(
+        "import \"sys\"\nsrc = {\n  A: *\n  B: A → A\n}\nmid = {\n  M: *\n  N: M → M\n}\nend = {\n  X: *\n  Y: X → X\n}\ng: src.A ~> mid.M\ng(src.B) = mid.N\nf: mid.M ~> end.X\nf(mid.N) = end.Y\nh[m: src.A → src.A] = f(g(m))",
+    );
+    let h = get_def(&env, "h");
+    // Should have constraints for g(m) and f(g(m))
+    assert!(
+        h.reqs.len() >= 2,
+        "expected at least 2 constraints for nested functor, got {}",
+        h.reqs.len()
+    );
+}
+
+#[test]
+fn functor_constraint_nested_functor_call_site() {
+    // f(g(m)) at call site: h[src.B] should produce f(g(src.B)) = f(mid.N) = end.Y
+    let env = check_ok(
+        "import \"sys\"\nsrc = {\n  A: *\n  B: A → A\n}\nmid = {\n  M: *\n  N: M → M\n}\nend = {\n  X: *\n  Y: X → X\n}\ng: src.A ~> mid.M\ng(src.B) = mid.N\nf: mid.M ~> end.X\nf(mid.N) = end.Y\nh[m: src.A → src.A] = f(g(m))\nresult_h = h[src.B]\nresult_direct = f(g(src.B))",
+    );
+    let rh = get_def(&env, "result_h");
+    let rd = get_def(&env, "result_direct");
+    assert_eq!(rh.val, rd.val, "h[src.B] should equal f(g(src.B))");
+}
+
+#[test]
+fn functor_constraint_decl_type_at_call_site() {
+    // h[m]: ... ~ F(m) — when called with concrete, type should resolve
+    let env = check_ok(
+        "src = {\n  C: *\n  X: C → C\n  u: C → X\n}\ntgt = {\n  D: *\n  Y: D → D\n  v: D → Y\n}\nF: src.C ~> tgt.D\nF(src.X) = tgt.Y\nF(src.u) = tgt.v\nh[m: src.C → src.X]: F(m) ~ F(m)\nresult = h[src.u]",
+    );
+    let result = get_def(&env, "result");
+    // result should be a cell (h[src.u] is an item with type F(src.u) ~ F(src.u) = tgt.v ~ tgt.v)
+    assert!(matches!(&result.val, PureVal::Cell(_)), "result should be a cell value");
+}
+
+#[test]
+fn functor_constraint_composition_in_arg() {
+    // F(m; n) where m and n are params — F must be defined on both
+    let env = check_ok(
+        "src = {\n  C: *\n  X: C → C\n  u: X → X\n}\ntgt = {\n  D: *\n  Y: D → D\n  v: Y → Y\n}\nF: src.C ~> tgt.D\nF(src.X) = tgt.Y\nF(src.u) = tgt.v\nh[m n: src.X → src.X] = F(m; n)",
+    );
+    let h = get_def(&env, "h");
+    // Constraints should include F(m), F(n)
+    assert!(
+        h.reqs.len() >= 2,
+        "expected at least 2 constraints for composition, got {}",
+        h.reqs.len()
+    );
+}
+
+#[test]
+fn functor_constraint_no_scope_leak() {
+    // Constraints from one def should not leak to sibling defs
+    let env = check_ok(
+        "src = {\n  C: *\n  X: C → C\n}\ntgt = {\n  D: *\n  Y: D → D\n}\nF: src.C ~> tgt.D\nF(src.X) = tgt.Y\nh[m: src.C → src.X] = F(m)\ng = src.X",
+    );
+    let g = get_def(&env, "g");
+    assert!(g.reqs.is_empty(), "g should have no constraints (no scope leak)");
+}
+
+#[test]
+fn functor_constraint_concrete_unmapped_error() {
+    // f(Y) where Y is concrete but not in f's map — should error, not generate constraint
+    let (_, errors) = run_check(
+        "src = {\n  C: *\n  X: C → C\n  Y: C → C\n}\ntgt = {\n  D: *\n  A: D → D\n}\nF: src.C ~> tgt.D\nF(src.X) = tgt.A\ng = F(src.Y)",
+    );
+    assert!(!errors.is_empty(), "F(src.Y) should error: Y has no mapping");
+}

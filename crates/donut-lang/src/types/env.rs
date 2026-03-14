@@ -95,6 +95,16 @@ pub struct DefStyle {
     pub color: Color,
 }
 
+/// Constraint: functor `functor` must be defined on `arg`.
+/// `arg` may contain parameter prims and fresh prims from prior constraints.
+/// `result` is the Item created for the fresh prim representing the functor application result.
+#[derive(Debug, Clone)]
+pub struct FunctorReq {
+    pub functor: DefId,
+    pub arg: PureCell,
+    pub result: ItemId,
+}
+
 #[derive(Debug)]
 pub struct Def {
     pub qname: String,
@@ -105,6 +115,7 @@ pub struct Def {
     pub params: Vec<ItemId>,
     pub val: PureVal,
     pub decos: Vec<PureVal>,
+    pub reqs: Vec<FunctorReq>,
     pub style: DefStyle,
     pub origin: Option<String>,
     pub param_counts: Vec<usize>,
@@ -287,22 +298,31 @@ impl Env {
         display_ty(self, ty)
     }
 
-    /// Format params as `[x: *, y: x → x]` using a given display context.
-    fn format_params(&self, ctx: &impl DisplayContext, params: &[ItemId]) -> String {
-        if params.is_empty() {
+    /// Format params as `[x: *, y: x → x]` or `[x: * | f(x)]` with constraints.
+    fn format_params(&self, ctx: &impl DisplayContext, params: &[ItemId], reqs: &[FunctorReq]) -> String {
+        if params.is_empty() && reqs.is_empty() {
             return String::new();
         }
-        let params: Vec<String> = params.iter().map(|&item_id| {
+        let params_str: Vec<String> = params.iter().map(|&item_id| {
             let item = &self.items[item_id.0];
             format!("{}: {}", item.lname, display_ty(ctx, &item.ty))
         }).collect();
-        format!("[{}]", params.join(", "))
+        if reqs.is_empty() {
+            format!("[{}]", params_str.join(", "))
+        } else {
+            let reqs_str: Vec<String> = reqs.iter().map(|req| {
+                let functor_name = &self.defs[req.functor.0].lname;
+                let arg_str = display_cell(ctx, &req.arg);
+                format!("{}({})", functor_name, arg_str)
+            }).collect();
+            format!("[{} | {}]", params_str.join(", "), reqs_str.join(", "))
+        }
     }
 
     /// Display a def's own parameters: `[x: C → C, f: x → x]`
     pub fn display_params(&self, def: &Def) -> String {
         let ctx = DefDisplayContext::from_def(self, def);
-        self.format_params(&ctx, &def.params)
+        self.format_params(&ctx, &def.params, &def.reqs)
     }
 
     /// Display type using def's parameter context (lname for params)
@@ -336,8 +356,24 @@ impl Env {
     /// Display all parameters (own + ancestors): `[x: C → C]`
     pub fn display_all_params(&self, def: &Def) -> String {
         let all_params = self.collect_all_params(def);
+        let all_reqs = self.collect_all_reqs(def);
         let ctx = DefDisplayContext { env: self, params: &all_params };
-        self.format_params(&ctx, &all_params)
+        self.format_params(&ctx, &all_params, &all_reqs)
+    }
+
+    /// Collect all functor constraints for a def, including ancestor reqs.
+    pub fn collect_all_reqs(&self, def: &Def) -> Vec<FunctorReq> {
+        let mut all_reqs = Vec::new();
+        let mut current = &self.root;
+        for seg in def.qname.split('.') {
+            if let Some(child) = current.lookup.get(seg) {
+                if let Some(def_id) = child.this {
+                    all_reqs.extend_from_slice(&self.defs[def_id.0].reqs);
+                }
+                current = child;
+            }
+        }
+        all_reqs
     }
 
     /// Whether a def is parametric (own or ancestor has parameters).
@@ -362,7 +398,8 @@ impl Env {
             name.push_str(seg);
             if let Some(child) = current.lookup.get(seg) {
                 if let Some(def_id) = child.this {
-                    name.push_str(&self.format_params(&ctx, &self.defs[def_id.0].params));
+                    let d = &self.defs[def_id.0];
+                    name.push_str(&self.format_params(&ctx, &d.params, &d.reqs));
                 }
                 current = child;
             }
