@@ -5,12 +5,12 @@ use crate::types::env::{self, ArrowTy, DisplayContext, Meta, Ty};
 use crate::types::item::*;
 use donut_core::cell::Diagram;
 use donut_core::cell::Globular;
-use donut_core::common::{AnyBox, Axis, ExtId, ExtType, Level, Prim, PrimId, PureVal, SubstMap};
+use donut_core::common::{AnyBox, Axis, BoundId, ExtType, Level, Prim, PrimId, PureVal, RefId, SubstMap};
 use donut_core::pure_cell::{PureCell, Shape};
 
 #[derive(Clone)]
 struct FunctorEntry {
-    param_ext_entries: Vec<(ExtId, ExtType)>,
+    param_bound_entries: Vec<(BoundId, ExtType)>,
     cell: PureCell,
 }
 
@@ -49,12 +49,23 @@ struct Checker<'a> {
 }
 
 impl<'a> DisplayContext for Checker<'a> {
-    fn item_cname(&self, ext_id: ExtId) -> &str {
-        let item_id = ItemId(ext_id.0 as usize);
+    fn ref_name(&self, ref_id: RefId) -> &str {
+        let item_id = ItemId(ref_id.0);
         if item_id.0 < self.program.items.len() {
             &self.program.item(item_id).cname
         } else if let Some(Some(env_item)) = self.env_items.get(item_id.0) {
             &env_item.cname
+        } else {
+            "?"
+        }
+    }
+
+    fn bound_name(&self, bound_id: BoundId) -> &str {
+        let item_id = ItemId(bound_id.0);
+        if item_id.0 < self.program.items.len() {
+            &self.program.item(item_id).lname
+        } else if let Some(Some(env_item)) = self.env_items.get(item_id.0) {
+            &env_item.lname
         } else {
             "?"
         }
@@ -368,21 +379,21 @@ impl<'a> Checker<'a> {
                     )
                 }
             }
-            PureVal::Ref(ext_id, args) => {
-                let idx = ext_id.0 as usize;
+            PureVal::Ref(ref_id, args) => {
+                let idx = ref_id.0;
                 if let Some(Some(item)) = self.env_items.get(idx) {
                     if args.is_empty() {
                         item.ty.clone()
                     } else {
-                        // Substitute param ExtIds with actual args
+                        // Substitute bound vars with actual args
                         let subst_map: SubstMap = item
                             .params
                             .iter()
                             .zip(args.iter())
                             .map(|(param_item_id, arg)| {
-                                let ext_id = ExtId(param_item_id.0 as u64);
+                                let bound_id = BoundId(param_item_id.0);
                                 let ext_type = self.ext_type_for_item(*param_item_id);
-                                (ext_id, (arg.clone(), ext_type))
+                                (bound_id, (arg.clone(), ext_type))
                             })
                             .collect();
                         subst_ty(&item.ty, &subst_map, &self.prim_item)
@@ -391,8 +402,8 @@ impl<'a> Checker<'a> {
                     Ty::Hole
                 }
             }
-            PureVal::Param(ext_id) => {
-                let idx = ext_id.0 as usize;
+            PureVal::Bound(bound_id) => {
+                let idx = bound_id.0;
                 if let Some(Some(item)) = self.env_items.get(idx) {
                     item.ty.clone()
                 } else {
@@ -470,10 +481,10 @@ impl<'a> Checker<'a> {
                 let subst_map: SubstMap = mapping
                     .iter()
                     .map(|(item_id, &val_id)| {
-                        let ext_id = ExtId(item_id.0 as u64);
+                        let bound_id = BoundId(item_id.0);
                         let pv = self.eval_val(val_id);
                         let ext_type = self.ext_type_for_item(*item_id);
-                        (ext_id, (pv, ext_type))
+                        (bound_id, (pv, ext_type))
                     })
                     .collect();
                 subst_pv(&inner_pv, &subst_map, &self.prim_item)
@@ -537,7 +548,7 @@ impl<'a> Checker<'a> {
                         }
                         *arg = self.coerce_val_to_ty(arg.clone(), &param_ty, &span);
                         let ext_type = self.ext_type_for_item(item_id);
-                        param_subst.insert(ExtId(item_id.0 as u64), (arg.clone(), ext_type));
+                        param_subst.insert(BoundId(item_id.0), (arg.clone(), ext_type));
                     }
                 }
                 if self.errors.len() > err_count {
@@ -554,7 +565,7 @@ impl<'a> Checker<'a> {
                 ),
             };
             if is_alias {
-                let param_entries = self.param_ext_entries(path.target);
+                let param_entries = self.param_bound_entries(path.target);
                 let subst_map: SubstMap =
                     param_entries.into_iter().zip(args.into_iter())
                         .map(|((ext_id, ext_type), arg)| (ext_id, (arg, ext_type)))
@@ -567,7 +578,7 @@ impl<'a> Checker<'a> {
                         PureVal::Ref(id, existing)
                     }
                     _ => {
-                        let param_entries = self.param_ext_entries(path.target);
+                        let param_entries = self.param_bound_entries(path.target);
                         let subst_map: SubstMap =
                             param_entries.into_iter().zip(args.into_iter())
                                 .map(|((ext_id, ext_type), arg)| (ext_id, (arg, ext_type)))
@@ -584,8 +595,8 @@ impl<'a> Checker<'a> {
                 if let Some(Some(env_def)) = self.env_defs.get(def_id.0) {
                     let reqs = env_def.reqs.clone();
                     if !reqs.is_empty() {
-                        // Build substitution map: param ExtIds → actual arg values
-                        let param_entries = self.param_ext_entries(path.target);
+                        // Build substitution map: bound vars → actual arg values
+                        let param_entries = self.param_bound_entries(path.target);
                         let args: Vec<PureVal> = path.args.iter().map(|&a| self.eval_val(a)).collect();
                         let mut subst_map: SubstMap =
                             param_entries.into_iter().zip(args.into_iter())
@@ -607,9 +618,9 @@ impl<'a> Checker<'a> {
                                 let dim_shift = fmap.dim_shift;
                                 match self.apply_functor_constrained(&sub_arg, req.functor, &entries, dim_shift) {
                                     Ok(result_cell) => {
-                                        let ext_id = ExtId(req.result.0 as u64);
+                                        let bound_id = BoundId(req.result.0);
                                         let result_dim = result_cell.dim().in_space;
-                                        subst_map.insert(ext_id, (PureVal::Cell(result_cell), ExtType::Cell(result_dim)));
+                                        subst_map.insert(bound_id, (PureVal::Cell(result_cell), ExtType::Cell(result_dim)));
                                     }
                                     Err(e) => {
                                         let span = self.program.val_span(val_id);
@@ -738,8 +749,8 @@ impl<'a> Checker<'a> {
     fn level_of(&self, pv: &PureVal) -> Option<Level> {
         match pv {
             PureVal::Cell(pc) => Some(pc.dim().in_space),
-            PureVal::Ref(ext_id, _) | PureVal::Param(ext_id) => {
-                let idx = ext_id.0 as usize;
+            PureVal::Ref(RefId(idx), _) | PureVal::Bound(BoundId(idx)) => {
+                let idx = *idx;
                 self.env_items
                     .get(idx)?
                     .as_ref()
@@ -798,7 +809,7 @@ impl<'a> Checker<'a> {
         functor_map.insert(
             src_prim_id,
             FunctorEntry {
-                param_ext_entries: vec![],
+                param_bound_entries: vec![],
                 cell: tgt_cell.clone(),
             },
         );
@@ -807,13 +818,13 @@ impl<'a> Checker<'a> {
         for mapping in mappings {
             // Check mapping params
             let mapping_span = self.program.val_span(mapping.applicand).clone();
-            let param_ext_entries: Vec<(ExtId, ExtType)> = mapping
+            let param_bound_entries: Vec<(BoundId, ExtType)> = mapping
                 .params
                 .iter()
                 .map(|param| {
                     let ty = self.eval_ty(param.ty);
                     self.check_item(param.item, &ty, &mapping_span);
-                    (ExtId(param.item.0 as u64), self.ext_type_for_item(param.item))
+                    (BoundId(param.item.0), self.ext_type_for_item(param.item))
                 })
                 .collect();
 
@@ -920,7 +931,7 @@ impl<'a> Checker<'a> {
             functor_map.insert(
                 app_prim_id,
                 FunctorEntry {
-                    param_ext_entries,
+                    param_bound_entries,
                     cell: val_cell,
                 },
             );
@@ -950,14 +961,14 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn param_ext_entries(&self, target: Ref) -> Vec<(ExtId, ExtType)> {
+    fn param_bound_entries(&self, target: Ref) -> Vec<(BoundId, ExtType)> {
         let params: &[_] = match target {
             Ref::Item(item_id) => &self.program.item(item_id).params,
             Ref::Def(def_id) => &self.program.def(def_id).params,
         };
         params
             .iter()
-            .map(|p| (ExtId(p.item.0 as u64), self.ext_type_for_item(p.item)))
+            .map(|p| (BoundId(p.item.0), self.ext_type_for_item(p.item)))
             .collect()
     }
 
@@ -973,7 +984,7 @@ impl<'a> Checker<'a> {
         let param_args: Vec<PureVal> = item
             .params
             .iter()
-            .map(|p| PureVal::Param(ExtId(p.item.0 as u64)))
+            .map(|p| PureVal::Bound(BoundId(p.item.0)))
             .collect();
 
         let (pv, prim_id) = match ty {
@@ -1023,9 +1034,9 @@ impl<'a> Checker<'a> {
             }
             Ty::Nat | Ty::Rat | Ty::Color | Ty::Deco => {
                 let pv = if item.kind == ItemKind::Param {
-                    PureVal::Param(ExtId(item_id.0 as u64))
+                    PureVal::Bound(BoundId(item_id.0))
                 } else {
-                    PureVal::Ref(ExtId(item_id.0 as u64), vec![])
+                    PureVal::Ref(RefId(item_id.0), vec![])
                 };
                 (pv, None)
             }
@@ -1303,8 +1314,8 @@ fn subst_any_handler(
 fn make_prim_handler(prim_item: &HashMap<PrimId, ItemId>) -> impl Fn(PrimId, &SubstMap) -> Option<PureCell> + '_ {
     move |prim_id: PrimId, mapping: &SubstMap| -> Option<PureCell> {
         let item_id = prim_item.get(&prim_id)?;
-        let ext_id = ExtId(item_id.0 as u64);
-        let (replacement, _) = mapping.get(&ext_id)?;
+        let bound_id = BoundId(item_id.0);
+        let (replacement, _) = mapping.get(&bound_id)?;
         match replacement {
             PureVal::Cell(cell) => Some(cell.clone()),
             _ => None,
@@ -1414,9 +1425,9 @@ impl<'a> Checker<'a> {
                 if let Some(entry) = map.get(&prim.id) {
                     // Known mapping — same as apply_functor
                     let mut result = entry.cell.clone();
-                    if !entry.param_ext_entries.is_empty() && !prim.args.is_empty() {
+                    if !entry.param_bound_entries.is_empty() && !prim.args.is_empty() {
                         let subst_map: SubstMap = entry
-                            .param_ext_entries
+                            .param_bound_entries
                             .iter()
                             .zip(prim.args.iter())
                             .map(|(&(eid, ext_type), arg)| (eid, (arg.clone(), ext_type)))
@@ -1463,7 +1474,7 @@ impl<'a> Checker<'a> {
                     self.constraint_cache
                         .insert((functor_def_id, prim.id), result.clone());
 
-                    // Create Item for the fresh prim (for ExtId-based substitution)
+                    // Create Item for the fresh prim (for bound-variable substitution)
                     let functor_name = self.program.def(functor_def_id).lname.clone();
                     let arg_name = if let Some(&item_id) = self.prim_item.get(&prim.id) {
                         if item_id.0 < self.program.items.len() {
@@ -1526,9 +1537,9 @@ fn apply_functor(
                 Some(entry) => {
                     let mut result = entry.cell.clone();
                     // Substitute params with actual args
-                    if !entry.param_ext_entries.is_empty() && !prim.args.is_empty() {
+                    if !entry.param_bound_entries.is_empty() && !prim.args.is_empty() {
                         let subst_map: SubstMap = entry
-                            .param_ext_entries
+                            .param_bound_entries
                             .iter()
                             .zip(prim.args.iter())
                             .map(|(&(eid, ext_type), arg)| (eid, (arg.clone(), ext_type)))

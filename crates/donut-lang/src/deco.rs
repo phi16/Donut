@@ -157,7 +157,7 @@ fn reduce(pv: &PureVal, items: &[env::Item]) -> PureVal {
     match pv {
         PureVal::Ref(ext_id, args) => {
             let reduced: Vec<PureVal> = args.iter().map(|a| reduce(a, items)).collect();
-            let cname = &items[ext_id.0 as usize].cname;
+            let cname = &items[ext_id.0].cname;
             if let Some(result) = eval_builtin(cname, &reduced) {
                 result
             } else {

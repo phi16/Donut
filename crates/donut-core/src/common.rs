@@ -11,18 +11,29 @@ pub type CoordQ = Vec<Q>;
 pub type Vec1<T> = Vec<T>;
 pub type Vec2<T> = Vec<T>;
 
-/// External identifier — opaque ID used in substitution, PureVal::Ref/Param, Prim, etc.
-/// In donut-lang, this corresponds to GenId.
+/// Reference ID — identifies a defined item (Decl/DeclDef).
+/// Used in PureVal::Ref. In donut-lang, this corresponds to ItemId for non-param items.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ExtId(pub u64);
+pub struct RefId(pub usize);
 
-impl std::fmt::Display for ExtId {
+impl std::fmt::Display for RefId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
     }
 }
 
-/// Primitive cell identifier — separate indexing from ExtId.
+/// Bound variable ID — identifies a parameter placeholder.
+/// Used in PureVal::Bound. Substituted by SubstMap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BoundId(pub usize);
+
+impl std::fmt::Display for BoundId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// Primitive cell identifier — separate indexing from RefId.
 /// Used in donut-lang for prim_decls output.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PrimId(pub u64);
@@ -93,8 +104,8 @@ impl std::fmt::Debug for AnyBox {
 #[derive(Debug, Clone, PartialEq)]
 pub enum PureVal {
     Cell(crate::pure_cell::PureCell),
-    Ref(ExtId, Vec<PureVal>),
-    Param(ExtId),
+    Ref(RefId, Vec<PureVal>),
+    Bound(BoundId),
     Any(AnyBox),
 }
 
@@ -109,7 +120,7 @@ impl PureVal {
                     arg.validate(any_handler);
                 }
             }
-            PureVal::Param(_) => {}
+            PureVal::Bound(_) => {}
             PureVal::Any(v) => any_handler(v),
         }
     }
@@ -141,7 +152,7 @@ impl Prim {
     }
 }
 
-/// Describes what kind of value an ExtId slot expects.
+/// Describes what kind of value a BoundId slot expects.
 /// Used in substitution mappings to enable auto-lift and dimension checking.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExtType {
@@ -149,7 +160,7 @@ pub enum ExtType {
     NonCell,
 }
 
-pub type SubstMap = std::collections::HashMap<ExtId, (PureVal, ExtType)>;
+pub type SubstMap = std::collections::HashMap<BoundId, (PureVal, ExtType)>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Dim {

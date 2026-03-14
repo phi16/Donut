@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::types::common::TokenSpan;
 use crate::types::item::{DefId, ItemId, ItemKind};
-use donut_core::common::{AnyBox, ExtId, Level, PrimId, PureVal};
+use donut_core::common::{AnyBox, BoundId, Level, PrimId, PureVal, RefId};
 use donut_core::pure_cell::{PureCell, Shape};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -76,7 +76,7 @@ pub fn as_meta(val: &PureVal) -> Option<&Meta> {
     }
 }
 
-// Note: ItemId ≈ ExtId
+// Note: ItemId.0 is used as RefId.0 or BoundId.0 depending on item kind
 
 // --- Entry ---
 
@@ -143,15 +143,16 @@ pub struct Env {
 
 /// Name-resolution context for display functions.
 pub trait DisplayContext {
-    fn item_cname(&self, ext_id: ExtId) -> &str;
+    fn ref_name(&self, ref_id: RefId) -> &str;
+    fn bound_name(&self, bound_id: BoundId) -> &str;
     fn prim_name(&self, prim_id: PrimId) -> &str;
 }
 
 pub fn display_pure_val(ctx: &impl DisplayContext, pv: &PureVal) -> String {
     match pv {
         PureVal::Cell(cell) => display_cell(ctx, cell),
-        PureVal::Ref(ext_id, args) => {
-            let name = ctx.item_cname(*ext_id);
+        PureVal::Ref(ref_id, args) => {
+            let name = ctx.ref_name(*ref_id);
             if args.is_empty() {
                 name.to_string()
             } else {
@@ -160,9 +161,8 @@ pub fn display_pure_val(ctx: &impl DisplayContext, pv: &PureVal) -> String {
                 format!("{}[{}]", name, args_str.join(", "))
             }
         }
-        PureVal::Param(ext_id) => {
-            let name = ctx.item_cname(*ext_id);
-            name.to_string()
+        PureVal::Bound(bound_id) => {
+            ctx.bound_name(*bound_id).to_string()
         }
         PureVal::Any(any) => display_meta(ctx, any.inner::<Meta>()),
     }
@@ -242,46 +242,21 @@ pub fn display_ty(ctx: &impl DisplayContext, ty: &Ty) -> String {
 // --- Env as DisplayContext ---
 
 impl DisplayContext for Env {
-    fn item_cname(&self, ext_id: ExtId) -> &str {
-        &self.items[ext_id.0 as usize].cname
+    fn ref_name(&self, ref_id: RefId) -> &str {
+        &self.items[ref_id.0].cname
+    }
+
+    fn bound_name(&self, bound_id: BoundId) -> &str {
+        &self.items[bound_id.0].lname
     }
 
     fn prim_name(&self, prim_id: PrimId) -> &str {
         if let Some(&item_id) = self.prim_item.get(&prim_id) {
-            &self.items[item_id.0].cname
-        } else {
-            "?"
-        }
-    }
-}
-
-struct DefDisplayContext<'a> {
-    env: &'a Env,
-    params: &'a [ItemId],
-}
-
-impl<'a> DefDisplayContext<'a> {
-    fn from_def(env: &'a Env, def: &'a Def) -> Self {
-        Self { env, params: &def.params }
-    }
-}
-
-impl<'a> DisplayContext for DefDisplayContext<'a> {
-    fn item_cname(&self, ext_id: ExtId) -> &str {
-        let item_id = ItemId(ext_id.0 as usize);
-        if self.params.contains(&item_id) {
-            &self.env.items[item_id.0].lname
-        } else {
-            &self.env.items[item_id.0].cname
-        }
-    }
-
-    fn prim_name(&self, prim_id: PrimId) -> &str {
-        if let Some(&item_id) = self.env.prim_item.get(&prim_id) {
-            if self.params.contains(&item_id) {
-                &self.env.items[item_id.0].lname
+            let item = &self.items[item_id.0];
+            if item.kind == ItemKind::Param {
+                &item.lname
             } else {
-                &self.env.items[item_id.0].cname
+                &item.cname
             }
         } else {
             "?"
@@ -325,20 +300,17 @@ impl Env {
 
     /// Display a def's own parameters: `[x: C → C, f: x → x]`
     pub fn display_params(&self, def: &Def) -> String {
-        let ctx = DefDisplayContext::from_def(self, def);
-        self.format_params(&ctx, &def.params, &def.reqs)
+        self.format_params(self, &def.params, &def.reqs)
     }
 
     /// Display type using def's parameter context (lname for params)
     pub fn display_def_ty(&self, def: &Def) -> String {
-        let ctx = DefDisplayContext::from_def(self, def);
-        display_ty(&ctx, &def.ty)
+        display_ty(self, &def.ty)
     }
 
     /// Display any Ty using def's parameter context
     pub fn display_ty_in_def(&self, ty: &Ty, def: &Def) -> String {
-        let ctx = DefDisplayContext::from_def(self, def);
-        display_ty(&ctx, ty)
+        display_ty(self, ty)
     }
 
     /// Collect all parameters for a def, including ancestor params,
@@ -361,8 +333,7 @@ impl Env {
     pub fn display_all_params(&self, def: &Def) -> String {
         let all_params = self.collect_all_params(def);
         let all_reqs = self.collect_all_reqs(def);
-        let ctx = DefDisplayContext { env: self, params: &all_params };
-        self.format_params(&ctx, &all_params, &all_reqs)
+        self.format_params(self, &all_params, &all_reqs)
     }
 
     /// Collect all functor constraints for a def, including ancestor reqs.
@@ -390,8 +361,6 @@ impl Env {
         let all_params = self.collect_all_params(def);
         let segments: Vec<&str> = def.qname.split('.').collect();
 
-        let ctx = DefDisplayContext { env: self, params: &all_params };
-
         // Build name: M[x: *].a
         let mut name = String::new();
         let mut current = &self.root;
@@ -403,13 +372,13 @@ impl Env {
             if let Some(child) = current.lookup.get(seg) {
                 if let Some(def_id) = child.this {
                     let d = &self.defs[def_id.0];
-                    name.push_str(&self.format_params(&ctx, &d.params, &d.reqs));
+                    name.push_str(&self.format_params(self, &d.params, &d.reqs));
                 }
                 current = child;
             }
         }
 
-        format!("{}: {}", name, display_ty(&ctx, &def.ty))
+        format!("{}: {}", name, display_ty(self, &def.ty))
     }
 
     pub fn def_color<'a>(&self, def: &'a Def) -> &'a Color {

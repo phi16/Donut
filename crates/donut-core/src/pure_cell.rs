@@ -172,7 +172,7 @@ impl PureVal {
                 let new_args: Vec<PureVal> = args.iter().map(|a| a.subst(mapping, any_handler, prim_handler)).collect::<Result<_>>()?;
                 Ok(PureVal::Ref(*id, new_args))
             }
-            PureVal::Param(id) => {
+            PureVal::Bound(id) => {
                 if let Some((replacement, ext_type)) = mapping.get(id) {
                     match ext_type {
                         ExtType::Cell(level) => match replacement {
@@ -192,7 +192,7 @@ impl PureVal {
                         ExtType::NonCell => Ok(replacement.clone()),
                     }
                 } else {
-                    Ok(PureVal::Param(*id))
+                    Ok(PureVal::Bound(*id))
                 }
             }
             PureVal::Any(_) => Ok(any_handler(self, mapping)),
@@ -287,7 +287,7 @@ impl PureCell {
         }
     }
 
-    /// Substitute ExtId references and Prim cells according to the mapping.
+    /// Substitute bound variables and Prim cells according to the mapping.
     /// Auto-lifts replacement cells to match expected dimensions (from ExtType).
     /// Also auto-lifts prim_handler results to match the original Prim's dimension.
     pub fn subst(
@@ -344,7 +344,7 @@ impl fmt::Display for PureVal {
                 }
                 Ok(())
             }
-            PureVal::Param(id) => write!(f, "P{}", id),
+            PureVal::Bound(id) => write!(f, "B{}", id),
             PureVal::Any(v) => write!(f, "{:?}", v),
         }
     }
