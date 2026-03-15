@@ -4,8 +4,8 @@
 // triangle identity (zig-zag identity) で表現する。
 //
 // F: C → D, G: D → C に対して:
-//   eta (unit):   id_C → GF
-//   eps (counit): FG → id_D
+//   η (unit):   id_C → GF
+//   ε (counit): FG → id_D
 //
 // Triangle identities (3-cell):
 //   zig: (F·η)(ε·F) = id_F
@@ -16,18 +16,18 @@ F: C → D
 G: D → C
 
 // Unit and counit
-eta: C → F G
-eps: G F → D
+η: C → F G
+ε: G F → D
 
 // Triangle identities
 //
 // zig:
-//   F →[eta F]→ F G F →[F eps]→ F
+//   F →[η F]→ F G F →[F ε]→ F
 //   この合成が F 上の恒等射に等しい
 //
 // zag:
-//   G →[G eta]→ G F G →[eps G]→ G
+//   G →[G η]→ G F G →[ε G]→ G
 //   この合成が G 上の恒等射に等しい
 
-zig: eta F; F eps ~ F
-zag: G eta; eps G ~ G
+zig: η F; F ε ~ F
+zag: G η; ε G ~ G

@@ -488,6 +488,10 @@ impl<'a> Checker<'a> {
             Val::Arrow(kind, l, r) => {
                 let l_val = self.eval_val(*l);
                 let r_val = self.eval_val(*r);
+                let is_error = |pv: &PureVal| env::as_meta(pv) == Some(&Meta::Error);
+                if is_error(&l_val) || is_error(&r_val) {
+                    return Meta::Error.into();
+                }
                 let ty = match kind {
                     ArrowKind::To | ArrowKind::Eq => {
                         let l_level = self.level_of(&l_val);
@@ -764,7 +768,7 @@ impl<'a> Checker<'a> {
                 } else {
                     let span = self.program.val_span(val_id);
                     self.error_at(span, format!("invalid number `{}`", s));
-                    Meta::Nat(0).into()
+                    Meta::Error.into()
                 }
             }
             Lit::String(_s) => {
@@ -1429,7 +1433,7 @@ impl<'a> Checker<'a> {
                             cname: item.cname.clone(),
                             lname: item.lname.clone(),
                             kind: item.kind,
-                            ty: Ty::Star,
+                            ty: Ty::Hole,
                             prim_id: None,
                             params: vec![],
                         }
@@ -1460,7 +1464,7 @@ impl<'a> Checker<'a> {
                             cname: item.cname.clone(),
                             lname: item.lname.clone(),
                             kind: item.kind,
-                            ty: Ty::Star,
+                            ty: Ty::Hole,
                             prim_id: None,
                             params: vec![],
                         }
@@ -1490,7 +1494,7 @@ impl<'a> Checker<'a> {
                         lname: def.lname.clone(),
                         span: def.span.clone(),
                         ref_id: None,
-                        ty: Ty::Star,
+                        ty: Ty::Hole,
                         params: vec![],
                         val: Meta::Error.into(),
                         decos: vec![],

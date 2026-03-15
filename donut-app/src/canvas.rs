@@ -60,10 +60,19 @@ pub fn step(
         let vh = size[d + 1];
 
         let rc = engine.build_squash_view(i);
-        draw_view(table, &renderer, context, &rc, ox, oy, vw, vh, mouse_x, mouse_y);
+        draw_view(
+            table, &renderer, context, &rc, ox, oy, vw, vh, mouse_x, mouse_y,
+        );
 
-        draw_crosshair(context, ox, oy, vw, vh,
-            engine.slice_pos[2 * i], engine.slice_pos[2 * i + 1]);
+        draw_crosshair(
+            context,
+            ox,
+            oy,
+            vw,
+            vh,
+            engine.slice_pos[2 * i],
+            engine.slice_pos[2 * i + 1],
+        );
     }
 
     // --- Params label ---
@@ -73,7 +82,9 @@ pub fn step(
     {
         let (ox, oy) = slice_origin;
         let rc = engine.build_slice_view();
-        draw_view(table, &renderer, context, &rc, ox, oy, size[0], size[1], mouse_x, mouse_y);
+        draw_view(
+            table, &renderer, context, &rc, ox, oy, size[0], size[1], mouse_x, mouse_y,
+        );
     }
 }
 
@@ -82,8 +93,12 @@ fn draw_view(
     renderer: &Renderer,
     context: &web_sys::CanvasRenderingContext2d,
     geom: &Geometry,
-    ox: R, oy: R, vw: R, vh: R,
-    mouse_x: R, mouse_y: R,
+    ox: R,
+    oy: R,
+    vw: R,
+    vh: R,
+    mouse_x: R,
+    mouse_y: R,
 ) {
     context.set_fill_style_str("rgb(50 50 50)");
     context.fill_rect(ox - 25.0, oy - 25.0, vw + 50.0, vh + 50.0);
@@ -111,8 +126,12 @@ fn draw_view(
 
 fn draw_crosshair(
     context: &web_sys::CanvasRenderingContext2d,
-    ox: R, oy: R, vw: R, vh: R,
-    sx: R, sy: R,
+    ox: R,
+    oy: R,
+    vw: R,
+    vh: R,
+    sx: R,
+    sy: R,
 ) {
     context.save();
     context.translate(ox, oy).unwrap();
