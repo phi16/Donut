@@ -73,7 +73,7 @@ fn ty_to_kind(ty: &Ty) -> EntryKind {
 fn def_to_kind(def: &env::Def) -> EntryKind {
     match &def.ty {
         Ty::Meta => {
-            if def.item.is_some() {
+            if def.ref_id.is_some() {
                 EntryKind::Meta // declaration like `nat: meta`
             } else {
                 EntryKind::Type // alias like `v = u → u`
@@ -208,7 +208,9 @@ impl FlatEnv {
             }
             if !child.lookup.is_empty() {
                 let kind = if child.lookup.len() == 1
-                    && child.lookup.contains_key(donut_lang::types::item::DEF_MEMBER_NAME)
+                    && child
+                        .lookup
+                        .contains_key(donut_lang::types::item::DEF_MEMBER_NAME)
                 {
                     ModuleKind::Definition
                 } else {
@@ -416,7 +418,7 @@ mod tests {
             .map(|t| &t.token_type)
     }
 
-fn diag_sources(r: &AnalysisResult) -> Vec<&str> {
+    fn diag_sources(r: &AnalysisResult) -> Vec<&str> {
         r.diagnostics.iter().map(|d| d.source).collect()
     }
 

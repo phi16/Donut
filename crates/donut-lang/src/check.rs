@@ -53,7 +53,7 @@ struct Checker<'a> {
 
 impl<'a> DisplayContext for Checker<'a> {
     fn ref_name(&self, ref_id: RefId) -> &str {
-        if ref_id.0 < self.program.items.len() {
+        if ref_id.0 < self.program.refs.len() {
             &self.program.item(ref_id).cname
         } else if let Some(Some(env_item)) = self.env_refs.get(ref_id.0) {
             &env_item.cname
@@ -76,7 +76,7 @@ impl<'a> DisplayContext for Checker<'a> {
         if let Some(&owner) = self.prim_owner.get(&prim_id) {
             match owner {
                 env::PrimOwner::Ref(ref_id) => {
-                    if ref_id.0 < self.program.items.len() {
+                    if ref_id.0 < self.program.refs.len() {
                         &self.program.item(ref_id).cname
                     } else if let Some(Some(env_item)) = self.env_refs.get(ref_id.0) {
                         &env_item.cname
@@ -102,12 +102,12 @@ impl<'a> DisplayContext for Checker<'a> {
 
 impl<'a> Checker<'a> {
     fn new(program: &'a Program) -> Self {
-        let n_items = program.items.len();
+        let n_refs = program.refs.len();
         let n_bounds = program.bounds.len();
         let n_defs = program.defs.len();
         let mut checker = Checker {
             program,
-            env_refs: (0..n_items).map(|_| None).collect(),
+            env_refs: (0..n_refs).map(|_| None).collect(),
             env_bounds: (0..n_bounds).map(|_| None).collect(),
             env_defs: (0..n_defs).map(|_| None).collect(),
             prim_owner: HashMap::new(),
@@ -127,7 +127,7 @@ impl<'a> Checker<'a> {
 
     fn register_builtins(&mut self) {
         let builtins: &[(&str, Ty)] = &[("meta", Ty::Meta), ("*", Ty::Star)];
-        for (i, item) in self.program.items.iter().enumerate() {
+        for (i, item) in self.program.refs.iter().enumerate() {
             if let Some((_, ty)) = builtins.iter().find(|(name, _)| *name == item.lname) {
                 let ref_id = RefId(i);
                 let pv: PureVal = Meta::Ty(ty.clone()).into();
@@ -291,10 +291,7 @@ impl<'a> Checker<'a> {
 
         // Evaluate body
         let (item, val, ty) = match &self.program.def(def_id).body {
-            DefBody::Decl {
-                item: ref_id,
-                def_val,
-            } => {
+            DefBody::Decl { ref_id, def_val } => {
                 let ref_id = *ref_id;
                 let def_val = *def_val;
                 let def_pv = def_val.map(|id| self.eval_val(id));
@@ -307,7 +304,7 @@ impl<'a> Checker<'a> {
                 } else {
                     declared_ty.unwrap_or(Ty::Star)
                 };
-                self.check_ref_item(ref_id, &ty, &span);
+                self.check_ref(ref_id, &ty, &span);
                 // Record DeclDef substitution: x's PrimId → y's cell
                 if let Some(PureVal::Cell(target_cell)) = &def_pv {
                     if let Some(Some(env_item)) = self.env_refs.get(ref_id.0) {
@@ -379,7 +376,7 @@ impl<'a> Checker<'a> {
             qname,
             lname,
             span,
-            item,
+            ref_id: item,
             ty: ty.clone(),
             params,
             val,
@@ -1197,7 +1194,7 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn check_ref_item(&mut self, ref_id: RefId, ty: &Ty, span: &TokenSpan) {
+    fn check_ref(&mut self, ref_id: RefId, ty: &Ty, span: &TokenSpan) {
         if self.checked.contains_key(&Entry::Ref(ref_id)) {
             return;
         }
@@ -1416,14 +1413,14 @@ impl<'a> Checker<'a> {
         };
 
         // Fill unchecked entries with defaults
-        let n_program_items = self.program.items.len();
-        let items: Vec<env::Item> = self
+        let n_program_refs = self.program.refs.len();
+        let refs: Vec<env::Item> = self
             .env_refs
             .into_iter()
             .enumerate()
             .map(|(i, o)| {
                 o.unwrap_or_else(|| {
-                    if i < n_program_items {
+                    if i < n_program_refs {
                         let item = self.program.item(RefId(i));
                         env::Item {
                             cname: item.cname.clone(),
@@ -1489,7 +1486,7 @@ impl<'a> Checker<'a> {
                         qname: def.qname.clone(),
                         lname: def.lname.clone(),
                         span: def.span.clone(),
-                        item: None,
+                        ref_id: None,
                         ty: Ty::Star,
                         params: vec![],
                         val: Meta::Error.into(),
@@ -1506,7 +1503,7 @@ impl<'a> Checker<'a> {
             .collect();
 
         let env = env::Env {
-            refs: items,
+            refs,
             bounds,
             defs,
             prim_owner: self.prim_owner,
@@ -1712,7 +1709,7 @@ impl<'a> Checker<'a> {
                     let arg_name = if let Some(&owner) = self.prim_owner.get(&prim.id) {
                         match owner {
                             env::PrimOwner::Ref(ref_id) => {
-                                if ref_id.0 < self.program.items.len() {
+                                if ref_id.0 < self.program.refs.len() {
                                     self.program.item(ref_id).lname.clone()
                                 } else if let Some(Some(env_item)) = self.env_refs.get(ref_id.0) {
                                     env_item.lname.clone()

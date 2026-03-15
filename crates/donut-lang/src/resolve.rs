@@ -291,13 +291,13 @@ type Error = SpanError;
 
 struct Checker {
     // Arenas
-    items: Vec<Item>,
+    refs: Vec<Item>,
     bounds: Vec<Item>,
     defs: Vec<Def>,
     vals: Vec<S<Val>>,
 
     // Item deduplication (cname → RefId / BoundId)
-    item_by_cname: HashMap<String, RefId>,
+    ref_by_cname: HashMap<String, RefId>,
     bound_by_cname: HashMap<String, BoundId>,
 
     // Scopes
@@ -330,11 +330,11 @@ struct Checker {
 impl Checker {
     fn new() -> Self {
         let mut checker = Checker {
-            items: Vec::new(),
+            refs: Vec::new(),
             bounds: Vec::new(),
             defs: Vec::new(),
             vals: Vec::new(),
-            item_by_cname: HashMap::new(),
+            ref_by_cname: HashMap::new(),
             bound_by_cname: HashMap::new(),
             scopes: Vec::new(),
             errors: Vec::new(),
@@ -406,12 +406,12 @@ impl Checker {
 
     fn alloc_item(&mut self, item: Item) -> RefId {
         // Dedup by cname: reuse existing Item if same cname
-        if let Some(&existing) = self.item_by_cname.get(&item.cname) {
+        if let Some(&existing) = self.ref_by_cname.get(&item.cname) {
             return existing;
         }
-        let id = RefId(self.items.len());
-        self.item_by_cname.insert(item.cname.clone(), id);
-        self.items.push(item);
+        let id = RefId(self.refs.len());
+        self.ref_by_cname.insert(item.cname.clone(), id);
+        self.refs.push(item);
         id
     }
 
@@ -467,13 +467,13 @@ impl Checker {
         span: &TokenSpan,
     ) -> DefBody {
         match &self.def(def_id).body {
-            DefBody::Decl { item, .. } => {
-                let item = *item;
+            DefBody::Decl { ref_id, .. } => {
+                let ref_id = *ref_id;
                 let s = span.clone();
                 let path_val = self.alloc_val(
                     Val::Path(Path {
                         segments: vec![],
-                        target: Entry::Ref(item),
+                        target: Entry::Ref(ref_id),
                         args: vec![],
                         applicand: None,
                     }),
@@ -1034,7 +1034,7 @@ impl Checker {
                 // Create Item + Def body
                 let ty_id = ty_resolved.expect("declaration-only must have a type");
                 let cname = self.make_cname(&lname);
-                let item_id = self.alloc_item(Item {
+                let ref_id = self.alloc_item(Item {
                     cname,
                     lname: lname.clone(),
                     kind: ItemKind::Decl,
@@ -1042,7 +1042,7 @@ impl Checker {
                     params: params.clone(),
                 });
                 let body = DefBody::Decl {
-                    item: item_id,
+                    ref_id,
                     def_val: None,
                 };
                 let qname = self.make_qname(&lname);
@@ -1279,7 +1279,7 @@ impl Checker {
             let span = seg_names.last().map(|(_, s)| s.clone()).unwrap();
             let is_functor = ty_resolved.map_or(false, |id| is_functor_type(&self.vals[id.0].0));
             let is_decldef = matches!(item_kind, Some(ItemKind::DeclDef));
-            let item_id = if let Some(ik) = item_kind {
+            let ref_id = if let Some(ik) = item_kind {
                 let ty_id = if let Some(ty_id) = ty_resolved {
                     Some(ty_id)
                 } else if is_decldef {
@@ -1307,9 +1307,9 @@ impl Checker {
                 DefBody::Functor {
                     mappings: Vec::new(),
                 }
-            } else if let Some(item) = item_id {
+            } else if let Some(ref_id) = ref_id {
                 DefBody::Decl {
-                    item,
+                    ref_id,
                     def_val: if is_decldef { body_val_resolved } else { None },
                 }
             } else if let Some(val) = body_val_resolved {
@@ -1349,16 +1349,16 @@ impl Checker {
             // --- DeclDef: create member def `x.def : x ~ y` ---
             let mut inner_children = inner_children;
             if let DefBody::Decl {
-                item: main_item_id,
+                ref_id: main_ref_id,
                 def_val: Some(body_val),
             } = &self.defs[def_id.0].body
             {
-                let main_item_id = *main_item_id;
+                let main_ref_id = *main_ref_id;
                 let body_val = *body_val;
                 let x_val = self.alloc_val(
                     Val::Path(Path {
                         segments: vec![],
-                        target: Entry::Ref(main_item_id),
+                        target: Entry::Ref(main_ref_id),
                         args: vec![],
                         applicand: None,
                     }),
@@ -1366,8 +1366,8 @@ impl Checker {
                 );
                 let eq_val =
                     self.alloc_val(Val::Arrow(ArrowKind::Eq, x_val, body_val), span.clone());
-                let def_cname = format!("{}.{}", self.items[main_item_id.0].cname, DEF_MEMBER_NAME);
-                let def_item_id = self.alloc_item(Item {
+                let def_cname = format!("{}.{}", self.refs[main_ref_id.0].cname, DEF_MEMBER_NAME);
+                let def_ref_id = self.alloc_item(Item {
                     cname: def_cname,
                     lname: DEF_MEMBER_NAME.to_string(),
                     kind: ItemKind::Decl,
@@ -1384,7 +1384,7 @@ impl Checker {
                     ty: Some(eq_val),
                     params: vec![],
                     body: DefBody::Decl {
-                        item: def_item_id,
+                        ref_id: def_ref_id,
                         def_val: None,
                     },
                     members: Module::new(),
@@ -1645,7 +1645,7 @@ pub fn resolve_with_sources(
     let (root, def_order) = checker.resolve_decls_root(program.0);
     let prog = Program {
         root,
-        items: checker.items,
+        refs: checker.refs,
         bounds: checker.bounds,
         defs: checker.defs,
         vals: checker.vals,

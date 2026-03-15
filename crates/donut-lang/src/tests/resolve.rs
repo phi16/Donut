@@ -1560,27 +1560,27 @@ z: T := "w"
     assert!(!matches!(get_def(&p, "T").body, DefBody::Decl { .. }));
     assert!(!matches!(get_def(&p, "y").body, DefBody::Decl { .. }));
     // declaration (x) → Decl
-    let x_item_id = match get_def(&p, "x").body {
-        DefBody::Decl { item, .. } => item,
+    let x_ref_id = match get_def(&p, "x").body {
+        DefBody::Decl { ref_id, .. } => ref_id,
         _ => panic!("expected Decl"),
     };
-    assert!(matches!(p.item(x_item_id).kind, ItemKind::Decl));
+    assert!(matches!(p.item(x_ref_id).kind, ItemKind::Decl));
     // definition (z) → DeclDef (with := syntax)
-    let z_item_id = match get_def(&p, "z").body {
-        DefBody::Decl { item, def_val, .. } => {
+    let z_ref_id = match get_def(&p, "z").body {
+        DefBody::Decl { ref_id, def_val, .. } => {
             assert!(def_val.is_some(), "DeclDef should have def_val");
-            item
+            ref_id
         }
         _ => panic!("expected Decl"),
     };
-    assert!(matches!(p.item(z_item_id).kind, ItemKind::DeclDef));
+    assert!(matches!(p.item(z_ref_id).kind, ItemKind::DeclDef));
 }
 
 #[test]
 fn item_created_for_declaration() {
     let p = check_module("T = \"t\"\nx: T");
     let decl_items: Vec<_> = p
-        .items
+        .refs
         .iter()
         .filter(|i| matches!(i.kind, ItemKind::Decl))
         .collect();
@@ -1594,7 +1594,7 @@ fn item_created_for_declaration() {
 #[test]
 fn item_not_created_for_alias() {
     let p = check_module("a = \"v\"\nb = a");
-    let b_items: Vec<_> = p.items.iter().filter(|i| i.lname == "b").collect();
+    let b_items: Vec<_> = p.refs.iter().filter(|i| i.lname == "b").collect();
     assert!(
         b_items.is_empty(),
         "alias should not create an Item, got: {:?}",
@@ -1606,7 +1606,7 @@ fn item_not_created_for_alias() {
 fn item_created_for_def() {
     let p = check_module("T = \"t\"\ng: T := \"v\"");
     let def_items: Vec<_> = p
-        .items
+        .refs
         .iter()
         .filter(|i| matches!(i.kind, ItemKind::DeclDef) && i.lname == "g")
         .collect();
@@ -1631,7 +1631,7 @@ fn item_created_for_param() {
 #[test]
 fn item_cname_basic() {
     let p = check_module("T = \"t\"\na: T");
-    let i = p.items.iter().find(|i| i.lname == "a").unwrap();
+    let i = p.refs.iter().find(|i| i.lname == "a").unwrap();
     assert_eq!(i.cname, "a");
 }
 
@@ -1645,7 +1645,7 @@ m = {
 }
 "#,
     );
-    let i = p.items.iter().find(|i| i.lname == "a").unwrap();
+    let i = p.refs.iter().find(|i| i.lname == "a").unwrap();
     assert_eq!(i.cname, "m.a");
 }
 
@@ -1653,7 +1653,7 @@ m = {
 fn item_cname_with_origin() {
     let p = check_module("import \"base\"");
     // base.donut defines "nat: meta" etc.
-    let nat_item = p.items.iter().find(|i| i.lname == "nat");
+    let nat_item = p.refs.iter().find(|i| i.lname == "nat");
     assert!(nat_item.is_some(), "expected Item for nat from base import");
     assert!(
         nat_item.unwrap().cname.starts_with("base::"),
@@ -1726,7 +1726,7 @@ import \"base\"
 b = import \"base\"
 ",
     );
-    let nat_items: Vec<_> = p.items.iter().filter(|i| i.cname == "base::nat").collect();
+    let nat_items: Vec<_> = p.refs.iter().filter(|i| i.cname == "base::nat").collect();
     assert_eq!(
         nat_items.len(),
         1,
@@ -1738,14 +1738,14 @@ b = import \"base\"
 #[test]
 fn item_decl_has_type() {
     let p = check_module("T = \"t\"\na: T");
-    let i = p.items.iter().find(|i| i.lname == "a").unwrap();
+    let i = p.refs.iter().find(|i| i.lname == "a").unwrap();
     assert_eq!(val_as_path_name(&p, i.ty), Some("T"));
 }
 
 #[test]
 fn item_decl_has_params() {
     let p = check_module("T = \"t\"\nU = \"u\"\nf[x: T, y: U]: T");
-    let i = p.items.iter().find(|i| i.lname == "f").unwrap();
+    let i = p.refs.iter().find(|i| i.lname == "f").unwrap();
     assert_eq!(i.params.len(), 2);
     assert_eq!(i.params[0].name, "x");
     assert_eq!(i.params[1].name, "y");
@@ -1755,7 +1755,7 @@ fn item_decl_has_params() {
 fn multiple_decls_multiple_items() {
     let p = check_module("T = \"t\"\na: T\nb: T\nc: T");
     let decl_items: Vec<_> = p
-        .items
+        .refs
         .iter()
         .filter(|i| matches!(i.kind, ItemKind::Decl))
         .map(|i| i.lname.as_str())
@@ -1768,7 +1768,7 @@ fn multiple_decls_multiple_items() {
 #[test]
 fn item_not_created_for_composition() {
     let p = check_module("a = \"x\"\nb = \"y\"\nf = a ; b");
-    let f_items: Vec<_> = p.items.iter().filter(|i| i.lname == "f").collect();
+    let f_items: Vec<_> = p.refs.iter().filter(|i| i.lname == "f").collect();
     assert!(
         f_items.is_empty(),
         "composition should not create an Item: {:?}",

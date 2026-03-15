@@ -121,7 +121,7 @@ pub struct Def {
     pub qname: String,
     pub lname: String,
     pub span: TokenSpan,
-    pub item: Option<RefId>,
+    pub ref_id: Option<RefId>,
     pub ty: Ty,
     pub params: Vec<BoundId>,
     pub val: PureVal,

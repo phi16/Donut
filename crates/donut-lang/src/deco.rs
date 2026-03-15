@@ -27,8 +27,8 @@ pub fn decorate(env: &mut env::Env) {
         let spec = extract_color_spec(&env.defs[i].decos);
         let color = resolve_color(spec, &env.defs[i], &prim_colors);
 
-        if let Some(item_id) = env.defs[i].item {
-            if let Some(prim_id) = env.refs[item_id.0].prim_id {
+        if let Some(ref_id) = env.defs[i].ref_id {
+            if let Some(prim_id) = env.refs[ref_id.0].prim_id {
                 prim_colors.insert(prim_id, color);
             }
         }
@@ -85,7 +85,7 @@ fn auto_color(def: &env::Def, prim_colors: &HashMap<PrimId, Color>) -> Color {
         _ => return Color::gray(),
     };
     let dim = cell.dim().in_space;
-    let index = def.item.map(|id| id.0).unwrap_or(0);
+    let index = def.ref_id.map(|id| id.0).unwrap_or(0);
     match dim {
         0 => {
             let hue = golden_angle_hue(index);

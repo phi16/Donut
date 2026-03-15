@@ -55,14 +55,14 @@ fn simple_decl() {
     let env = check_ok("x: *");
     let x = get_def(&env, "x");
     assert_eq!(x.ty, Ty::Star);
-    assert!(x.item.is_some());
+    assert!(x.ref_id.is_some());
 }
 
 #[test]
 fn simple_alias() {
     let env = check_ok("x = *");
     let x = get_def(&env, "x");
-    assert!(x.item.is_none());
+    assert!(x.ref_id.is_none());
     assert_eq!(*env::as_meta(&x.val).unwrap(), Meta::Ty(Ty::Star));
 }
 
@@ -111,7 +111,7 @@ fn alias_chain() {
 fn decl_has_prim_id() {
     let env = check_ok("x: *");
     let x = get_def(&env, "x");
-    let item = &env.refs[x.item.unwrap().0];
+    let item = &env.refs[x.ref_id.unwrap().0];
     assert!(item.prim_id.is_some());
 }
 
@@ -119,14 +119,14 @@ fn decl_has_prim_id() {
 fn alias_no_item() {
     let env = check_ok("x = 42");
     let x = get_def(&env, "x");
-    assert!(x.item.is_none());
+    assert!(x.ref_id.is_none());
 }
 
 #[test]
 fn multiple_decls_distinct_prim_ids() {
     let env = check_ok("a: *\nb: *");
-    let a_item = &env.refs[get_def(&env, "a").item.unwrap().0];
-    let b_item = &env.refs[get_def(&env, "b").item.unwrap().0];
+    let a_item = &env.refs[get_def(&env, "a").ref_id.unwrap().0];
+    let b_item = &env.refs[get_def(&env, "b").ref_id.unwrap().0];
     assert_ne!(a_item.prim_id, b_item.prim_id);
 }
 
@@ -187,10 +187,10 @@ fn scope_children_checked() {
     let env = check_ok("m = {\n  x: *\n  y: *\n}");
     let m = get_def(&env, "m");
     // m itself has no item (alias to module body)
-    assert!(m.item.is_none());
+    assert!(m.ref_id.is_none());
     // children should be in defs
-    assert!(env.defs.iter().any(|d| d.lname == "x" && d.item.is_some()));
-    assert!(env.defs.iter().any(|d| d.lname == "y" && d.item.is_some()));
+    assert!(env.defs.iter().any(|d| d.lname == "x" && d.ref_id.is_some()));
+    assert!(env.defs.iter().any(|d| d.lname == "y" && d.ref_id.is_some()));
 }
 
 #[test]
@@ -1431,7 +1431,7 @@ fn decldef_with_type() {
     let env = check_ok("a: *\nb: *\nf: a ~ b\nx: * := a");
     let x = get_def(&env, "x");
     assert_eq!(x.ty, Ty::Star);
-    assert!(x.item.is_some());
+    assert!(x.ref_id.is_some());
     // x.def should exist as a member
     let x_module = env.root.lookup.get("x").unwrap();
     let def_module = x_module.lookup.get("def").unwrap();
@@ -1445,7 +1445,7 @@ fn decldef_type_inferred() {
     let env = check_ok("a: *\nx := a");
     let x = get_def(&env, "x");
     assert_eq!(x.ty, Ty::Star, "type should be inferred from body");
-    assert!(x.item.is_some());
+    assert!(x.ref_id.is_some());
 }
 
 #[test]
@@ -1601,7 +1601,7 @@ fn functor_constraint_decldef() {
     let h = get_def(&env, "h");
     assert!(!h.reqs.is_empty(), "h should have constraints");
     // h should have an item (it's a DeclDef)
-    assert!(h.item.is_some(), "h should be a DeclDef with an item");
+    assert!(h.ref_id.is_some(), "h should be a DeclDef with an item");
 }
 
 #[test]
@@ -1783,7 +1783,11 @@ T[a: D → D]: f(a) → L a R
 result = T[D]
     "#,
     );
-    assert!(errors.is_empty(), "should have no errors, got: {:?}", errors);
+    assert!(
+        errors.is_empty(),
+        "should have no errors, got: {:?}",
+        errors
+    );
     let result = get_def(&env, "result");
     if let PureVal::Cell(pc) = &result.val {
         let expanded = env.expand_defs(pc);
@@ -1817,7 +1821,11 @@ h[a b: D → D, u: a → b] = T[a]; L u R; B[b]
 result = h[D, x, one]
     "#,
     );
-    assert!(errors.is_empty(), "should have no errors, got: {:?}", errors);
+    assert!(
+        errors.is_empty(),
+        "should have no errors, got: {:?}",
+        errors
+    );
     let result = get_def(&env, "result");
     if let PureVal::Cell(pc) = &result.val {
         let expanded = env.expand_defs(pc);
@@ -1856,7 +1864,11 @@ result = f'[m]
 k[m: D → x]: f'[m] ~ f(m)
     "#,
     );
-    assert!(errors.is_empty(), "should have no errors, got: {:?}", errors);
+    assert!(
+        errors.is_empty(),
+        "should have no errors, got: {:?}",
+        errors
+    );
     let result = get_def(&env, "result");
     if let PureVal::Cell(pc) = &result.val {
         let expanded = env.expand_defs(pc);

@@ -108,7 +108,7 @@ pub struct FunctorMapping {
 pub enum DefBody {
     None,
     Decl {
-        item: RefId,
+        ref_id: RefId,
         /// For DeclDef (`:=`): the body val `y` in `x: T := y`.
         def_val: Option<ValId>,
     },
@@ -157,7 +157,7 @@ pub struct DefTree {
 
 pub struct Program {
     pub root: Module,
-    pub items: Vec<Item>,
+    pub refs: Vec<Item>,
     pub bounds: Vec<Item>,
     pub defs: Vec<Def>,
     pub vals: Vec<S<Val>>,
@@ -172,7 +172,7 @@ impl Program {
         &self.vals[id.0].1
     }
     pub fn item(&self, id: RefId) -> &Item {
-        &self.items[id.0]
+        &self.refs[id.0]
     }
     pub fn bound(&self, id: BoundId) -> &Item {
         &self.bounds[id.0]
@@ -244,10 +244,10 @@ impl Program {
             let _ = &sv.1; // span, skip
         }
 
-        s.push_str("\n=== Items ===\n");
-        for (i, item) in self.items.iter().enumerate() {
+        s.push_str("\n=== Refs ===\n");
+        for (i, item) in self.refs.iter().enumerate() {
             s.push_str(&format!(
-                "  Item({}) cname={} lname={} kind={:?} ty=Val({}) params=[{}]\n",
+                "  Ref({}) cname={} lname={} kind={:?} ty=Val({}) params=[{}]\n",
                 i,
                 item.cname,
                 item.lname,
@@ -294,8 +294,11 @@ impl Program {
             }
             match &def.body {
                 DefBody::None => s.push_str("    body: none\n"),
-                DefBody::Decl { item, def_val } => {
-                    s.push_str(&format!("    body: decl Item({})", item.0));
+                DefBody::Decl {
+                    ref_id,
+                    def_val,
+                } => {
+                    s.push_str(&format!("    body: decl Ref({})", ref_id.0));
                     if let Some(dv) = def_val {
                         s.push_str(&format!(" := {}", self.display_val(*dv)));
                     }
