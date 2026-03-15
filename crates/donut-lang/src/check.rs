@@ -496,11 +496,35 @@ impl<'a> Checker<'a> {
                     ArrowKind::To | ArrowKind::Eq => {
                         let l_level = self.level_of(&l_val);
                         let r_level = self.level_of(&r_val);
-                        let level = match (l_level, r_level) {
-                            (Some(l), Some(r)) => l.max(r) + 1,
-                            (Some(l), None) => l + 1,
-                            (None, Some(r)) => r + 1,
-                            (None, None) => 1,
+                        let (l_val, r_val, level) = match (l_level, r_level) {
+                            (Some(l), Some(r)) => {
+                                let max_level = l.max(r);
+                                let l_val = self.lift_val(l_val, max_level);
+                                let r_val = self.lift_val(r_val, max_level);
+                                (l_val, r_val, max_level + 1)
+                            }
+                            _ => {
+                                let span = self.program.val_span(val_id);
+                                if l_level.is_none() {
+                                    self.error_at(
+                                        span,
+                                        format!(
+                                            "arrow source must be a cell value, got `{}`",
+                                            self.display_pure_val(&l_val),
+                                        ),
+                                    );
+                                }
+                                if r_level.is_none() {
+                                    self.error_at(
+                                        span,
+                                        format!(
+                                            "arrow target must be a cell value, got `{}`",
+                                            self.display_pure_val(&r_val),
+                                        ),
+                                    );
+                                }
+                                return Meta::Error.into();
+                            }
                         };
                         let arrow_ty = match kind {
                             ArrowKind::To => ArrowTy::To,
@@ -834,6 +858,13 @@ impl<'a> Checker<'a> {
             Ty::Arrow(level, _, _, _) => Some(*level),
             Ty::Meta | Ty::Nat | Ty::Rat | Ty::Color | Ty::Deco => None,
             Ty::Functor(_, _) | Ty::Hole => None,
+        }
+    }
+
+    fn lift_val(&self, pv: PureVal, level: Level) -> PureVal {
+        match pv {
+            PureVal::Cell(pc) => PureVal::Cell(pc.lift_to(level)),
+            other => other,
         }
     }
 

@@ -260,7 +260,7 @@ impl PureCell {
                     target.validate();
                 }
             },
-            PureCell::Comp(_, children, _) => {
+            PureCell::Comp(axis, children, _) => {
                 for child in children {
                     assert_eq!(
                         child.dim().in_space, dim.in_space,
@@ -268,6 +268,16 @@ impl PureCell {
                         child.dim().in_space, dim.in_space
                     );
                     child.validate();
+                }
+                // Check boundary matching between adjacent children
+                for i in 1..children.len() {
+                    let prev_t = target_face(&children[i - 1], *axis);
+                    let curr_s = source_face(&children[i], *axis);
+                    assert!(
+                        prev_t.is_convertible(&curr_s),
+                        "Comp(axis={}) boundary mismatch: child[{}].target_face != child[{}].source_face\n  t: {:?}\n  s: {:?}",
+                        axis, i - 1, i, prev_t, curr_s
+                    );
                 }
             }
         }

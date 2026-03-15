@@ -48,6 +48,95 @@ fn get_def<'a>(env: &'a env::Env, name: &str) -> &'a env::Def {
     &env.defs[def_id.0]
 }
 
+fn pp_pure_cell(env: &env::Env, cell: &PureCell, indent: usize) -> String {
+    let pad = "  ".repeat(indent);
+    match cell {
+        PureCell::Prim(prim, shape, dim) => {
+            let name = env.prim_name(prim.id);
+            let dim_str = format!("e{}s{}", dim.effective, dim.in_space);
+            let mut s = format!("{}Prim({}, {}", pad, name, dim_str);
+            if !prim.args.is_empty() {
+                s.push_str(&format!(", args={:?}", prim.args));
+            }
+            s.push_str(")\n");
+            match shape {
+                donut_core::pure_cell::Shape::Zero => {
+                    s.push_str(&format!("{}  shape: Zero\n", pad));
+                }
+                donut_core::pure_cell::Shape::Succ { source, target } => {
+                    s.push_str(&format!("{}  src:\n", pad));
+                    s.push_str(&pp_pure_cell(env, source, indent + 2));
+                    s.push_str(&format!("{}  tgt:\n", pad));
+                    s.push_str(&pp_pure_cell(env, target, indent + 2));
+                }
+            }
+            s
+        }
+        PureCell::Comp(axis, children, dim) => {
+            let dim_str = format!("e{}s{}", dim.effective, dim.in_space);
+            let sep_name = match axis {
+                0 => "space",
+                1 => "seq",
+                n => return format!("{}Comp({}, {}, ...)\n", pad, n, dim_str),
+            };
+            let mut s = format!("{}Comp({}, {})\n", pad, sep_name, dim_str);
+            for (i, c) in children.iter().enumerate() {
+                s.push_str(&format!("{}  [{}]:\n", pad, i));
+                s.push_str(&pp_pure_cell(env, c, indent + 2));
+            }
+            s
+        }
+    }
+}
+
+fn pp_pure_val(env: &env::Env, val: &PureVal, indent: usize) -> String {
+    let pad = "  ".repeat(indent);
+    match val {
+        PureVal::Cell(pc) => pp_pure_cell(env, pc, indent),
+        PureVal::Ref(ref_id, args) => {
+            let name = env.ref_name(*ref_id);
+            if args.is_empty() {
+                format!("{}Ref({})\n", pad, name)
+            } else {
+                let mut s = format!("{}Ref({})\n", pad, name);
+                for (i, a) in args.iter().enumerate() {
+                    s.push_str(&format!("{}  arg[{}]:\n", pad, i));
+                    s.push_str(&pp_pure_val(env, a, indent + 2));
+                }
+                s
+            }
+        }
+        PureVal::Bound(bound_id) => {
+            let name = env.bound_name(*bound_id);
+            format!("{}Bound({})\n", pad, name)
+        }
+        PureVal::Any(any) => {
+            format!("{}Any({:?})\n", pad, any)
+        }
+    }
+}
+
+fn pp_ty(env: &env::Env, ty: &Ty, indent: usize) -> String {
+    let pad = "  ".repeat(indent);
+    match ty {
+        Ty::Arrow(level, arrow_ty, src, tgt) => {
+            let op = match arrow_ty {
+                env::ArrowTy::To => "→",
+                env::ArrowTy::Eq => "~",
+            };
+            let mut s = format!("{}Arrow({}, level={:?})\n", pad, op, level);
+            s.push_str(&format!("{}  src:\n", pad));
+            s.push_str(&pp_pure_val(env, src, indent + 2));
+            s.push_str(&format!("{}  tgt:\n", pad));
+            s.push_str(&pp_pure_val(env, tgt, indent + 2));
+            s
+        }
+        _ => format!("{}{}\n", pad, env.display_ty(ty)),
+    }
+}
+
+use env::DisplayContext;
+
 // --- Tests ---
 
 #[test]
@@ -1925,6 +2014,61 @@ fn run_check_allow_resolve_errors(code: &str) -> (env::Env, Vec<String>, Vec<Str
         })
         .collect();
     (env, res_msgs, check_msgs)
+}
+
+#[test]
+fn adjunction_zigzag() {
+    let (env, errors) = run_check(
+        r#"
+C D: *
+F: C → D
+G: D → C
+
+η: C → F G
+ε: G F → D
+
+zig: η F; F ε ~ F
+zag: G η; ε G ~ G
+        "#,
+    );
+    eprintln!("=== errors ===");
+    for e in &errors {
+        eprintln!("  {}", e);
+    }
+    for def in &env.defs {
+        eprintln!(
+            "def {} : {} = {}",
+            def.lname,
+            env.display_ty(&def.ty),
+            env.display_pure_val(&def.val)
+        );
+        if let PureVal::Cell(pc) = &def.val {
+            eprintln!("  cell: {}", env.display_cell(pc));
+        }
+    }
+    assert!(errors.is_empty(), "unexpected errors: {:?}", errors);
+
+    // Inspect zig cell structure
+    {
+        let def = env.defs.iter().find(|d| d.lname == "zig").unwrap();
+        eprintln!("=== zig ===");
+        eprintln!("ty:\n{}", pp_ty(&env, &def.ty, 1));
+        if let PureVal::Cell(pc) = &def.val {
+            pc.validate();
+            eprintln!("val src:\n{}", pp_pure_cell(&env, &pc.s(), 1));
+            eprintln!("val tgt:\n{}", pp_pure_cell(&env, &pc.t(), 1));
+            // ty src/tgt from Ty::Arrow
+            if let Ty::Arrow(_, _, ty_src, ty_tgt) = &def.ty {
+                eprintln!("ty src:\n{}", pp_pure_val(&env, ty_src, 1));
+                eprintln!("ty tgt:\n{}", pp_pure_val(&env, ty_tgt, 1));
+                // Compare
+                if let (PureVal::Cell(ty_src_cell), PureVal::Cell(ty_tgt_cell)) = (ty_src, ty_tgt) {
+                    eprintln!("val.s == ty.src? {}", pc.s() == *ty_src_cell);
+                    eprintln!("val.t == ty.tgt? {}", pc.t() == *ty_tgt_cell);
+                }
+            }
+        }
+    }
 }
 
 #[test]
