@@ -69,8 +69,10 @@ impl Resolve for semtree::Val {
                 if let Some(num) = try_path_as_number(&path_s.0) {
                     return Val::Lit(Lit::Number(num));
                 }
-                let path = (*path_s).resolve(ctx);
-                Val::Path(path)
+                match (*path_s).resolve(ctx) {
+                    Some(path) => Val::Path(path),
+                    None => Val::Error,
+                }
             }
             semtree::Val::Lit(lit_s) => {
                 let lit = lit_s.resolve(ctx);
@@ -99,14 +101,14 @@ impl Resolve for semtree::Val {
                     }
                 }
             }
-            semtree::Val::Any => Val::Hole(Hole::Any),
+            semtree::Val::Any => Val::Error,
         }
     }
 }
 
 impl Resolve for S<semtree::Path<semtree::ParamVal>> {
-    type Output = Path;
-    fn resolve(self, ctx: &mut Checker) -> Path {
+    type Output = Option<Path>;
+    fn resolve(self, ctx: &mut Checker) -> Option<Path> {
         let S(path, _) = self;
 
         // Name resolution
@@ -131,15 +133,15 @@ impl Resolve for S<semtree::Path<semtree::ParamVal>> {
 
         let applicand = path.1.map(|v| v.resolve(ctx));
 
-        // Use a dummy Ref if unresolved (error already reported)
-        let target = resolved.unwrap_or(Entry::Def(DefId(0)));
+        // Return None if unresolved (error already reported by resolve_segments)
+        let target = resolved?;
 
-        Path {
+        Some(Path {
             segments,
             target,
             args,
             applicand,
-        }
+        })
     }
 }
 

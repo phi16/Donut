@@ -49,6 +49,7 @@ struct Checker<'a> {
     // PrimIds that may generate constraints (param prims + constraint-generated fresh prims)
     constrainable: HashSet<PrimId>,
     errors: Vec<Error>,
+    has_error: bool,
 }
 
 impl<'a> DisplayContext for Checker<'a> {
@@ -120,6 +121,7 @@ impl<'a> Checker<'a> {
             constraint_cache: HashMap::new(),
             constrainable: HashSet::new(),
             errors: Vec::new(),
+            has_error: false,
         };
         checker.register_builtins();
         checker
@@ -145,7 +147,11 @@ impl<'a> Checker<'a> {
     }
 
     fn error_at(&mut self, span: &TokenSpan, msg: impl Into<String>) {
-        self.errors.push((span.clone(), msg.into()));
+        let msg = msg.into();
+        self.has_error = true;
+        if !msg.contains("<error>") {
+            self.errors.push((span.clone(), msg));
+        }
     }
 
     fn fresh_prim_id(&mut self) -> PrimId {
@@ -269,8 +275,6 @@ impl<'a> Checker<'a> {
         // Save and restore constraint collection state for this def
         let saved_reqs = std::mem::take(&mut self.current_reqs);
         let saved_cache = std::mem::take(&mut self.constraint_cache);
-        let err_count_at_start = self.errors.len();
-
         // Ensure params are checked
         let params = self.program.def(def_id).params.clone();
         let def_span = self.program.def(def_id).span.clone();
@@ -365,12 +369,6 @@ impl<'a> Checker<'a> {
             .iter()
             .map(|p| p.bound)
             .collect();
-
-        // Validate values before storing (only if no errors in this def)
-        // TODO: re-enable after fixing pre-existing validation issues
-        // if self.errors.len() == err_count_at_start {
-        //     val.validate(&validate_meta);
-        // }
 
         let env_def = env::Def {
             qname,
@@ -511,6 +509,7 @@ impl<'a> Checker<'a> {
                 Meta::Ty(ty).into()
             }
             Val::Hole(_) => Meta::Ty(Ty::Hole).into(),
+            Val::Error => Meta::Error.into(),
             Val::Subst(inner_id, mapping) => {
                 let inner_id = *inner_id;
                 let mapping: HashMap<BoundId, ValId> = mapping.clone();
@@ -586,7 +585,7 @@ impl<'a> Checker<'a> {
                     .map(|p| (p.bound, p.ty))
                     .collect();
                 let span = self.program.val_span(val_id);
-                let err_count = self.errors.len();
+                self.has_error = false;
                 let mut param_subst: SubstMap = HashMap::new();
                 for (i, arg) in args.iter_mut().enumerate() {
                     if let Some(&(bound_id, ty_val_id)) = params.get(i) {
@@ -599,7 +598,7 @@ impl<'a> Checker<'a> {
                         param_subst.insert(bound_id, (arg.clone(), ext_type));
                     }
                 }
-                if self.errors.len() > err_count {
+                if self.has_error {
                     return Meta::Error.into();
                 }
             }
@@ -787,14 +786,18 @@ impl<'a> Checker<'a> {
             .filter_map(|pv| match pv {
                 PureVal::Cell(pc) => Some(pc),
                 _ => {
-                    non_cell = Some(pv);
+                    // Don't report error-recovery values as "bad" — they're already reported
+                    if env::as_meta(&pv) != Some(&Meta::Error) {
+                        non_cell = Some(pv);
+                    }
                     None
                 }
             })
             .collect();
         if cells.len() != children.len() {
-            let span = self.program.val_span(val_id);
+            // Suppress error if all non-cell values are already error-recovery
             if let Some(bad) = non_cell {
+                let span = self.program.val_span(val_id);
                 self.error_at(
                     span,
                     format!(

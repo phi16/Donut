@@ -1898,3 +1898,58 @@ result = T[D]
         expanded.validate();
     }
 }
+
+/// Like run_check but allows resolve errors (for testing unresolved name behavior)
+fn run_check_allow_resolve_errors(code: &str) -> (env::Env, Vec<String>, Vec<String>) {
+    let (tokens, _, _) = tokenize(code.trim());
+    let (program, _) = parse(&tokens);
+    let (sem_prog, conv_errors) = convert(program);
+    assert!(
+        conv_errors.is_empty(),
+        "unexpected convert errors: {conv_errors:?}"
+    );
+    let (program, res_errors) = resolve(sem_prog);
+    let res_msgs: Vec<String> = res_errors
+        .into_iter()
+        .map(|(span, msg)| {
+            let pos = &tokens[span.start].pos;
+            format!("{}:{}: {}", pos.line, pos.col, msg)
+        })
+        .collect();
+    let (env, errors) = check(&program);
+    let check_msgs: Vec<String> = errors
+        .into_iter()
+        .map(|(span, msg)| {
+            let pos = &tokens[span.start].pos;
+            format!("{}:{}: {}", pos.line, pos.col, msg)
+        })
+        .collect();
+    (env, res_msgs, check_msgs)
+}
+
+#[test]
+fn investigate_unresolved_name_error() {
+    let (env, res_errors, check_errors) = run_check_allow_resolve_errors(
+        r#"import "sys"
+
+u[f: i32 → i32] = f y"#,
+    );
+    eprintln!("=== resolve errors ===");
+    for e in &res_errors {
+        eprintln!("  {}", e);
+    }
+    eprintln!("=== check errors ===");
+    for e in &check_errors {
+        eprintln!("  {}", e);
+    }
+    // The unresolved `y` should only produce a resolve error, not a spurious check error
+    assert!(
+        res_errors.iter().any(|e| e.contains("undefined name `y`")),
+        "should have resolve error for y"
+    );
+    assert!(
+        !check_errors.iter().any(|e| e.contains("nat")),
+        "should not mention `nat` in check errors: {:?}",
+        check_errors
+    );
+}

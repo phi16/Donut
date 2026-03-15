@@ -85,7 +85,7 @@ impl<'a> HoverBuilder<'a> {
                     self.walk_val(v);
                 }
             }
-            Val::Lit(_) | Val::Hole(_) => {}
+            Val::Lit(_) | Val::Hole(_) | Val::Error => {}
         }
     }
 

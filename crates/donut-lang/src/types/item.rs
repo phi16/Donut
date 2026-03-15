@@ -60,6 +60,8 @@ pub enum Val {
     Arrow(ArrowKind, ValId, ValId),
     Hole(Hole),
     Subst(ValId, HashMap<BoundId, ValId>),
+    /// Error recovery: unresolved name etc. Evaluates to Meta::Error silently.
+    Error,
 }
 
 // --- Param ---
@@ -435,6 +437,7 @@ impl Program {
             }
             Val::Hole(Hole::Any) => "_".to_string(),
             Val::Hole(Hole::Named(n)) => format!("?{}", n),
+            Val::Error => "<error>".to_string(),
             Val::Subst(inner, mapping) => {
                 let substs: Vec<String> = mapping
                     .iter()
