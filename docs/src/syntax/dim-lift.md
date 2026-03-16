@@ -1,21 +1,15 @@
 # 次元の自動リフト
 
-Donut では、低次元のセルが高次元の位置で使われた場合、自動的に **identity cell** としてリフト（昇格）されます。
+低次元のセルが高次元の位置で使われた場合、自動的に **identity cell** としてリフト（昇格）されます。
 
 ## 例
 
 ```
 u: *
-x: u → u
-```
-
-`u` は 0-cell ですが、1-cell が期待される位置で使うことができます:
-
-```
 h: u → u = u
 ```
 
-この場合、`u` は `u` 上の identity 1-cell として解釈されます。つまり `h` は `u → u` の恒等射です。
+`u` は 0-cell ですが、`u → u`（1-cell の型）の位置で使われています。この場合 `u` は `u` 上の identity 1-cell（恒等射）として解釈されます。
 
 ## 合成での自動リフト
 
@@ -24,25 +18,18 @@ h: u → u = u
 ```
 u: *
 x: u → u
-m: x x → x
+μ: x x → x
 
-// m の型は x x → x（2-cell）
-// u は 0-cell だが、2-cell の位置で使われる
-// → u は id(id(u)) として自動リフトされる
+// μ は 2-cell。x は 1-cell だが、2-cell の位置で使われると id(x) にリフトされる
+α: μ x; μ → x μ; μ
 ```
 
-これにより、異なる次元のセルを自然に並べて合成できます。
+`μ x` の `x` は 2-cell の位置にいるので、自動的に `id(x)` (identity 2-cell) にリフトされます。
 
 ## 仕組み
 
-k-cell が n-cell（n > k）の位置で使われた場合、identity cell で包んで次元を合わせます。
+k-cell が n-cell（n > k）の位置で使われた場合、identity cell で包んで次元を合わせます。リフトは必要な回数だけ自動的に適用されます。
 
-例えば 0-cell `A` の場合:
-
-- 1-cell の位置: `A` 上の identity 1-cell（`A → A`）
-- 2-cell の位置: identity 1-cell の identity 2-cell
-- 以降同様
-
-1-cell `x: u → u` が 3-cell の位置で使われた場合は、`x` → `id(x)` → `id(id(x))` と2回リフトされます。
-
-リフトは必要な回数だけ自動的に適用されます。
+- 0-cell `A` を 1-cell の位置で → `A` 上の identity 1-cell
+- 1-cell `x` を 2-cell の位置で → `id(x)`（identity 2-cell）
+- 1-cell `x` を 3-cell の位置で → `id(id(x))`（2回リフト）
