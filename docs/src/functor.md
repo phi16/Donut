@@ -100,7 +100,7 @@ g[n: src.C → src.X] = h[n]
 
 ### ネストした functor
 
-functor を合成して適用することもできます。
+functor の適用をネストすることもできます。
 
 ```
 f(g(m))

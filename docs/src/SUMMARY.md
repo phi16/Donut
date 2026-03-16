@@ -12,6 +12,7 @@
   - [デコレータ](./syntax/decorators.md)
   - [import と use](./syntax/import.md)
 - [Functor](./functor.md)
+- [計算の書き方](./computation.md)
 - [sys ライブラリ](./sys.md)
 - [実行](./eval.md)
 - [例](./examples.md)

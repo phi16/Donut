@@ -49,7 +49,7 @@ result = f32x2.lit[0,0] (f32x2 f32x2.lit[0.6,0.5]; f32x2.sub; f32.lit[3] f32x2; 
 - `val.dup[x]` — `x → x x`（値の複製）
 - `val.drop[x]` — `x → C`（値の破棄）
 
-Donut では関数は 2-cell の合成であり、すべてのデータは 1-cell の「ワイヤー」として左から右に流れます。
+Donut では関数は 2-cell の合成であり、すべてのデータは 1-cell の「ワイヤー」として流れます。
 
 ### fdup: f32 の複製
 

@@ -2097,4 +2097,3 @@ u[f: i32 → i32] = f y"#,
         check_errors
     );
 }
-
