@@ -25,6 +25,9 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
 
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
@@ -35,6 +38,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: npm
+          cache-dependency-path: donut-app/package-lock.json
 
       - name: Install npm dependencies
         working-directory: donut-app
