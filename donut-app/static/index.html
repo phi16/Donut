@@ -149,6 +149,24 @@
         margin-bottom: 6px;
         border-bottom: 1px solid rgba(255, 255, 255, 0.08);
       }
+      #settings-popup .settings-links {
+        display: flex;
+        gap: 12px;
+        padding: 6px 0;
+        margin-top: 6px;
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+      }
+      #settings-popup .settings-links a {
+        color: #8ab4f8;
+        font-family: 'Noto Sans Mono', 'Consolas', 'Monaco', monospace;
+        font-size: 12px;
+        text-decoration: none;
+        transition: color 0.15s;
+      }
+      #settings-popup .settings-links a:hover {
+        color: #aecbfa;
+        text-decoration: underline;
+      }
       #settings-popup .settings-info {
         color: #666;
         font-family: 'Noto Sans Mono', 'Noto Sans Mono', 'Consolas', 'Monaco', monospace;
@@ -324,6 +342,10 @@
       <div class="settings-title">Donut</div>
       <label><input type="checkbox" id="shader-toggle" checked> Shader</label>
       <label><input type="checkbox" id="vim-toggle"> Vim</label>
+      <div class="settings-links">
+        <a href="docs/" target="_blank">Docs</a>
+        <a href="https://github.com/phi16/Donut" target="_blank">GitHub</a>
+      </div>
       <div class="settings-info">donut-app v0.1</div>
     </div>
     <script src="index.js"></script>
