@@ -65,8 +65,6 @@ x: C → C with {
 `where { }` でローカルな補助定義を書けます。where 節はモジュールだけでなく、一般の定義にも使えます。where 節の中の宣言は外部からはアクセスできません。
 
 ```
-import "sys"
-
 r[C: *, x: C → C, f: x → x]: x → x = g where {
     g = f; f
 }
@@ -87,8 +85,6 @@ cat = {
 where 節はネストできます:
 
 ```
-import "sys"
-
 r[C: *, x: C → C, f: x → x]: x → x = k where {
     k = g; g
 } where {

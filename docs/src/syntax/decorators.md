@@ -35,9 +35,9 @@ y: u → u
 自動色をベースに明るさを調整できます。
 
 ```
-[style.color[lighten[0.3]]]
+[style.lighten[0.3]]
 a: x → x
 
-[style.color[darken[0.2]]]
+[style.darken[0.2]]
 b: x → x
 ```

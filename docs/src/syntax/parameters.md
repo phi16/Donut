@@ -38,7 +38,7 @@ Hom[X: *, Y: *] = X → Y
 型だけでなくセルもパラメータにできます。
 
 ```
-rep2[x: C → C, f: x → x] = f; f
+rep2[C: *, x: C → C, f: x → x] = f; f
 ```
 
-`rep2` は 1-cell `x` と 2-cell `f: x → x` を受け取り、`f` を2回合成した `f; f` を返します。
+`rep2` は 0-cell `C`、1-cell `x`、2-cell `f: x → x` を受け取り、`f` を2回合成した `f; f` を返します。

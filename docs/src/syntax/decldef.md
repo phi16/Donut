@@ -18,7 +18,8 @@ x: * := a
 型は右辺から推論することもできます:
 
 ```
-lit := sys.f32.lit
+import "sys"
+add := f32.add
 ```
 
 ## 用途
